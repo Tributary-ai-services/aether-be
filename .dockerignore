@@ -1,0 +1,52 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+BACKEND-DESIGN.md
+CLAUDE.md
+*.md
+
+# Development
+.env
+.env.local
+.env.example
+tmp/
+.air.toml
+bin/
+
+# Testing
+coverage.out
+coverage.html
+*_test.go
+testdata/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Dependencies (will be downloaded in container)
+vendor/
+
+# Build artifacts
+main
+aether-backend
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Kubernetes
+deployments/
+k8s/
+
+# CI/CD
+.github/
+.gitlab-ci.yml

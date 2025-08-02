@@ -1,0 +1,156 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aether-backend
+  labels:
+    app: aether-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aether-backend
+  template:
+    metadata:
+      labels:
+        app: aether-backend
+    spec:
+      containers:
+      - name: aether-backend
+        image: aether-backend:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: PORT
+          value: "8080"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: GIN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: gin-mode
+        - name: NEO4J_URI
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: neo4j-uri
+        - name: NEO4J_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: aether-secrets
+              key: neo4j-username
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: aether-secrets
+              key: neo4j-password
+        - name: NEO4J_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: neo4j-database
+        - name: REDIS_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: redis-addr
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: aether-secrets
+              key: redis-password
+        - name: REDIS_DB
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: redis-db
+        - name: KEYCLOAK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: keycloak-url
+        - name: KEYCLOAK_REALM
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: keycloak-realm
+        - name: KEYCLOAK_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: keycloak-client-id
+        - name: KEYCLOAK_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: aether-secrets
+              key: keycloak-client-secret
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: aws-region
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aether-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aether-secrets
+              key: aws-secret-access-key
+        - name: S3_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: s3-bucket
+        - name: S3_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: s3-endpoint
+        - name: KAFKA_BROKERS
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: kafka-brokers
+        - name: KAFKA_TOPIC_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: kafka-topic-prefix
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: log-level
+        - name: LOG_FORMAT
+          valueFrom:
+            configMapKeyRef:
+              name: aether-config
+              key: log-format
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false

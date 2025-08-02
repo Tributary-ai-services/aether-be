@@ -1,0 +1,284 @@
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	"github.com/Tributary-ai-services/aether-be/internal/models"
+	"github.com/Tributary-ai-services/aether-be/internal/services"
+	"github.com/Tributary-ai-services/aether-be/pkg/errors"
+)
+
+// UserHandler handles user-related HTTP requests
+type UserHandler struct {
+	userService *services.UserService
+	logger      *logger.Logger
+}
+
+// NewUserHandler creates a new user handler
+func NewUserHandler(userService *services.UserService, log *logger.Logger) *UserHandler {
+	return &UserHandler{
+		userService: userService,
+		logger:      log.WithService("user_handler"),
+	}
+}
+
+// GetCurrentUser gets current user profile
+// @Summary Get current user profile
+// @Description Get the profile of the currently authenticated user
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} models.UserResponse
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me [get]
+func (h *UserHandler) GetCurrentUser(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	user, err := h.userService.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get current user", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve user"))
+		return
+	}
+
+	c.JSON(http.StatusOK, user.ToResponse())
+}
+
+// UpdateCurrentUser updates current user profile
+// @Summary Update current user profile
+// @Description Update the profile of the currently authenticated user
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param user body models.UserUpdateRequest true "User update data"
+// @Success 200 {object} models.UserResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me [put]
+func (h *UserHandler) UpdateCurrentUser(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	var req models.UserUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request payload", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request payload", err))
+		return
+	}
+
+	// Sanitize and validate request
+	sanitized, err := sanitizeAndValidate(req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
+		return
+	}
+
+	sanitizedReq := sanitized.(models.UserUpdateRequest)
+
+	user, err := h.userService.UpdateUser(c.Request.Context(), userID, sanitizedReq)
+	if err != nil {
+		h.logger.Error("Failed to update user", zap.String("user_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, user.ToResponse())
+}
+
+// GetUserByID gets user by ID
+// @Summary Get user by ID
+// @Description Get user profile by ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "User ID"
+// @Success 200 {object} models.PublicUserResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/{id} [get]
+func (h *UserHandler) GetUserByID(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("User ID is required", nil))
+		return
+	}
+
+	user, err := h.userService.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user by ID", zap.String("user_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Return public user response (limited fields)
+	c.JSON(http.StatusOK, user.ToPublicResponse())
+}
+
+// SearchUsers searches for users
+// @Summary Search users
+// @Description Search for users by query, username, or email
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param query query string false "Search query"
+// @Param username query string false "Username filter"
+// @Param email query string false "Email filter"
+// @Param status query string false "Status filter"
+// @Param role query string false "Role filter"
+// @Param limit query int false "Results limit (max 100)" default(20)
+// @Param offset query int false "Results offset" default(0)
+// @Success 200 {object} models.UserListResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/search [get]
+func (h *UserHandler) SearchUsers(c *gin.Context) {
+	var req models.UserSearchRequest
+
+	// Parse query parameters
+	req.Query = c.Query("query")
+	req.Username = c.Query("username")
+	req.Email = c.Query("email")
+	req.Status = c.Query("status")
+	// Note: Role field not available in UserSearchRequest
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			req.Limit = limit
+		}
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil {
+			req.Offset = offset
+		}
+	}
+
+	// Validate request
+	if err := validateStruct(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
+		return
+	}
+
+	response, err := h.userService.SearchUsers(c.Request.Context(), req)
+	if err != nil {
+		h.logger.Error("Failed to search users", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// UpdateUserPreferences updates user preferences
+// @Summary Update user preferences
+// @Description Update user preferences and settings
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param preferences body models.UserPreferences true "User preferences"
+// @Success 200 {object} models.UserPreferences
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/preferences [put]
+func (h *UserHandler) UpdateUserPreferences(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	var preferences models.UserPreferences
+	if err := c.ShouldBindJSON(&preferences); err != nil {
+		h.logger.Error("Invalid preferences payload", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid preferences payload", err))
+		return
+	}
+
+	updatedPrefs, err := h.userService.UpdateUserPreferences(c.Request.Context(), userID, preferences)
+	if err != nil {
+		h.logger.Error("Failed to update user preferences", zap.String("user_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, updatedPrefs)
+}
+
+// GetUserStats gets user statistics
+// @Summary Get user statistics
+// @Description Get statistics for the current user
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} models.UserStats
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/stats [get]
+func (h *UserHandler) GetUserStats(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	stats, err := h.userService.GetUserStats(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user stats", zap.String("user_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// DeleteCurrentUser deletes current user account
+// @Summary Delete current user account
+// @Description Delete the currently authenticated user account (soft delete)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 204
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me [delete]
+func (h *UserHandler) DeleteCurrentUser(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	err := h.userService.DeleteUser(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to delete user", zap.String("user_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
