@@ -268,7 +268,7 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Security Bearer
-// @Param notebook_id path string true "Notebook ID"
+// @Param id path string true "Notebook ID"
 // @Param limit query int false "Results limit (max 100)" default(20)
 // @Param offset query int false "Results offset" default(0)
 // @Success 200 {object} models.DocumentListResponse
@@ -276,9 +276,9 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 // @Failure 401 {object} errors.APIError
 // @Failure 403 {object} errors.APIError
 // @Failure 500 {object} errors.APIError
-// @Router /api/v1/notebooks/{notebook_id}/documents [get]
+// @Router /api/v1/notebooks/{id}/documents [get]
 func (h *DocumentHandler) ListDocumentsByNotebook(c *gin.Context) {
-	notebookID := c.Param("notebook_id")
+	notebookID := c.Param("id")
 	if notebookID == "" {
 		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID is required", nil))
 		return

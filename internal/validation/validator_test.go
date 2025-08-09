@@ -401,3 +401,69 @@ func TestCustomValidators(t *testing.T) {
 		}
 	})
 }
+
+func TestNeo4jCompatibleValidator(t *testing.T) {
+	t.Run("neo4j_compatible validator", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			settings map[string]interface{}
+			valid    bool
+		}{
+			// Valid cases
+			{"nil settings", nil, true},
+			{"empty map", map[string]interface{}{}, true},
+			{"primitive values only", map[string]interface{}{
+				"enabled":     true,
+				"level":       5,
+				"description": "test settings",
+			}, true},
+			{"string array", map[string]interface{}{
+				"tags": []string{"tag1", "tag2"},
+			}, true},
+			{"mixed primitive types", map[string]interface{}{
+				"string_val": "test",
+				"int_val":    42,
+				"float_val":  3.14,
+				"bool_val":   true,
+			}, true},
+
+			// Invalid cases
+			{"nested map", map[string]interface{}{
+				"nested": map[string]interface{}{
+					"inner": "value",
+				},
+			}, false},
+			{"slice of maps", map[string]interface{}{
+				"configs": []map[string]interface{}{
+					{"key": "value"},
+				},
+			}, false},
+			{"complex struct", map[string]interface{}{
+				"config": struct {
+					Name string
+				}{Name: "test"},
+			}, false},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				type TestStruct struct {
+					Settings map[string]interface{} `validate:"omitempty,neo4j_compatible"`
+				}
+
+				testStruct := TestStruct{Settings: tc.settings}
+				err := Validate(testStruct)
+
+				if tc.valid {
+					assert.NoError(t, err, "Expected settings to be Neo4j compatible: %v", tc.settings)
+				} else {
+					assert.Error(t, err, "Expected settings to be Neo4j incompatible: %v", tc.settings)
+					if err != nil {
+						assert.Contains(t, err.Error(), "complex nested objects", 
+							"Error should mention complex nested objects: %s", err.Error())
+					}
+				}
+			})
+		}
+	})
+}

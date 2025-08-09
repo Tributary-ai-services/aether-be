@@ -644,7 +644,7 @@ type Config struct {
 }
 
 type ServerConfig struct {
-    Port         int           `mapstructure:"port" default:"8080"`
+    Port         int           `mapstructure:"port" default:"8081""`
     Host         string        `mapstructure:"host" default:"0.0.0.0"`
     ReadTimeout  time.Duration `mapstructure:"read_timeout" default:"30s"`
     WriteTimeout time.Duration `mapstructure:"write_timeout" default:"30s"`
@@ -1463,7 +1463,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     ports:
-      - "8080:8080"
+      - "8081:8081"
     environment:
       - GO_ENV=development
       - GIN_MODE=debug
@@ -1872,7 +1872,7 @@ spec:
         app: aether-api
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port" default:"8081""
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: aether-api
@@ -1926,13 +1926,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port" default:"8081"
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /ready
-            port: 8080
+            port" default:"8081"
           initialDelaySeconds: 5
           periodSeconds: 5
         volumeMounts:

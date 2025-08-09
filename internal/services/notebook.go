@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/database"
@@ -56,6 +58,7 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 			visibility: $visibility,
 			status: $status,
 			owner_id: $owner_id,
+			parent_id: $parent_id,
 			compliance_settings: $compliance_settings,
 			document_count: $document_count,
 			total_size_bytes: $total_size_bytes,
@@ -67,6 +70,19 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 		RETURN n
 	`
 
+	// Serialize compliance settings to JSON string for Neo4j storage
+	var complianceSettingsJSON string
+	if notebook.ComplianceSettings != nil {
+		settingsBytes, err := json.Marshal(notebook.ComplianceSettings)
+		if err != nil {
+			s.logger.Error("Failed to serialize compliance settings", zap.Error(err))
+			return nil, errors.InternalWithCause("Failed to serialize compliance settings", err)
+		}
+		complianceSettingsJSON = string(settingsBytes)
+	} else {
+		complianceSettingsJSON = "{}"
+	}
+
 	params := map[string]interface{}{
 		"id":                  notebook.ID,
 		"name":                notebook.Name,
@@ -74,7 +90,8 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 		"visibility":          notebook.Visibility,
 		"status":              notebook.Status,
 		"owner_id":            notebook.OwnerID,
-		"compliance_settings": notebook.ComplianceSettings,
+		"parent_id":           req.ParentID,
+		"compliance_settings": complianceSettingsJSON,
 		"document_count":      notebook.DocumentCount,
 		"total_size_bytes":    notebook.TotalSizeBytes,
 		"tags":                notebook.Tags,
@@ -118,7 +135,7 @@ func (s *NotebookService) GetNotebookByID(ctx context.Context, notebookID string
 		MATCH (n:Notebook {id: $notebook_id})
 		OPTIONAL MATCH (n)-[:OWNED_BY]->(owner:User)
 		RETURN n.id, n.name, n.description, n.visibility, n.status, n.owner_id,
-		       n.compliance_settings, n.document_count, n.total_size_bytes,
+		       n.parent_id, n.compliance_settings, n.document_count, n.total_size_bytes,
 		       n.tags, n.search_text, n.created_at, n.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 	`
@@ -168,6 +185,19 @@ func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string,
 	// Update notebook fields
 	notebook.Update(req)
 
+	// Serialize compliance settings to JSON string for Neo4j storage
+	var complianceSettingsJSON string
+	if notebook.ComplianceSettings != nil {
+		settingsBytes, err := json.Marshal(notebook.ComplianceSettings)
+		if err != nil {
+			s.logger.Error("Failed to serialize compliance settings during update", zap.Error(err))
+			return nil, errors.InternalWithCause("Failed to serialize compliance settings", err)
+		}
+		complianceSettingsJSON = string(settingsBytes)
+	} else {
+		complianceSettingsJSON = "{}"
+	}
+
 	// Update in Neo4j
 	query := `
 		MATCH (n:Notebook {id: $notebook_id})
@@ -188,7 +218,7 @@ func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string,
 		"description":         notebook.Description,
 		"visibility":          notebook.Visibility,
 		"status":              notebook.Status,
-		"compliance_settings": notebook.ComplianceSettings,
+		"compliance_settings": complianceSettingsJSON,
 		"tags":                notebook.Tags,
 		"search_text":         notebook.SearchText,
 		"updated_at":          notebook.UpdatedAt.Format(time.RFC3339),
@@ -267,7 +297,7 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limi
 		)
 		OPTIONAL MATCH (n)-[:OWNED_BY]->(owner:User)
 		RETURN n.id, n.name, n.description, n.visibility, n.status, n.owner_id,
-		       n.compliance_settings, n.document_count, n.total_size_bytes,
+		       n.parent_id, n.compliance_settings, n.document_count, n.total_size_bytes,
 		       n.tags, n.created_at, n.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 		ORDER BY n.updated_at DESC
@@ -397,7 +427,7 @@ func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.Notebo
 		%s
 		OPTIONAL MATCH (n)-[:OWNED_BY]->(owner:User)
 		RETURN n.id, n.name, n.description, n.visibility, n.status, n.owner_id,
-		       n.document_count, n.total_size_bytes, n.tags, n.created_at, n.updated_at,
+		       n.parent_id, n.document_count, n.total_size_bytes, n.tags, n.created_at, n.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 		ORDER BY n.updated_at DESC
 		SKIP $offset
@@ -559,11 +589,253 @@ func (s *NotebookService) canUserWriteNotebook(ctx context.Context, notebook *mo
 }
 
 func (s *NotebookService) recordToNotebook(record interface{}) (*models.Notebook, error) {
-	// Implementation would convert Neo4j record to Notebook model
-	return &models.Notebook{}, nil
+	// Cast the record to the proper Neo4j record type
+	neo4jRecord, ok := record.(*neo4j.Record)
+	if !ok {
+		return nil, errors.Internal("Invalid record type")
+	}
+
+	// Extract basic notebook fields
+	id, _ := neo4jRecord.Get("n.id")
+	name, _ := neo4jRecord.Get("n.name")
+	description, _ := neo4jRecord.Get("n.description")
+	visibility, _ := neo4jRecord.Get("n.visibility")
+	status, _ := neo4jRecord.Get("n.status")
+	ownerID, _ := neo4jRecord.Get("n.owner_id")
+	parentID, _ := neo4jRecord.Get("n.parent_id")
+	documentCount, _ := neo4jRecord.Get("n.document_count")
+	totalSizeBytes, _ := neo4jRecord.Get("n.total_size_bytes")
+	createdAt, _ := neo4jRecord.Get("n.created_at")
+	updatedAt, _ := neo4jRecord.Get("n.updated_at")
+
+	// Extract compliance settings (JSON string)
+	complianceSettingsStr, _ := neo4jRecord.Get("n.compliance_settings")
+	var complianceSettings map[string]interface{}
+	if complianceSettingsStr != nil && complianceSettingsStr.(string) != "" {
+		var err error
+		complianceSettings, err = s.deserializeComplianceSettings(complianceSettingsStr.(string))
+		if err != nil {
+			s.logger.Warn("Failed to deserialize compliance settings", zap.Error(err))
+		}
+	}
+
+	// Extract tags (string array)
+	tagsInterface, _ := neo4jRecord.Get("n.tags")
+	var tags []string
+	if tagsInterface != nil {
+		if tagSlice, ok := tagsInterface.([]interface{}); ok {
+			for _, tag := range tagSlice {
+				if tagStr, ok := tag.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		}
+	}
+
+	// Parse timestamps
+	var createdAtTime, updatedAtTime time.Time
+	if createdAt != nil {
+		if timeStr, ok := createdAt.(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
+				createdAtTime = parsed
+			}
+		} else if neo4jTime, ok := createdAt.(time.Time); ok {
+			createdAtTime = neo4jTime
+		}
+	}
+	
+	if updatedAt != nil {
+		if timeStr, ok := updatedAt.(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
+				updatedAtTime = parsed
+			}
+		} else if neo4jTime, ok := updatedAt.(time.Time); ok {
+			updatedAtTime = neo4jTime
+		}
+	}
+
+	// Build the notebook model
+	notebook := &models.Notebook{
+		ID:                 s.getString(id),
+		Name:               s.getString(name),
+		Description:        s.getString(description),
+		Visibility:         s.getString(visibility),
+		Status:             s.getString(status),
+		OwnerID:            s.getString(ownerID),
+		ParentID:           s.getString(parentID),
+		ComplianceSettings: complianceSettings,
+		DocumentCount:      s.getInt(documentCount),
+		TotalSizeBytes:     s.getInt64(totalSizeBytes),
+		Tags:               tags,
+		CreatedAt:          createdAtTime,
+		UpdatedAt:          updatedAtTime,
+	}
+
+	return notebook, nil
 }
 
 func (s *NotebookService) recordToNotebookResponse(record interface{}) (*models.NotebookResponse, error) {
-	// Implementation would convert Neo4j record to NotebookResponse model
-	return &models.NotebookResponse{}, nil
+	// Cast the record to the proper Neo4j record type
+	neo4jRecord, ok := record.(*neo4j.Record)
+	if !ok {
+		return nil, errors.Internal("Invalid record type")
+	}
+
+	// Extract basic notebook fields
+	id, _ := neo4jRecord.Get("n.id")
+	name, _ := neo4jRecord.Get("n.name")
+	description, _ := neo4jRecord.Get("n.description")
+	visibility, _ := neo4jRecord.Get("n.visibility")
+	status, _ := neo4jRecord.Get("n.status")
+	ownerID, _ := neo4jRecord.Get("n.owner_id")
+	parentID, _ := neo4jRecord.Get("n.parent_id")
+	documentCount, _ := neo4jRecord.Get("n.document_count")
+	totalSizeBytes, _ := neo4jRecord.Get("n.total_size_bytes")
+	createdAt, _ := neo4jRecord.Get("n.created_at")
+	updatedAt, _ := neo4jRecord.Get("n.updated_at")
+
+	// Extract compliance settings (JSON string)
+	complianceSettingsStr, _ := neo4jRecord.Get("n.compliance_settings")
+	var complianceSettings map[string]interface{}
+	if complianceSettingsStr != nil && complianceSettingsStr.(string) != "" {
+		var err error
+		complianceSettings, err = s.deserializeComplianceSettings(complianceSettingsStr.(string))
+		if err != nil {
+			s.logger.Warn("Failed to deserialize compliance settings", zap.Error(err))
+		}
+	}
+
+	// Extract tags (string array)
+	tagsInterface, _ := neo4jRecord.Get("n.tags")
+	var tags []string
+	if tagsInterface != nil {
+		if tagSlice, ok := tagsInterface.([]interface{}); ok {
+			for _, tag := range tagSlice {
+				if tagStr, ok := tag.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		}
+	}
+
+	// Extract owner information (optional)
+	var owner *models.PublicUserResponse
+	ownerUsername, hasOwnerUsername := neo4jRecord.Get("owner.username")
+	ownerFullName, hasOwnerFullName := neo4jRecord.Get("owner.full_name")
+	ownerAvatarURL, hasOwnerAvatarURL := neo4jRecord.Get("owner.avatar_url")
+	
+	if hasOwnerUsername || hasOwnerFullName || hasOwnerAvatarURL {
+		owner = &models.PublicUserResponse{
+			ID: s.getString(ownerID), // Use the owner_id from the notebook
+		}
+		if hasOwnerUsername && ownerUsername != nil {
+			owner.Username = ownerUsername.(string)
+		}
+		if hasOwnerFullName && ownerFullName != nil {
+			owner.FullName = ownerFullName.(string)
+		}
+		if hasOwnerAvatarURL && ownerAvatarURL != nil {
+			owner.AvatarURL = ownerAvatarURL.(string)
+		}
+	}
+
+	// Parse timestamps
+	var createdAtTime, updatedAtTime time.Time
+	if createdAt != nil {
+		if timeStr, ok := createdAt.(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
+				createdAtTime = parsed
+			}
+		} else if neo4jTime, ok := createdAt.(time.Time); ok {
+			createdAtTime = neo4jTime
+		}
+	}
+	
+	if updatedAt != nil {
+		if timeStr, ok := updatedAt.(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
+				updatedAtTime = parsed
+			}
+		} else if neo4jTime, ok := updatedAt.(time.Time); ok {
+			updatedAtTime = neo4jTime
+		}
+	}
+
+	// Build the response
+	response := &models.NotebookResponse{
+		ID:                 s.getString(id),
+		Name:               s.getString(name),
+		Description:        s.getString(description),
+		Visibility:         s.getString(visibility),
+		Status:             s.getString(status),
+		OwnerID:            s.getString(ownerID),
+		ParentID:           s.getString(parentID),
+		ComplianceSettings: complianceSettings,
+		DocumentCount:      s.getInt(documentCount),
+		TotalSizeBytes:     s.getInt64(totalSizeBytes),
+		Tags:               tags,
+		CreatedAt:          createdAtTime,
+		UpdatedAt:          updatedAtTime,
+		Owner:              owner,
+	}
+
+	return response, nil
+}
+
+// Helper functions for type conversion
+func (s *NotebookService) getString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return str
+	}
+	return ""
+}
+
+func (s *NotebookService) getInt(value interface{}) int {
+	if value == nil {
+		return 0
+	}
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
+func (s *NotebookService) getInt64(value interface{}) int64 {
+	if value == nil {
+		return 0
+	}
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
+// deserializeComplianceSettings converts a JSON string back to map[string]interface{}
+// This function is used by recordToNotebook and recordToNotebookResponse when they are fully implemented
+//nolint:unused // Will be used when record parsing functions are implemented
+func (s *NotebookService) deserializeComplianceSettings(jsonString string) (map[string]interface{}, error) {
+	if jsonString == "" || jsonString == "{}" {
+		return nil, nil
+	}
+	
+	var settings map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonString), &settings); err != nil {
+		s.logger.Error("Failed to deserialize compliance settings", zap.String("json", jsonString), zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to deserialize compliance settings", err)
+	}
+	
+	return settings, nil
 }

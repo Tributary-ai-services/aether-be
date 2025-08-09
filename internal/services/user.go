@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -66,6 +67,19 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		RETURN u
 	`
 
+	// Serialize preferences to JSON string for Neo4j storage
+	var preferencesJSON string
+	if user.Preferences != nil {
+		preferencesBytes, err := json.Marshal(user.Preferences)
+		if err != nil {
+			s.logger.Error("Failed to serialize user preferences", zap.Error(err))
+			return nil, errors.InternalWithCause("Failed to serialize user preferences", err)
+		}
+		preferencesJSON = string(preferencesBytes)
+	} else {
+		preferencesJSON = "{}"
+	}
+
 	params := map[string]interface{}{
 		"id":          user.ID,
 		"keycloak_id": user.KeycloakID,
@@ -73,7 +87,7 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		"username":    user.Username,
 		"full_name":   user.FullName,
 		"avatar_url":  user.AvatarURL,
-		"preferences": user.Preferences,
+		"preferences": preferencesJSON,
 		"status":      user.Status,
 		"created_at":  user.CreatedAt.Format(time.RFC3339),
 		"updated_at":  user.UpdatedAt.Format(time.RFC3339),
@@ -217,11 +231,24 @@ func (s *UserService) UpdateUser(ctx context.Context, userID string, req models.
 		RETURN u
 	`
 
+	// Serialize preferences to JSON string for Neo4j storage
+	var preferencesJSON string
+	if user.Preferences != nil {
+		preferencesBytes, err := json.Marshal(user.Preferences)
+		if err != nil {
+			s.logger.Error("Failed to serialize user preferences during update", zap.Error(err))
+			return nil, errors.InternalWithCause("Failed to serialize user preferences", err)
+		}
+		preferencesJSON = string(preferencesBytes)
+	} else {
+		preferencesJSON = "{}"
+	}
+
 	params := map[string]interface{}{
 		"user_id":     userID,
 		"full_name":   user.FullName,
 		"avatar_url":  user.AvatarURL,
-		"preferences": user.Preferences,
+		"preferences": preferencesJSON,
 		"status":      user.Status,
 		"updated_at":  user.UpdatedAt.Format(time.RFC3339),
 	}

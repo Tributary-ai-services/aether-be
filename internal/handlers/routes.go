@@ -13,13 +13,15 @@ import (
 
 // APIServer represents the API server with all dependencies
 type APIServer struct {
-	Router          *gin.Engine
-	UserHandler     *UserHandler
-	NotebookHandler *NotebookHandler
-	DocumentHandler *DocumentHandler
-	HealthHandler   *HealthHandler
-	Metrics         *metrics.Metrics
-	logger          *logger.Logger
+	Router              *gin.Engine
+	UserHandler         *UserHandler
+	NotebookHandler     *NotebookHandler
+	DocumentHandler     *DocumentHandler
+	TeamHandler         *TeamHandler
+	OrganizationHandler *OrganizationHandler
+	HealthHandler       *HealthHandler
+	Metrics             *metrics.Metrics
+	logger              *logger.Logger
 }
 
 // NewAPIServer creates a new API server with all routes configured
@@ -36,6 +38,8 @@ func NewAPIServer(
 	userService := services.NewUserService(neo4j, redis, log)
 	notebookService := services.NewNotebookService(neo4j, redis, log)
 	documentService := services.NewDocumentService(neo4j, redis, log)
+	teamService := services.NewTeamService(neo4j, redis, log)
+	organizationService := services.NewOrganizationService(neo4j, redis, log)
 
 	// Set dependencies for document service
 	documentService.SetStorageService(storageService)
@@ -45,6 +49,8 @@ func NewAPIServer(
 	userHandler := NewUserHandler(userService, log)
 	notebookHandler := NewNotebookHandler(notebookService, log)
 	documentHandler := NewDocumentHandler(documentService, log)
+	teamHandler := NewTeamHandler(teamService, log)
+	organizationHandler := NewOrganizationHandler(organizationService, log)
 	healthHandler := NewHealthHandler(neo4j, redis, storageService, kafkaService, log)
 
 	// Create Gin router
@@ -62,13 +68,15 @@ func NewAPIServer(
 	router.Use(metrics.HTTPMetricsMiddleware(metricsInstance, log))
 
 	server := &APIServer{
-		Router:          router,
-		UserHandler:     userHandler,
-		NotebookHandler: notebookHandler,
-		DocumentHandler: documentHandler,
-		HealthHandler:   healthHandler,
-		Metrics:         metricsInstance,
-		logger:          log.WithService("api_server"),
+		Router:              router,
+		UserHandler:         userHandler,
+		NotebookHandler:     notebookHandler,
+		DocumentHandler:     documentHandler,
+		TeamHandler:         teamHandler,
+		OrganizationHandler: organizationHandler,
+		HealthHandler:       healthHandler,
+		Metrics:             metricsInstance,
+		logger:              log.WithService("api_server"),
 	}
 
 	// Setup routes
@@ -112,8 +120,8 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		notebooks.DELETE("/:id", s.NotebookHandler.DeleteNotebook)
 		notebooks.POST("/:id/share", s.NotebookHandler.ShareNotebook)
 
-		// Documents within notebooks
-		notebooks.GET("/:notebook_id/documents", s.DocumentHandler.ListDocumentsByNotebook)
+		// Documents within notebooks - use same parameter name to avoid conflict
+		notebooks.GET("/:id/documents", s.DocumentHandler.ListDocumentsByNotebook)
 	}
 
 	// Document routes
@@ -126,6 +134,38 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		documents.DELETE("/:id", s.DocumentHandler.DeleteDocument)
 		documents.GET("/:id/download", s.DocumentHandler.DownloadDocument)
 		documents.GET("/:id/url", s.DocumentHandler.GetDocumentURL)
+	}
+
+	// Team routes
+	teams := api.Group("/teams")
+	{
+		teams.POST("", s.TeamHandler.CreateTeam)
+		teams.GET("", s.TeamHandler.GetTeams)
+		teams.GET("/:id", s.TeamHandler.GetTeam)
+		teams.PUT("/:id", s.TeamHandler.UpdateTeam)
+		teams.DELETE("/:id", s.TeamHandler.DeleteTeam)
+		
+		// Team member routes
+		teams.GET("/:id/members", s.TeamHandler.GetTeamMembers)
+		teams.POST("/:id/members", s.TeamHandler.InviteTeamMember)
+		teams.PUT("/:id/members/:user_id", s.TeamHandler.UpdateTeamMemberRole)
+		teams.DELETE("/:id/members/:user_id", s.TeamHandler.RemoveTeamMember)
+	}
+
+	// Organization routes
+	organizations := api.Group("/organizations")
+	{
+		organizations.POST("", s.OrganizationHandler.CreateOrganization)
+		organizations.GET("", s.OrganizationHandler.GetOrganizations)
+		organizations.GET("/:id", s.OrganizationHandler.GetOrganization)
+		organizations.PUT("/:id", s.OrganizationHandler.UpdateOrganization)
+		organizations.DELETE("/:id", s.OrganizationHandler.DeleteOrganization)
+		
+		// Organization member routes
+		organizations.GET("/:id/members", s.OrganizationHandler.GetOrganizationMembers)
+		organizations.POST("/:id/members", s.OrganizationHandler.InviteOrganizationMember)
+		organizations.PUT("/:id/members/:user_id", s.OrganizationHandler.UpdateOrganizationMemberRole)
+		organizations.DELETE("/:id/members/:user_id", s.OrganizationHandler.RemoveOrganizationMember)
 	}
 
 	// Admin routes (require admin role)

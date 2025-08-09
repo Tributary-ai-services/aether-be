@@ -26,8 +26,8 @@ type Document struct {
 
 	// Content and processing
 	ExtractedText    string                 `json:"extracted_text,omitempty"`
-	ProcessingResult map[string]interface{} `json:"processing_result,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
 
 	// Relationships
 	NotebookID string `json:"notebook_id" validate:"required,uuid"`
@@ -75,8 +75,8 @@ type DocumentResponse struct {
 	MimeType         string                 `json:"mime_type"`
 	SizeBytes        int64                  `json:"size_bytes"`
 	ExtractedText    string                 `json:"extracted_text,omitempty"`
-	ProcessingResult map[string]interface{} `json:"processing_result,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
 	NotebookID       string                 `json:"notebook_id"`
 	OwnerID          string                 `json:"owner_id"`
 	Tags             []string               `json:"tags,omitempty"`
@@ -127,10 +127,10 @@ type ProcessingJob struct {
 	Progress   int    `json:"progress" validate:"min=0,max=100"`
 
 	// Job configuration
-	Config map[string]interface{} `json:"config,omitempty"`
+	Config map[string]interface{} `json:"config,omitempty" validate:"omitempty,neo4j_compatible"`
 
 	// Results and errors
-	Result map[string]interface{} `json:"result,omitempty"`
+	Result map[string]interface{} `json:"result,omitempty" validate:"omitempty,neo4j_compatible"`
 	Error  string                 `json:"error,omitempty"`
 
 	// Timestamps

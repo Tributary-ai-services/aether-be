@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -99,6 +100,19 @@ func (s *DocumentService) CreateDocument(ctx context.Context, req models.Documen
 		RETURN d
 	`
 
+	// Serialize metadata to JSON string for Neo4j storage
+	var metadataJSON string
+	if document.Metadata != nil {
+		metadataBytes, err := json.Marshal(document.Metadata)
+		if err != nil {
+			s.logger.Error("Failed to serialize document metadata", zap.Error(err))
+			return nil, errors.InternalWithCause("Failed to serialize document metadata", err)
+		}
+		metadataJSON = string(metadataBytes)
+	} else {
+		metadataJSON = "{}"
+	}
+
 	params := map[string]interface{}{
 		"id":             document.ID,
 		"name":           document.Name,
@@ -115,7 +129,7 @@ func (s *DocumentService) CreateDocument(ctx context.Context, req models.Documen
 		"owner_id":       document.OwnerID,
 		"tags":           document.Tags,
 		"search_text":    document.SearchText,
-		"metadata":       document.Metadata,
+		"metadata":       metadataJSON,
 		"created_at":     document.CreatedAt.Format(time.RFC3339),
 		"updated_at":     document.UpdatedAt.Format(time.RFC3339),
 	}

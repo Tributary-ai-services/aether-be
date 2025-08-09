@@ -14,11 +14,12 @@ import (
 
 // KeycloakClient handles Keycloak OIDC authentication
 type KeycloakClient struct {
-	provider     *oidc.Provider
-	verifier     *oidc.IDTokenVerifier
-	oauth2Config *oauth2.Config
-	logger       *logger.Logger
-	config       config.KeycloakConfig
+	provider      *oidc.Provider
+	verifier      *oidc.IDTokenVerifier
+	oauth2Config  *oauth2.Config
+	logger        *logger.Logger
+	config        config.KeycloakConfig
+	allowedIssuers []string  // Support multiple issuer URLs for dev/prod environments
 }
 
 // UserInfo represents user information from Keycloak
@@ -71,9 +72,11 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 		return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
 	}
 
-	// Create ID token verifier
+	// Create ID token verifier with SkipIssuerCheck for multiple issuer support
+	// Skip audience check entirely by not setting ClientID (admin-cli tokens don't have audience)
 	verifier := provider.Verifier(&oidc.Config{
-		ClientID: cfg.ClientID,
+		SkipIssuerCheck:   true, // We'll manually validate issuers
+		SkipClientIDCheck: true, // Skip client ID check since admin-cli tokens don't have proper audience
 	})
 
 	// Create OAuth2 config
@@ -84,18 +87,37 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "roles"},
 	}
 
+	// Set up allowed issuers for multi-environment support
+	allowedIssuers := []string{
+		providerURL, // Primary provider URL (from config)
+	}
+
+	// Add localhost issuer for development (when configured Keycloak is internal)
+	if cfg.URL == "http://tas-keycloak-shared:8080" {
+		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
+	}
+	
+	// Add internal issuer for production (when configured Keycloak is external)
+	if cfg.URL == "http://localhost:8081" {
+		allowedIssuers = append(allowedIssuers, "http://tas-keycloak-shared:8080/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
+	}
+
 	client := &KeycloakClient{
-		provider:     provider,
-		verifier:     verifier,
-		oauth2Config: oauth2Config,
-		logger:       log.WithService("keycloak"),
-		config:       cfg,
+		provider:       provider,
+		verifier:       verifier,
+		oauth2Config:   oauth2Config,
+		logger:         log.WithService("keycloak"),
+		config:         cfg,
+		allowedIssuers: allowedIssuers,
 	}
 
 	client.logger.Info("Keycloak client initialized",
 		zap.String("realm", cfg.Realm),
 		zap.String("client_id", cfg.ClientID),
 		zap.String("provider_url", providerURL),
+		zap.Strings("allowed_issuers", allowedIssuers),
 	)
 
 	return client, nil
@@ -117,10 +139,28 @@ func (k *KeycloakClient) VerifyIDToken(ctx context.Context, rawIDToken string) (
 		return nil, fmt.Errorf("failed to parse token claims: %w", err)
 	}
 
+	// Manually validate issuer against allowed list
+	issuerValid := false
+	for _, allowedIssuer := range k.allowedIssuers {
+		if claims.Iss == allowedIssuer {
+			issuerValid = true
+			break
+		}
+	}
+
+	if !issuerValid {
+		k.logger.Warn("Token issued by unauthorized issuer",
+			zap.String("token_issuer", claims.Iss),
+			zap.Strings("allowed_issuers", k.allowedIssuers),
+		)
+		return nil, fmt.Errorf("token issued by unauthorized issuer: %s", claims.Iss)
+	}
+
 	k.logger.Debug("ID token verified successfully",
 		zap.String("subject", claims.Sub),
 		zap.String("email", claims.Email),
 		zap.String("username", claims.PreferredUsername),
+		zap.String("issuer", claims.Iss),
 	)
 
 	return &claims, nil

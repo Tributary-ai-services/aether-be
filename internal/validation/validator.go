@@ -56,6 +56,9 @@ func init() {
 	if err := validate.RegisterValidation("document_type", validateDocumentType); err != nil {
 		panic(fmt.Sprintf("Failed to register document_type validation: %v", err))
 	}
+	if err := validate.RegisterValidation("neo4j_compatible", validateNeo4jCompatible); err != nil {
+		panic(fmt.Sprintf("Failed to register neo4j_compatible validation: %v", err))
+	}
 
 	// Register function to get struct field names for better error messages
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -244,6 +247,107 @@ func validateDocumentType(fl validator.FieldLevel) bool {
 	return false
 }
 
+func validateNeo4jCompatible(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	return isNeo4jCompatibleValue(field)
+}
+
+// isNeo4jCompatibleValue checks if a value can be stored as a Neo4j property
+func isNeo4jCompatibleValue(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true // nil values are allowed
+	}
+
+	switch v.Kind() {
+	case reflect.String, reflect.Bool:
+		return true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	case reflect.Float32, reflect.Float64:
+		return true
+	case reflect.Slice, reflect.Array:
+		// Arrays/slices are allowed if they contain primitive types
+		for i := 0; i < v.Len(); i++ {
+			if !isNeo4jCompatibleValue(v.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		// Maps are allowed if they contain only primitive values (depth 1 only)
+		for _, key := range v.MapKeys() {
+			if !isPrimitiveValue(key) {
+				return false
+			}
+			mapValue := v.MapIndex(key)
+			if !isPrimitiveValue(mapValue) && !isArrayOfPrimitives(mapValue) {
+				return false
+			}
+		}
+		return true
+	case reflect.Interface:
+		// Check the underlying value
+		if v.IsNil() {
+			return true
+		}
+		return isNeo4jCompatibleValue(v.Elem())
+	default:
+		// Complex types like structs, channels, functions are not allowed
+		return false
+	}
+}
+
+// isPrimitiveValue checks if a value is a primitive type (no nested maps/slices)
+func isPrimitiveValue(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true
+	}
+
+	switch v.Kind() {
+	case reflect.String, reflect.Bool:
+		return true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	case reflect.Float32, reflect.Float64:
+		return true
+	case reflect.Interface:
+		if v.IsNil() {
+			return true
+		}
+		return isPrimitiveValue(v.Elem())
+	default:
+		return false
+	}
+}
+
+// isArrayOfPrimitives checks if a value is an array/slice of primitive types
+func isArrayOfPrimitives(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true
+	}
+
+	switch v.Kind() {
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if !isPrimitiveValue(v.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Interface:
+		if v.IsNil() {
+			return true
+		}
+		return isArrayOfPrimitives(v.Elem())
+	default:
+		return false
+	}
+}
+
 // getValidationMessage returns a human-readable validation error message
 func getValidationMessage(fe validator.FieldError) string {
 	field := fe.Field()
@@ -290,6 +394,8 @@ func getValidationMessage(fe validator.FieldError) string {
 		return fmt.Sprintf("%s must be one of: active, inactive, suspended, pending", field)
 	case "document_type":
 		return fmt.Sprintf("%s must be a valid document type", field)
+	case "neo4j_compatible":
+		return fmt.Sprintf("%s contains complex nested objects that cannot be stored in the database. Only primitive values and simple objects are allowed", field)
 	case "gte":
 		return fmt.Sprintf("%s must be greater than or equal to %s", field, param)
 	case "lte":

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -122,8 +123,72 @@ func (c *Neo4jClient) WriteTransaction(ctx context.Context, work neo4j.ManagedTr
 	return result, nil
 }
 
+// validateNeo4jParameters validates that all parameters are Neo4j-compatible primitive types
+func (c *Neo4jClient) validateNeo4jParameters(params map[string]interface{}) error {
+	for key, value := range params {
+		if err := c.validateNeo4jValue(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNeo4jValue checks if a value is a valid Neo4j property type
+func (c *Neo4jClient) validateNeo4jValue(key string, value interface{}) error {
+	if value == nil {
+		return nil
+	}
+
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.String, reflect.Bool:
+		return nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return nil
+	case reflect.Float32, reflect.Float64:
+		return nil
+	case reflect.Slice, reflect.Array:
+		// Arrays/slices are allowed if they contain primitive types
+		return c.validateNeo4jSlice(key, value)
+	default:
+		// Complex types like maps, structs are not allowed
+		return fmt.Errorf("parameter '%s' contains invalid type %T (Neo4j only supports primitive types and arrays thereof)", key, value)
+	}
+}
+
+// validateNeo4jSlice validates that slice/array elements are primitive types
+func (c *Neo4jClient) validateNeo4jSlice(key string, value interface{}) error {
+	v := reflect.ValueOf(value)
+	for i := 0; i < v.Len(); i++ {
+		elem := v.Index(i).Interface()
+		if elem == nil {
+			continue
+		}
+		
+		switch reflect.TypeOf(elem).Kind() {
+		case reflect.String, reflect.Bool:
+			continue
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			continue
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			continue
+		case reflect.Float32, reflect.Float64:
+			continue
+		default:
+			return fmt.Errorf("parameter '%s' contains array element of invalid type %T (Neo4j arrays can only contain primitive types)", key, elem)
+		}
+	}
+	return nil
+}
+
 // ExecuteQuery executes a query with parameters
 func (c *Neo4jClient) ExecuteQuery(ctx context.Context, query string, params map[string]interface{}) (*neo4j.EagerResult, error) {
+	// Validate parameters before execution
+	if err := c.validateNeo4jParameters(params); err != nil {
+		c.logger.Error("Invalid Neo4j parameters", zap.Error(err))
+		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
 	start := time.Now()
 	result, err := neo4j.ExecuteQuery(ctx, c.driver, query, params,
 		neo4j.EagerResultTransformer,

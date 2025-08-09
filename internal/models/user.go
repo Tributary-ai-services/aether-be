@@ -18,10 +18,10 @@ type User struct {
 	// Keycloak sync data
 	KeycloakRoles      []string               `json:"keycloak_roles,omitempty"`
 	KeycloakGroups     []string               `json:"keycloak_groups,omitempty"`
-	KeycloakAttributes map[string]interface{} `json:"keycloak_attributes,omitempty"`
+	KeycloakAttributes map[string]interface{} `json:"keycloak_attributes,omitempty" validate:"omitempty,neo4j_compatible"`
 
 	// Local app data
-	Preferences map[string]interface{} `json:"preferences,omitempty"`
+	Preferences map[string]interface{} `json:"preferences,omitempty" validate:"omitempty,neo4j_compatible"`
 	Status      string                 `json:"status" validate:"required,oneof=active inactive suspended"`
 
 	// Timestamps
@@ -38,14 +38,14 @@ type UserCreateRequest struct {
 	Username    string                 `json:"username" validate:"required,username,min=3,max=50"`
 	FullName    string                 `json:"full_name" validate:"required,safe_string,min=2,max=100"`
 	AvatarURL   string                 `json:"avatar_url,omitempty" validate:"omitempty,url,max=500"`
-	Preferences map[string]interface{} `json:"preferences,omitempty"`
+	Preferences map[string]interface{} `json:"preferences,omitempty" validate:"omitempty,neo4j_compatible"`
 }
 
 // UserUpdateRequest represents a request to update a user
 type UserUpdateRequest struct {
 	FullName    *string                `json:"full_name,omitempty" validate:"omitempty,safe_string,min=2,max=100"`
 	AvatarURL   *string                `json:"avatar_url,omitempty" validate:"omitempty,url,max=500"`
-	Preferences map[string]interface{} `json:"preferences,omitempty"`
+	Preferences map[string]interface{} `json:"preferences,omitempty" validate:"omitempty,neo4j_compatible"`
 	Status      *string                `json:"status,omitempty" validate:"omitempty,user_status"`
 }
 
@@ -195,7 +195,7 @@ type UserPreferences struct {
 	DateFormat    string                 `json:"date_format,omitempty"`
 	Theme         string                 `json:"theme,omitempty"`
 	Notifications map[string]bool        `json:"notifications,omitempty"`
-	Settings      map[string]interface{} `json:"settings,omitempty"`
+	Settings      map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
 }
 
 // UserStats represents user statistics

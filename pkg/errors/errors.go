@@ -123,6 +123,21 @@ type ValidationError struct {
 	Value   interface{} `json:"value,omitempty"`
 }
 
+// ForbiddenWithDetails creates a forbidden error with details
+func ForbiddenWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrForbidden, message, details)
+}
+
+// DatabaseWithDetails creates a database error with details
+func DatabaseWithDetails(message string, cause error, details map[string]interface{}) *APIError {
+	return NewAPIErrorWithCause(ErrDatabaseError, message, cause, details)
+}
+
+// ValidationWithDetails creates a validation error with details
+func ValidationWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrValidation, message, details)
+}
+
 // NewValidationError creates a validation error with field details
 func NewValidationError(message string, validationErrors []ValidationError) *APIError {
 	details := map[string]interface{}{

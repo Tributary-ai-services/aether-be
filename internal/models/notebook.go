@@ -17,8 +17,11 @@ type Notebook struct {
 	// Owner information
 	OwnerID string `json:"owner_id" validate:"required,uuid"`
 
+	// Parent notebook ID (for hierarchical structure)
+	ParentID string `json:"parent_id,omitempty" validate:"omitempty,uuid"`
+
 	// Compliance settings
-	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
 
 	// Metadata
 	DocumentCount  int      `json:"document_count"`
@@ -37,7 +40,7 @@ type NotebookCreateRequest struct {
 	Description        string                 `json:"description,omitempty" validate:"safe_string,max=1000"`
 	Visibility         string                 `json:"visibility" validate:"required,notebook_visibility"`
 	ParentID           string                 `json:"parent_id,omitempty" validate:"omitempty,uuid"`
-	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
 	Tags               []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
 }
 
@@ -47,7 +50,7 @@ type NotebookUpdateRequest struct {
 	Description        *string                `json:"description,omitempty" validate:"omitempty,safe_string,max=1000"`
 	Visibility         *string                `json:"visibility,omitempty" validate:"omitempty,notebook_visibility"`
 	Status             *string                `json:"status,omitempty" validate:"omitempty,oneof=active archived deleted"`
-	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
 	Tags               []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
 }
 
@@ -59,7 +62,8 @@ type NotebookResponse struct {
 	Visibility         string                 `json:"visibility"`
 	Status             string                 `json:"status"`
 	OwnerID            string                 `json:"owner_id"`
-	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`
+	ParentID           string                 `json:"parent_id,omitempty"`
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
 	DocumentCount      int                    `json:"document_count"`
 	TotalSizeBytes     int64                  `json:"total_size_bytes"`
 	Tags               []string               `json:"tags,omitempty"`
@@ -139,6 +143,7 @@ func NewNotebook(req NotebookCreateRequest, ownerID string) *Notebook {
 		Visibility:         req.Visibility,
 		Status:             "active",
 		OwnerID:            ownerID,
+		ParentID:           req.ParentID,
 		ComplianceSettings: req.ComplianceSettings,
 		Tags:               req.Tags,
 		SearchText:         buildNotebookSearchText(req.Name, req.Description, req.Tags),
@@ -158,6 +163,7 @@ func (n *Notebook) ToResponse() *NotebookResponse {
 		Visibility:         n.Visibility,
 		Status:             n.Status,
 		OwnerID:            n.OwnerID,
+		ParentID:           n.ParentID,
 		ComplianceSettings: n.ComplianceSettings,
 		DocumentCount:      n.DocumentCount,
 		TotalSizeBytes:     n.TotalSizeBytes,
