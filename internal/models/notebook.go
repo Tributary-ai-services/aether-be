@@ -61,14 +61,14 @@ type NotebookResponse struct {
 	Description        string                 `json:"description,omitempty"`
 	Visibility         string                 `json:"visibility"`
 	Status             string                 `json:"status"`
-	OwnerID            string                 `json:"owner_id"`
-	ParentID           string                 `json:"parent_id,omitempty"`
-	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
-	DocumentCount      int                    `json:"document_count"`
-	TotalSizeBytes     int64                  `json:"total_size_bytes"`
+	OwnerID            string                 `json:"ownerId"`
+	ParentID           string                 `json:"parentId,omitempty"`
+	ComplianceSettings map[string]interface{} `json:"complianceSettings,omitempty" validate:"omitempty,neo4j_compatible"`
+	DocumentCount      int                    `json:"documentCount"`
+	TotalSizeBytes     int64                  `json:"totalSizeBytes"`
 	Tags               []string               `json:"tags,omitempty"`
-	CreatedAt          time.Time              `json:"created_at"`
-	UpdatedAt          time.Time              `json:"updated_at"`
+	CreatedAt          time.Time              `json:"createdAt"`
+	UpdatedAt          time.Time              `json:"updatedAt"`
 
 	// Optional fields for detailed responses
 	Owner    *PublicUserResponse `json:"owner,omitempty"`
@@ -82,7 +82,7 @@ type NotebookListResponse struct {
 	Total     int                 `json:"total"`
 	Limit     int                 `json:"limit"`
 	Offset    int                 `json:"offset"`
-	HasMore   bool                `json:"has_more"`
+	HasMore   bool                `json:"hasMore"`
 }
 
 // NotebookSearchRequest represents a notebook search request

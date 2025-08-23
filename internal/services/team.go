@@ -174,7 +174,8 @@ func (s *TeamService) GetTeams(ctx context.Context, userID string, organizationI
 			WITH t, user_role, count(*) as member_count
 			OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
 			WITH t, user_role, member_count, count(n) as notebook_count
-			RETURN t, user_role, member_count, notebook_count
+			OPTIONAL MATCH (owner:User {id: t.created_by})
+			RETURN t, user_role, member_count, notebook_count, owner.full_name as owner_name
 			ORDER BY t.created_at DESC`
 		params["organization_id"] = organizationID
 	} else {
@@ -185,7 +186,8 @@ func (s *TeamService) GetTeams(ctx context.Context, userID string, organizationI
 			WITH t, user_role, count(*) as member_count
 			OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
 			WITH t, user_role, member_count, count(n) as notebook_count
-			RETURN t, user_role, member_count, notebook_count
+			OPTIONAL MATCH (owner:User {id: t.created_by})
+			RETURN t, user_role, member_count, notebook_count, owner.full_name as owner_name
 			ORDER BY t.created_at DESC`
 	}
 
@@ -864,6 +866,10 @@ func (s *TeamService) recordToTeam(record *neo4j.Record) (*models.Team, error) {
 		if count, ok := notebookCount.(int64); ok {
 			team.NotebookCount = int(count)
 		}
+	}
+
+	if ownerName, ok := record.Get("owner_name"); ok && ownerName != nil {
+		team.OwnerName = ownerName.(string)
 	}
 
 	return team, nil

@@ -14,15 +14,17 @@ import (
 
 // OrganizationHandler handles organization-related HTTP requests
 type OrganizationHandler struct {
-	orgService *services.OrganizationService
-	logger     *logger.Logger
+	orgService  *services.OrganizationService
+	userService *services.UserService
+	logger      *logger.Logger
 }
 
 // NewOrganizationHandler creates a new organization handler
-func NewOrganizationHandler(orgService *services.OrganizationService, log *logger.Logger) *OrganizationHandler {
+func NewOrganizationHandler(orgService *services.OrganizationService, userService *services.UserService, log *logger.Logger) *OrganizationHandler {
 	return &OrganizationHandler{
-		orgService: orgService,
-		logger:     log.WithService("organization_handler"),
+		orgService:  orgService,
+		userService: userService,
+		logger:      log.WithService("organization_handler"),
 	}
 }
 
@@ -41,9 +43,11 @@ func NewOrganizationHandler(orgService *services.OrganizationService, log *logge
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/organizations [post]
 func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Ensure user exists in Neo4j database
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to ensure user exists", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -79,9 +83,11 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/organizations [get]
 func (h *OrganizationHandler) GetOrganizations(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Ensure user exists in Neo4j database
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to ensure user exists", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 

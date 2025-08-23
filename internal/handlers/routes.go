@@ -47,10 +47,10 @@ func NewAPIServer(
 
 	// Initialize handlers
 	userHandler := NewUserHandler(userService, log)
-	notebookHandler := NewNotebookHandler(notebookService, log)
+	notebookHandler := NewNotebookHandler(notebookService, userService, log)
 	documentHandler := NewDocumentHandler(documentService, log)
-	teamHandler := NewTeamHandler(teamService, log)
-	organizationHandler := NewOrganizationHandler(organizationService, log)
+	teamHandler := NewTeamHandler(teamService, userService, log)
+	organizationHandler := NewOrganizationHandler(organizationService, userService, log)
 	healthHandler := NewHealthHandler(neo4j, redis, storageService, kafkaService, log)
 
 	// Create Gin router

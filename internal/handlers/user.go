@@ -45,11 +45,60 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.GetUserByID(c.Request.Context(), userID)
+	// First try to find user by Keycloak ID (from JWT sub claim)
+	user, err := h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Error("Failed to get current user", zap.String("user_id", userID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve user"))
-		return
+		// If user doesn't exist in Neo4j, try to create from JWT token
+		if errors.IsNotFound(err) {
+			h.logger.Info("User not found in database, creating from JWT token", zap.String("keycloak_id", userID))
+			
+			// Extract user info from JWT token context
+			email, _ := c.Get("user_email")
+			name, _ := c.Get("user_name")
+			username, _ := c.Get("username")
+			
+			emailStr, _ := email.(string)
+			nameStr, _ := name.(string)
+			usernameStr, _ := username.(string)
+			
+			// If username is empty, use email as username
+			if usernameStr == "" {
+				usernameStr = emailStr
+			}
+			
+			// Create user from JWT token data
+			createReq := models.UserCreateRequest{
+				KeycloakID: userID,
+				Email:      emailStr,
+				Username:   usernameStr,
+				FullName:   nameStr,
+			}
+			
+			user, err = h.userService.CreateUser(c.Request.Context(), createReq)
+			if err != nil {
+				// Check if it's a conflict error (user already exists)
+				if errors.IsConflict(err) {
+					h.logger.Warn("User creation conflict, attempting to fetch existing user", zap.String("keycloak_id", userID), zap.Error(err))
+					// Try one more time to get the user
+					user, err = h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
+					if err != nil {
+						h.logger.Error("Failed to fetch existing user after conflict", zap.String("keycloak_id", userID), zap.Error(err))
+						c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve user profile"))
+						return
+					}
+				} else {
+					h.logger.Error("Failed to create user from JWT token", zap.String("keycloak_id", userID), zap.Error(err))
+					c.JSON(http.StatusInternalServerError, errors.Internal("Failed to create user profile"))
+					return
+				}
+			} else {
+				h.logger.Info("Successfully created user from JWT token", zap.String("keycloak_id", userID), zap.String("email", emailStr))
+			}
+		} else {
+			h.logger.Error("Failed to get current user", zap.String("user_id", userID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve user"))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, user.ToResponse())

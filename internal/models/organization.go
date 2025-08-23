@@ -29,7 +29,7 @@ type Organization struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	MemberCount  int       `json:"member_count"`
 	TeamCount    int       `json:"team_count,omitempty"`
-	NotebookCount int      `json:"repository_count,omitempty"` // Named repository_count to match frontend
+	NotebookCount int      `json:"notebookCount,omitempty"` // Standardized on notebook naming
 
 	// Computed fields (not stored in database)
 	UserRole string `json:"user_role,omitempty"` // Current user's role in this organization
@@ -79,7 +79,7 @@ type OrganizationResponse struct {
 	UpdatedAt      time.Time              `json:"updatedAt"`
 	MemberCount    int                    `json:"memberCount"`
 	TeamCount      int                    `json:"teamCount,omitempty"`
-	RepositoryCount int                   `json:"repositoryCount,omitempty"` // Match frontend naming
+	NotebookCount   int                   `json:"notebookCount,omitempty"` // Standardized on notebook naming
 	UserRole       string                 `json:"userRole,omitempty"`
 }
 
@@ -176,7 +176,7 @@ func (o *Organization) ToResponse() *OrganizationResponse {
 		UpdatedAt:       o.UpdatedAt,
 		MemberCount:     o.MemberCount,
 		TeamCount:       o.TeamCount,
-		RepositoryCount: o.NotebookCount, // Map to frontend naming
+		NotebookCount:   o.NotebookCount, // Consistent notebook naming
 		UserRole:        o.UserRole,
 	}
 }

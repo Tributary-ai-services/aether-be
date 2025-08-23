@@ -27,6 +27,7 @@ type Team struct {
 	// Computed fields (not stored in database)
 	UserRole      string `json:"user_role,omitempty"`      // Current user's role in this team
 	NotebookCount int    `json:"notebook_count,omitempty"` // Number of notebooks owned by team
+	OwnerName     string `json:"owner_name,omitempty"`     // Full name of the team owner
 }
 
 // TeamCreateRequest represents a request to create a team

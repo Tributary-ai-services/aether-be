@@ -15,13 +15,15 @@ import (
 // TeamHandler handles team-related HTTP requests
 type TeamHandler struct {
 	teamService *services.TeamService
+	userService *services.UserService
 	logger      *logger.Logger
 }
 
 // NewTeamHandler creates a new team handler
-func NewTeamHandler(teamService *services.TeamService, log *logger.Logger) *TeamHandler {
+func NewTeamHandler(teamService *services.TeamService, userService *services.UserService, log *logger.Logger) *TeamHandler {
 	return &TeamHandler{
 		teamService: teamService,
+		userService: userService,
 		logger:      log.WithService("team_handler"),
 	}
 }
@@ -40,9 +42,11 @@ func NewTeamHandler(teamService *services.TeamService, log *logger.Logger) *Team
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams [post]
 func (h *TeamHandler) CreateTeam(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Ensure user exists in Neo4j database
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to ensure user exists", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -79,9 +83,11 @@ func (h *TeamHandler) CreateTeam(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams [get]
 func (h *TeamHandler) GetTeams(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Ensure user exists in Neo4j database
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to ensure user exists", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 

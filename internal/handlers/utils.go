@@ -6,7 +6,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
+	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	"github.com/Tributary-ai-services/aether-be/internal/models"
+	"github.com/Tributary-ai-services/aether-be/internal/services"
 	"github.com/Tributary-ai-services/aether-be/internal/validation"
 	"github.com/Tributary-ai-services/aether-be/pkg/errors"
 )
@@ -21,6 +25,65 @@ func getUserID(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+// ensureUserExists ensures that the user exists in Neo4j database
+// This is needed because users authenticate via Keycloak but might not exist in Neo4j yet
+func ensureUserExists(c *gin.Context, userService *services.UserService, logger *logger.Logger) (string, error) {
+	keycloakID := getUserID(c)
+	if keycloakID == "" {
+		return "", errors.Unauthorized("User not authenticated")
+	}
+
+	// Try to find user by Keycloak ID
+	user, err := userService.GetUserByKeycloakID(c.Request.Context(), keycloakID)
+	if err == nil && user != nil {
+		// User exists, return their Neo4j ID
+		return user.ID, nil
+	}
+
+	// User doesn't exist, create them from JWT token info
+	if errors.IsNotFound(err) {
+		logger.Info("User not found in database, creating from JWT token", zap.String("keycloak_id", keycloakID))
+		
+		// Extract user info from JWT token context
+		email, _ := c.Get("user_email")
+		name, _ := c.Get("user_name")
+		username, _ := c.Get("username")
+		
+		emailStr, _ := email.(string)
+		nameStr, _ := name.(string)
+		usernameStr, _ := username.(string)
+		
+		if usernameStr == "" {
+			usernameStr = emailStr
+		}
+		if nameStr == "" {
+			nameStr = emailStr
+		}
+		
+		createReq := models.UserCreateRequest{
+			KeycloakID: keycloakID,
+			Email:      emailStr,
+			Username:   usernameStr,
+			FullName:   nameStr,
+			Preferences: map[string]interface{}{
+				"theme": "light",
+			},
+		}
+		
+		newUser, createErr := userService.CreateUser(c.Request.Context(), createReq)
+		if createErr != nil {
+			logger.Error("Failed to auto-create user", zap.Error(createErr))
+			return "", createErr
+		}
+		
+		logger.Info("User auto-created successfully", zap.String("user_id", newUser.ID))
+		return newUser.ID, nil
+	}
+
+	// Other error
+	return "", err
 }
 
 // getUserRoles extracts user roles from the Gin context

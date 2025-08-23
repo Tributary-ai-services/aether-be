@@ -280,6 +280,12 @@ func (s *NotebookService) DeleteNotebook(ctx context.Context, notebookID string,
 
 // ListNotebooks lists notebooks for a user
 func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limit, offset int) (*models.NotebookListResponse, error) {
+	s.logger.Info("ListNotebooks called",
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
+		zap.Int("offset", offset),
+	)
+
 	// Set defaults
 	if limit <= 0 || limit > 100 {
 		limit = 20
@@ -316,6 +322,11 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limi
 		s.logger.Error("Failed to list notebooks", zap.Error(err))
 		return nil, errors.Database("Failed to list notebooks", err)
 	}
+
+	s.logger.Info("Notebook query result",
+		zap.Int("records_returned", len(result.Records)),
+		zap.String("user_id", userID),
+	)
 
 	notebooks := make([]*models.NotebookResponse, 0, len(result.Records))
 	hasMore := false

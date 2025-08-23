@@ -59,8 +59,10 @@ func AuthMiddleware(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin
 			return
 		}
 
-		// Store user information in context
+		// Store user information in context - use Keycloak ID as user_id for now
+		// This will be resolved to internal user ID by handlers that need it
 		c.Set("user_id", claims.Sub)
+		c.Set("keycloak_id", claims.Sub)
 		c.Set("user_email", claims.Email)
 		c.Set("user_name", claims.Name)
 		c.Set("username", claims.PreferredUsername)

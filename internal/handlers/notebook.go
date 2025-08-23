@@ -16,13 +16,15 @@ import (
 // NotebookHandler handles notebook-related HTTP requests
 type NotebookHandler struct {
 	notebookService *services.NotebookService
+	userService     *services.UserService
 	logger          *logger.Logger
 }
 
 // NewNotebookHandler creates a new notebook handler
-func NewNotebookHandler(notebookService *services.NotebookService, log *logger.Logger) *NotebookHandler {
+func NewNotebookHandler(notebookService *services.NotebookService, userService *services.UserService, log *logger.Logger) *NotebookHandler {
 	return &NotebookHandler{
 		notebookService: notebookService,
+		userService:     userService,
 		logger:          log.WithService("notebook_handler"),
 	}
 }
@@ -41,9 +43,11 @@ func NewNotebookHandler(notebookService *services.NotebookService, log *logger.L
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/notebooks [post]
 func (h *NotebookHandler) CreateNotebook(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -92,7 +96,14 @@ func (h *NotebookHandler) GetNotebook(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
 	notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID)
 	if err != nil {
 		h.logger.Error("Failed to get notebook", zap.String("notebook_id", notebookID), zap.Error(err))
@@ -126,9 +137,11 @@ func (h *NotebookHandler) UpdateNotebook(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -177,13 +190,15 @@ func (h *NotebookHandler) DeleteNotebook(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
-	err := h.notebookService.DeleteNotebook(c.Request.Context(), notebookID, userID)
+	err = h.notebookService.DeleteNotebook(c.Request.Context(), notebookID, userID)
 	if err != nil {
 		h.logger.Error("Failed to delete notebook", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)
@@ -208,9 +223,11 @@ func (h *NotebookHandler) DeleteNotebook(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/notebooks [get]
 func (h *NotebookHandler) ListNotebooks(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -260,9 +277,11 @@ func (h *NotebookHandler) ListNotebooks(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/notebooks/search [get]
 func (h *NotebookHandler) SearchNotebooks(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -326,9 +345,11 @@ func (h *NotebookHandler) ShareNotebook(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -345,7 +366,7 @@ func (h *NotebookHandler) ShareNotebook(c *gin.Context) {
 		return
 	}
 
-	err := h.notebookService.ShareNotebook(c.Request.Context(), notebookID, req, userID)
+	err = h.notebookService.ShareNotebook(c.Request.Context(), notebookID, req, userID)
 	if err != nil {
 		h.logger.Error("Failed to share notebook", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)

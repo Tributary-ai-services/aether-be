@@ -54,19 +54,19 @@ type UserResponse struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	Username  string    `json:"username"`
-	FullName  string    `json:"full_name"`
-	AvatarURL string    `json:"avatar_url,omitempty"`
+	FullName  string    `json:"fullName"`
+	AvatarURL string    `json:"avatarUrl,omitempty"`
 	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // PublicUserResponse represents a minimal user response for public contexts
 type PublicUserResponse struct {
 	ID        string `json:"id"`
 	Username  string `json:"username"`
-	FullName  string `json:"full_name"`
-	AvatarURL string `json:"avatar_url,omitempty"`
+	FullName  string `json:"fullName"`
+	AvatarURL string `json:"avatarUrl,omitempty"`
 }
 
 // NewUser creates a new user with default values

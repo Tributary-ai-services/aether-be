@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/database"
@@ -501,9 +502,103 @@ func (s *UserService) SyncWithKeycloak(ctx context.Context, userID string, roles
 // Helper methods
 
 func (s *UserService) recordToUser(record interface{}) (*models.User, error) {
-	// Implementation would convert Neo4j record to User model
-	// This is a simplified version
-	return &models.User{}, nil
+	r, ok := record.(*neo4j.Record)
+	if !ok {
+		return nil, errors.Internal("Invalid record type")
+	}
+
+	user := &models.User{}
+
+	// Extract values from the record
+	if val, ok := r.Get("u.id"); ok && val != nil {
+		user.ID = val.(string)
+	}
+	if val, ok := r.Get("u.keycloak_id"); ok && val != nil {
+		user.KeycloakID = val.(string)
+	}
+	if val, ok := r.Get("u.email"); ok && val != nil {
+		user.Email = val.(string)
+	}
+	if val, ok := r.Get("u.username"); ok && val != nil {
+		user.Username = val.(string)
+	}
+	if val, ok := r.Get("u.full_name"); ok && val != nil {
+		user.FullName = val.(string)
+	}
+	if val, ok := r.Get("u.avatar_url"); ok && val != nil {
+		user.AvatarURL = val.(string)
+	}
+	if val, ok := r.Get("u.status"); ok && val != nil {
+		user.Status = val.(string)
+	}
+
+	// Parse preferences from JSON string
+	if val, ok := r.Get("u.preferences"); ok && val != nil {
+		preferencesStr := val.(string)
+		if preferencesStr != "" && preferencesStr != "{}" {
+			var preferences map[string]interface{}
+			if err := json.Unmarshal([]byte(preferencesStr), &preferences); err != nil {
+				s.logger.Warn("Failed to parse user preferences", zap.Error(err))
+			} else {
+				user.Preferences = preferences
+			}
+		}
+	}
+
+	// Parse timestamps
+	if val, ok := r.Get("u.created_at"); ok && val != nil {
+		if t, ok := val.(time.Time); ok {
+			user.CreatedAt = t
+		}
+	}
+	if val, ok := r.Get("u.updated_at"); ok && val != nil {
+		if t, ok := val.(time.Time); ok {
+			user.UpdatedAt = t
+		}
+	}
+	if val, ok := r.Get("u.last_login_at"); ok && val != nil {
+		if t, ok := val.(time.Time); ok {
+			user.LastLoginAt = &t
+		}
+	}
+	if val, ok := r.Get("u.last_sync_at"); ok && val != nil {
+		if t, ok := val.(time.Time); ok {
+			user.LastSyncAt = &t
+		}
+	}
+
+	// Parse arrays
+	if val, ok := r.Get("u.keycloak_roles"); ok && val != nil {
+		if roles, ok := val.([]interface{}); ok {
+			user.KeycloakRoles = make([]string, len(roles))
+			for i, role := range roles {
+				user.KeycloakRoles[i] = role.(string)
+			}
+		}
+	}
+	if val, ok := r.Get("u.keycloak_groups"); ok && val != nil {
+		if groups, ok := val.([]interface{}); ok {
+			user.KeycloakGroups = make([]string, len(groups))
+			for i, group := range groups {
+				user.KeycloakGroups[i] = group.(string)
+			}
+		}
+	}
+
+	// Parse keycloak attributes from JSON string
+	if val, ok := r.Get("u.keycloak_attributes"); ok && val != nil {
+		attributesStr := val.(string)
+		if attributesStr != "" && attributesStr != "{}" {
+			var attributes map[string]interface{}
+			if err := json.Unmarshal([]byte(attributesStr), &attributes); err != nil {
+				s.logger.Warn("Failed to parse keycloak attributes", zap.Error(err))
+			} else {
+				user.KeycloakAttributes = attributes
+			}
+		}
+	}
+
+	return user, nil
 }
 
 func (s *UserService) recordToUserResponse(record interface{}) (*models.UserResponse, error) {

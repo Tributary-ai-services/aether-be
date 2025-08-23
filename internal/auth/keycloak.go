@@ -98,6 +98,12 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
 	}
 	
+	// Add localhost issuer when Keycloak is at http://keycloak:8080 (docker service name)
+	if cfg.URL == "http://keycloak:8080" {
+		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
+	}
+	
 	// Add internal issuer for production (when configured Keycloak is external)
 	if cfg.URL == "http://localhost:8081" {
 		allowedIssuers = append(allowedIssuers, "http://tas-keycloak-shared:8080/realms/"+cfg.Realm)
