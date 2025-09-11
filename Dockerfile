@@ -1,7 +1,7 @@
 # Multi-stage Docker build for Aether Backend
 
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install necessary packages
 RUN apk add --no-cache git ca-certificates tzdata

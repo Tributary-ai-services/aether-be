@@ -19,6 +19,7 @@ type Config struct {
 	Kafka      KafkaConfig
 	Monitoring MonitoringConfig
 	Logger     LoggingConfig
+	AudiModal  AudiModalConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -88,6 +89,13 @@ type LoggingConfig struct {
 	Format string
 }
 
+// AudiModalConfig holds AudiModal API configuration
+type AudiModalConfig struct {
+	BaseURL string
+	APIKey  string
+	Enabled bool
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
@@ -144,6 +152,11 @@ func Load() (*Config, error) {
 		Logger: LoggingConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),
 			Format: getEnv("LOG_FORMAT", "json"),
+		},
+		AudiModal: AudiModalConfig{
+			BaseURL: getEnv("AUDIMODAL_BASE_URL", "http://audimodal:8080"),
+			APIKey:  getEnv("AUDIMODAL_API_KEY", ""),
+			Enabled: getEnvBool("AUDIMODAL_ENABLED", true),
 		},
 	}
 

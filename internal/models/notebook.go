@@ -17,8 +17,16 @@ type Notebook struct {
 	// Owner information
 	OwnerID string `json:"owner_id" validate:"required,uuid"`
 
+	// Space and tenant information
+	SpaceType SpaceType `json:"space_type" validate:"required,oneof=personal organization"`
+	SpaceID   string    `json:"space_id" validate:"required,uuid"`
+	TenantID  string    `json:"tenant_id" validate:"required"`
+
 	// Parent notebook ID (for hierarchical structure)
 	ParentID string `json:"parent_id,omitempty" validate:"omitempty,uuid"`
+
+	// Team assignment (for organization spaces)
+	TeamID string `json:"team_id,omitempty" validate:"omitempty,uuid"`
 
 	// Compliance settings
 	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
@@ -40,6 +48,7 @@ type NotebookCreateRequest struct {
 	Description        string                 `json:"description,omitempty" validate:"safe_string,max=1000"`
 	Visibility         string                 `json:"visibility" validate:"required,notebook_visibility"`
 	ParentID           string                 `json:"parent_id,omitempty" validate:"omitempty,uuid"`
+	TeamID             string                 `json:"team_id,omitempty" validate:"omitempty,uuid"`
 	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
 	Tags               []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
 }
@@ -134,7 +143,7 @@ type NotebookStats struct {
 }
 
 // NewNotebook creates a new notebook with default values
-func NewNotebook(req NotebookCreateRequest, ownerID string) *Notebook {
+func NewNotebook(req NotebookCreateRequest, ownerID string, spaceCtx *SpaceContext) *Notebook {
 	now := time.Now()
 	return &Notebook{
 		ID:                 uuid.New().String(),
@@ -143,7 +152,11 @@ func NewNotebook(req NotebookCreateRequest, ownerID string) *Notebook {
 		Visibility:         req.Visibility,
 		Status:             "active",
 		OwnerID:            ownerID,
+		SpaceType:          spaceCtx.SpaceType,
+		SpaceID:            spaceCtx.SpaceID,
+		TenantID:           spaceCtx.TenantID,
 		ParentID:           req.ParentID,
+		TeamID:             req.TeamID,
 		ComplianceSettings: req.ComplianceSettings,
 		Tags:               req.Tags,
 		SearchText:         buildNotebookSearchText(req.Name, req.Description, req.Tags),

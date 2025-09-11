@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	"github.com/Tributary-ai-services/aether-be/internal/middleware"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
 	"github.com/Tributary-ai-services/aether-be/pkg/errors"
@@ -64,7 +65,14 @@ func (h *NotebookHandler) CreateNotebook(c *gin.Context) {
 		return
 	}
 
-	notebook, err := h.notebookService.CreateNotebook(c.Request.Context(), req, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	notebook, err := h.notebookService.CreateNotebook(c.Request.Context(), req, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to create notebook", zap.Error(err))
 		handleServiceError(c, err)
@@ -104,7 +112,14 @@ func (h *NotebookHandler) GetNotebook(c *gin.Context) {
 		return
 	}
 
-	notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to get notebook", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)
@@ -158,7 +173,14 @@ func (h *NotebookHandler) UpdateNotebook(c *gin.Context) {
 		return
 	}
 
-	notebook, err := h.notebookService.UpdateNotebook(c.Request.Context(), notebookID, req, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	notebook, err := h.notebookService.UpdateNotebook(c.Request.Context(), notebookID, req, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to update notebook", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)
@@ -198,7 +220,14 @@ func (h *NotebookHandler) DeleteNotebook(c *gin.Context) {
 		return
 	}
 
-	err = h.notebookService.DeleteNotebook(c.Request.Context(), notebookID, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	err = h.notebookService.DeleteNotebook(c.Request.Context(), notebookID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to delete notebook", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)
@@ -247,7 +276,14 @@ func (h *NotebookHandler) ListNotebooks(c *gin.Context) {
 		}
 	}
 
-	response, err := h.notebookService.ListNotebooks(c.Request.Context(), userID, limit, offset)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	response, err := h.notebookService.ListNotebooks(c.Request.Context(), userID, spaceContext, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to list notebooks", zap.Error(err))
 		handleServiceError(c, err)
@@ -312,7 +348,14 @@ func (h *NotebookHandler) SearchNotebooks(c *gin.Context) {
 		return
 	}
 
-	response, err := h.notebookService.SearchNotebooks(c.Request.Context(), req, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	response, err := h.notebookService.SearchNotebooks(c.Request.Context(), req, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to search notebooks", zap.Error(err))
 		handleServiceError(c, err)
@@ -366,7 +409,14 @@ func (h *NotebookHandler) ShareNotebook(c *gin.Context) {
 		return
 	}
 
-	err = h.notebookService.ShareNotebook(c.Request.Context(), notebookID, req, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	err = h.notebookService.ShareNotebook(c.Request.Context(), notebookID, req, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to share notebook", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)

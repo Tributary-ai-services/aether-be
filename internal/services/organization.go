@@ -17,17 +17,17 @@ import (
 
 // OrganizationService handles organization-related business logic
 type OrganizationService struct {
-	neo4j  *database.Neo4jClient
-	redis  *database.RedisClient
-	logger *logger.Logger
+	neo4j       *database.Neo4jClient
+	audiModal   *AudiModalService
+	logger      *logger.Logger
 }
 
 // NewOrganizationService creates a new organization service
-func NewOrganizationService(neo4j *database.Neo4jClient, redis *database.RedisClient, log *logger.Logger) *OrganizationService {
+func NewOrganizationService(neo4j *database.Neo4jClient, audiModal *AudiModalService, log *logger.Logger) *OrganizationService {
 	return &OrganizationService{
-		neo4j:  neo4j,
-		redis:  redis,
-		logger: log.WithService("organization_service"),
+		neo4j:     neo4j,
+		audiModal: audiModal,
+		logger:    log.WithService("organization_service"),
 	}
 }
 
@@ -59,6 +59,35 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		org.Billing = models.DefaultOrganizationBilling(req.BillingEmail)
 	}
 
+	// Create tenant in AudiModal if enabled
+	if s.audiModal != nil {
+		s.logger.Info("Creating tenant for organization", zap.String("org_name", org.Name))
+		
+		tenantReq := CreateTenantRequest{
+			Name:         org.Slug,
+			DisplayName:  org.Name,
+			BillingPlan:  "organization",
+			ContactEmail: req.BillingEmail,
+			Quotas:       make(map[string]interface{}), // TODO: Set proper quotas
+			Compliance:   make(map[string]interface{}), // TODO: Set compliance settings
+			Settings:     make(map[string]interface{}), // TODO: Set organization settings
+		}
+
+		tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
+		if err != nil {
+			s.logger.Error("Failed to create tenant in AudiModal", zap.Error(err), zap.String("org_name", org.Name))
+			return nil, errors.ExternalService("Failed to create organization tenant", err)
+		}
+
+		// API key is already returned from CreateTenant
+
+		// Store tenant information in organization
+		org.SetTenantInfo(tenant.TenantID, tenant.APIKey)
+		s.logger.Info("Successfully created tenant for organization", 
+			zap.String("org_id", org.ID), 
+			zap.String("tenant_id", tenant.TenantID))
+	}
+
 	// Create organization in database
 	query := `
 		CREATE (o:Organization {
@@ -70,6 +99,8 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 			website: $website,
 			location: $location,
 			visibility: $visibility,
+			tenant_id: $tenant_id,
+			tenant_api_key: $tenant_api_key,
 			billing: $billing,
 			settings: $settings,
 			created_by: $created_by,
@@ -79,19 +110,21 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		RETURN o`
 
 	params := map[string]interface{}{
-		"id":          org.ID,
-		"name":        org.Name,
-		"slug":        org.Slug,
-		"description": org.Description,
-		"avatar_url":  org.AvatarURL,
-		"website":     org.Website,
-		"location":    org.Location,
-		"visibility":  org.Visibility,
-		"billing":     org.Billing,
-		"settings":    org.Settings,
-		"created_by":  org.CreatedBy,
-		"created_at":  org.CreatedAt.Format(time.RFC3339),
-		"updated_at":  org.UpdatedAt.Format(time.RFC3339),
+		"id":              org.ID,
+		"name":            org.Name,
+		"slug":            org.Slug,
+		"description":     org.Description,
+		"avatar_url":      org.AvatarURL,
+		"website":         org.Website,
+		"location":        org.Location,
+		"visibility":      org.Visibility,
+		"tenant_id":       org.TenantID,
+		"tenant_api_key":  org.TenantAPIKey,
+		"billing":         org.Billing,
+		"settings":        org.Settings,
+		"created_by":      org.CreatedBy,
+		"created_at":      org.CreatedAt.Format(time.RFC3339),
+		"updated_at":      org.UpdatedAt.Format(time.RFC3339),
 	}
 
 	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {

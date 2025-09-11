@@ -59,12 +59,6 @@ func main() {
 	}
 	defer neo4jClient.Close(context.Background())
 
-	redisClient, err := database.NewRedisClient(cfg.Redis, appLogger)
-	if err != nil {
-		appLogger.Fatal("Failed to initialize Redis client", zap.Error(err))
-	}
-	defer redisClient.Close()
-
 	// Initialize external services
 	appLogger.Info("Initializing external services")
 
@@ -78,10 +72,13 @@ func main() {
 		storageService, err = services.NewS3StorageService(cfg.Storage, appLogger)
 		if err != nil {
 			appLogger.Error("Failed to initialize storage service", zap.Error(err))
-			// Don't fail startup, but log the error
+			appLogger.Warn("Continuing without storage service - file operations will be disabled")
+			storageService = nil // Explicitly set to nil for clarity
 		} else {
 			appLogger.Info("Storage service initialized successfully")
 		}
+	} else {
+		appLogger.Info("Storage service disabled in configuration")
 	}
 
 	var kafkaService *services.KafkaService
@@ -95,6 +92,12 @@ func main() {
 		}
 	}
 
+	var audiModalService *services.AudiModalService
+	if cfg.AudiModal.Enabled {
+		audiModalService = services.NewAudiModalService(cfg.AudiModal.BaseURL, cfg.AudiModal.APIKey, appLogger)
+		appLogger.Info("AudiModal service initialized successfully")
+	}
+
 	// Initialize metrics
 	appLogger.Info("Initializing metrics system")
 	metricsInstance := metrics.NewMetrics(appLogger)
@@ -103,7 +106,6 @@ func main() {
 	metricsCollector := metrics.NewMetricsCollector(
 		metricsInstance,
 		neo4jClient,
-		redisClient,
 		appLogger,
 	)
 
@@ -111,10 +113,10 @@ func main() {
 	appLogger.Info("Initializing API server")
 	apiServer := handlers.NewAPIServer(
 		neo4jClient,
-		redisClient,
 		keycloakClient,
 		storageService,
 		kafkaService,
+		audiModalService,
 		metricsInstance,
 		appLogger,
 	)

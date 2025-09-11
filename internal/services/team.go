@@ -17,15 +17,13 @@ import (
 // TeamService handles team-related business logic
 type TeamService struct {
 	neo4j  *database.Neo4jClient
-	redis  *database.RedisClient
 	logger *logger.Logger
 }
 
 // NewTeamService creates a new team service
-func NewTeamService(neo4j *database.Neo4jClient, redis *database.RedisClient, log *logger.Logger) *TeamService {
+func NewTeamService(neo4j *database.Neo4jClient, log *logger.Logger) *TeamService {
 	return &TeamService{
 		neo4j:  neo4j,
-		redis:  redis,
 		logger: log.WithService("team_service"),
 	}
 }

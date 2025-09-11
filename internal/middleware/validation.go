@@ -268,15 +268,27 @@ func convertValidationErrors(validationErrors validation.ValidationErrors) []err
 
 // RequestSizeLimit creates middleware to limit request body size
 func RequestSizeLimit(maxSize int64) gin.HandlerFunc {
+	log, _ := logger.New(logger.Config{Level: "debug"})
 	return func(c *gin.Context) {
+		log.Info("=== REQUEST SIZE LIMIT MIDDLEWARE ===", 
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.Request.URL.Path),
+			zap.Int64("content_length", c.Request.ContentLength),
+			zap.Int64("max_size", maxSize))
+			
 		if c.Request.ContentLength > maxSize {
+			log.Error("Request body too large", 
+				zap.Int64("content_length", c.Request.ContentLength),
+				zap.Int64("max_size", maxSize))
 			c.JSON(http.StatusRequestEntityTooLarge, errors.BadRequest("Request body too large"))
 			c.Abort()
 			return
 		}
 
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSize)
+		log.Info("Request size check passed, proceeding to next middleware")
 		c.Next()
+		log.Info("Request size middleware completed")
 	}
 }
 

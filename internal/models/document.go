@@ -27,11 +27,18 @@ type Document struct {
 	// Content and processing
 	ExtractedText    string                 `json:"extracted_text,omitempty"`
 	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
+	ProcessingTime   *int64                 `json:"processing_time,omitempty"` // Processing duration in milliseconds
+	ConfidenceScore  *float64               `json:"confidence_score,omitempty"` // AI confidence score (0.0-1.0)
 	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
 
 	// Relationships
 	NotebookID string `json:"notebook_id" validate:"required,uuid"`
 	OwnerID    string `json:"owner_id" validate:"required,uuid"`
+
+	// Space and tenant information (inherited from notebook)
+	SpaceType SpaceType `json:"space_type" validate:"required,oneof=personal organization"`
+	SpaceID   string    `json:"space_id" validate:"required,uuid"`
+	TenantID  string    `json:"tenant_id" validate:"required"`
 
 	// Search and indexing
 	SearchText string   `json:"search_text,omitempty"`
@@ -117,6 +124,14 @@ type DocumentUploadRequest struct {
 	FileData []byte `json:"-"` // File content (not included in JSON)
 }
 
+// DocumentBase64UploadRequest represents a base64 encoded document upload request
+type DocumentBase64UploadRequest struct {
+	DocumentCreateRequest
+	FileContent string `json:"file_content" validate:"required,base64"` // Base64 encoded file content
+	FileName    string `json:"file_name" validate:"required,filename"`  // Original filename
+	MimeType    string `json:"mime_type" validate:"required"`           // MIME type of the file
+}
+
 // ProcessingJob represents a document processing job
 type ProcessingJob struct {
 	ID         string `json:"id"`
@@ -150,7 +165,7 @@ type DocumentStats struct {
 }
 
 // NewDocument creates a new document with default values
-func NewDocument(req DocumentCreateRequest, ownerID string, fileInfo FileInfo) *Document {
+func NewDocument(req DocumentCreateRequest, ownerID string, fileInfo FileInfo, spaceCtx *SpaceContext) *Document {
 	now := time.Now()
 	return &Document{
 		ID:           uuid.New().String(),
@@ -164,6 +179,9 @@ func NewDocument(req DocumentCreateRequest, ownerID string, fileInfo FileInfo) *
 		Checksum:     fileInfo.Checksum,
 		NotebookID:   req.NotebookID,
 		OwnerID:      ownerID,
+		SpaceType:    spaceCtx.SpaceType,
+		SpaceID:      spaceCtx.SpaceID,
+		TenantID:     spaceCtx.TenantID,
 		Tags:         req.Tags,
 		Metadata:     req.Metadata,
 		SearchText:   buildSearchText(req.Name, req.Description, req.Tags),

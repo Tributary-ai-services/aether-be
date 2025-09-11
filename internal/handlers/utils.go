@@ -377,11 +377,31 @@ func parseIntQueryParam(value string, min, max int) (int, error) {
 }
 
 // corsMiddleware adds CORS headers (if needed)
+// customRecoveryMiddleware creates a recovery middleware with detailed panic logging
+func customRecoveryMiddleware(log *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Error("=== PANIC RECOVERED IN REQUEST HANDLER ===",
+					zap.Any("error", err),
+					zap.String("method", c.Request.Method),
+					zap.String("path", c.Request.URL.Path),
+					zap.String("client_ip", c.ClientIP()),
+					zap.Stack("stack"))
+					
+				// Return 502 like Gin's default recovery
+				c.AbortWithStatus(http.StatusBadGateway)
+			}
+		}()
+		c.Next()
+	}
+}
+
 func corsMiddleware() gin.HandlerFunc {
 	return gin.HandlerFunc(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Space-Type, X-Space-ID, X-Tenant-ID")
 		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
@@ -391,6 +411,30 @@ func corsMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	})
+}
+
+// debugRequestMiddleware logs ALL incoming requests at the very first stage
+func debugRequestMiddleware(log *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Info("=== RAW REQUEST DEBUG ===",
+			zap.String("method", c.Request.Method),
+			zap.String("url", c.Request.URL.String()),
+			zap.String("path", c.Request.URL.Path),
+			zap.String("remote_addr", c.Request.RemoteAddr),
+			zap.String("user_agent", c.Request.UserAgent()),
+			zap.String("content_type", c.Request.Header.Get("Content-Type")),
+			zap.String("content_length", c.Request.Header.Get("Content-Length")),
+			zap.Int64("parsed_content_length", c.Request.ContentLength),
+			zap.String("host", c.Request.Host),
+			zap.String("proto", c.Request.Proto),
+			zap.Any("all_headers", c.Request.Header))
+		
+		log.Info("Request entering middleware chain")
+		c.Next()
+		log.Info("Request exiting middleware chain",
+			zap.Int("status_code", c.Writer.Status()),
+			zap.Bool("response_written", c.Writer.Written()))
+	}
 }
 
 // requestLoggingMiddleware logs HTTP requests

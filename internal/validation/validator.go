@@ -15,7 +15,7 @@ var (
 	// Common regex patterns for validation
 	slugPattern     = regexp.MustCompile(`^[a-z0-9\-]+$`)
 	usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
-	filenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.\s\(\)]+$`)
+	filenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.\s\(\)\+\[\]\{\}&@#!~]+$`)
 	hexColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
@@ -204,8 +204,8 @@ func validateTag(fl validator.FieldLevel) bool {
 		return false
 	}
 
-	// Tags should be alphanumeric with hyphens and underscores
-	return regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`).MatchString(tag)
+	// Tags should be alphanumeric with hyphens, underscores, and colons
+	return regexp.MustCompile(`^[a-zA-Z0-9_\-:]+$`).MatchString(tag)
 }
 
 func validateNotebookVisibility(fl validator.FieldLevel) bool {
@@ -387,7 +387,7 @@ func getValidationMessage(fe validator.FieldError) string {
 	case "safe_string":
 		return fmt.Sprintf("%s contains unsafe characters", field)
 	case "tag":
-		return fmt.Sprintf("%s must be 1-50 characters and contain only letters, numbers, hyphens, and underscores", field)
+		return fmt.Sprintf("%s must be 1-50 characters and contain only letters, numbers, hyphens, underscores, and colons", field)
 	case "notebook_visibility":
 		return fmt.Sprintf("%s must be one of: private, public, shared", field)
 	case "user_status":

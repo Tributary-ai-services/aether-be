@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	"github.com/Tributary-ai-services/aether-be/internal/middleware"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
 	"github.com/Tributary-ai-services/aether-be/pkg/errors"
@@ -27,6 +30,70 @@ func NewDocumentHandler(documentService *services.DocumentService, log *logger.L
 		documentService: documentService,
 		logger:          log.WithService("document_handler"),
 	}
+}
+
+// CreateDocument creates a new document record in Neo4j (without file upload)
+// @Summary Create a new document record
+// @Description Create a document record in Neo4j, typically after external upload to AudiModal
+// @Tags documents
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param document body models.DocumentCreateRequest true "Document data"
+// @Success 201 {object} models.DocumentResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/documents [post]
+func (h *DocumentHandler) CreateDocument(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	var req models.DocumentCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request body", err))
+		return
+	}
+
+	// Create FileInfo from the request data (for documents already uploaded to AudiModal)
+	var mimeType string
+	var sizeBytes int64
+	
+	if mt, ok := req.Metadata["mime_type"].(string); ok {
+		mimeType = mt
+	}
+	if sb, ok := req.Metadata["size_bytes"].(float64); ok {
+		sizeBytes = int64(sb)
+	} else if sb, ok := req.Metadata["size_bytes"].(int64); ok {
+		sizeBytes = sb
+	}
+	
+	fileInfo := models.FileInfo{
+		OriginalName: req.Name,
+		MimeType:     mimeType,
+		SizeBytes:    sizeBytes,
+		Checksum:     "", // Not available for AudiModal uploads
+	}
+
+	// Create the document
+	document, err := h.documentService.CreateDocument(c.Request.Context(), req, userID, spaceContext, fileInfo)
+	if err != nil {
+		h.logger.Error("Failed to create document", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, document.ToResponse())
 }
 
 // UploadDocument uploads a new document
@@ -48,30 +115,49 @@ func NewDocumentHandler(documentService *services.DocumentService, log *logger.L
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/documents/upload [post]
 func (h *DocumentHandler) UploadDocument(c *gin.Context) {
+	h.logger.Info("=== UPLOAD HANDLER START ===", 
+		zap.String("method", c.Request.Method),
+		zap.String("path", c.Request.URL.Path),
+		zap.String("content_type", c.Request.Header.Get("Content-Type")),
+		zap.String("content_length", c.Request.Header.Get("Content-Length")),
+		zap.Any("headers", c.Request.Header))
+	
 	userID := getUserID(c)
 	if userID == "" {
+		h.logger.Error("Upload failed: User not authenticated")
 		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
 		return
 	}
+	
+	h.logger.Info("Processing upload for user", zap.String("user_id", userID))
 
 	// Parse multipart form
-	err := c.Request.ParseMultipartForm(32 << 20) // 32MB max memory
+	h.logger.Info("About to parse multipart form")
+	err := c.Request.ParseMultipartForm(128 << 20) // 128MB max memory
 	if err != nil {
 		h.logger.Error("Failed to parse multipart form", zap.Error(err))
 		c.JSON(http.StatusBadRequest, errors.Validation("Invalid multipart form", err))
 		return
 	}
+	h.logger.Info("Multipart form parsed successfully")
 
 	// Get form values
 	notebookID := c.PostForm("notebook_id")
-	if notebookID == "" {
-		c.JSON(http.StatusBadRequest, errors.Validation("notebook_id is required", nil))
-		return
-	}
-
 	name := c.PostForm("name")
 	description := c.PostForm("description")
 	tagsStr := c.PostForm("tags")
+	
+	h.logger.Info("Form values extracted", 
+		zap.String("notebook_id", notebookID),
+		zap.String("name", name),
+		zap.String("description", description),
+		zap.String("tags", tagsStr))
+	
+	if notebookID == "" {
+		h.logger.Error("Validation failed: notebook_id is required")
+		c.JSON(http.StatusBadRequest, errors.Validation("notebook_id is required", nil))
+		return
+	}
 
 	var tags []string
 	if tagsStr != "" {
@@ -121,19 +207,179 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 		},
 		FileData: fileData,
 	}
+	
+	// Create file info with proper MIME type from multipart form
+	fileInfo := models.FileInfo{
+		OriginalName: header.Filename,
+		MimeType:     header.Header.Get("Content-Type"),
+		SizeBytes:    int64(len(fileData)),
+		Checksum:     "", // TODO: Calculate checksum if needed
+	}
 
 	// Validate request
+	h.logger.Info("About to validate request struct", zap.Any("request", req.DocumentCreateRequest))
 	if err := validateStruct(&req.DocumentCreateRequest); err != nil {
+		h.logger.Error("Struct validation failed", zap.Error(err), zap.Any("request", req.DocumentCreateRequest))
 		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
 		return
 	}
+	h.logger.Info("Request struct validation passed")
 
-	document, err := h.documentService.UploadDocument(c.Request.Context(), req, userID)
+	// Get space context
+	h.logger.Info("Getting space context...")
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		h.logger.Error("Failed to get space context", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+	h.logger.Info("Space context retrieved", 
+		zap.String("space_type", string(spaceContext.SpaceType)),
+		zap.String("space_id", spaceContext.SpaceID),
+		zap.String("tenant_id", spaceContext.TenantID))
+
+	h.logger.Info("Starting document upload", 
+		zap.String("user_id", userID),
+		zap.String("notebook_id", req.NotebookID),
+		zap.String("filename", req.Name))
+	
+	h.logger.Info("About to call documentService.UploadDocument")
+	document, err := h.documentService.UploadDocument(c.Request.Context(), req, userID, spaceContext, fileInfo)
+	h.logger.Info("documentService.UploadDocument call completed", zap.Bool("has_error", err != nil))
 	if err != nil {
 		h.logger.Error("Failed to upload document", zap.Error(err))
 		handleServiceError(c, err)
 		return
 	}
+	
+	h.logger.Info("Document upload completed successfully", 
+		zap.String("document_id", document.ID))
+
+	c.JSON(http.StatusCreated, document.ToResponse())
+}
+
+// UploadDocumentBase64 uploads a document using base64 encoded content
+// @Summary Upload document (base64)
+// @Description Upload a new document using base64 encoded content
+// @Tags documents
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param document body models.DocumentBase64UploadRequest true "Document upload data"
+// @Success 201 {object} models.DocumentResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 413 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/documents/upload-base64 [post]
+func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
+	h.logger.Info("=== BASE64 UPLOAD HANDLER START ===", 
+		zap.String("method", c.Request.Method),
+		zap.String("path", c.Request.URL.Path),
+		zap.String("content_type", c.Request.Header.Get("Content-Type")))
+	
+	userID := getUserID(c)
+	if userID == "" {
+		h.logger.Error("Upload failed: User not authenticated")
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+	
+	h.logger.Info("Processing base64 upload for user", zap.String("user_id", userID))
+
+	var req models.DocumentBase64UploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Failed to bind JSON request", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request format", err))
+		return
+	}
+	
+	h.logger.Info("Base64 request parsed", 
+		zap.String("notebook_id", req.NotebookID),
+		zap.String("file_name", req.FileName),
+		zap.String("mime_type", req.MimeType),
+		zap.Int("base64_length", len(req.FileContent)))
+
+	// Decode base64 content
+	fileData, err := base64.StdEncoding.DecodeString(req.FileContent)
+	if err != nil {
+		h.logger.Error("Failed to decode base64 content", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid base64 content", err))
+		return
+	}
+	
+	h.logger.Info("Base64 content decoded", zap.Int("file_size_bytes", len(fileData)))
+
+	// Check file size (100MB limit)
+	const maxFileSize = 100 << 20 // 100MB
+	if len(fileData) > maxFileSize {
+		c.JSON(http.StatusRequestEntityTooLarge, errors.Validation("File too large (max 100MB)", nil))
+		return
+	}
+
+	// Use filename as name if not provided
+	name := req.Name
+	if name == "" {
+		name = req.FileName
+	}
+
+	// Create upload request with proper file info
+	uploadReq := models.DocumentUploadRequest{
+		DocumentCreateRequest: models.DocumentCreateRequest{
+			Name:        name,
+			Description: req.Description,
+			NotebookID:  req.NotebookID,
+			Tags:        req.Tags,
+		},
+		FileData: fileData,
+	}
+	
+	// Create file info with proper MIME type from frontend
+	fileInfo := models.FileInfo{
+		OriginalName: req.FileName,
+		MimeType:     req.MimeType,
+		SizeBytes:    int64(len(fileData)),
+		Checksum:     "", // TODO: Calculate checksum if needed
+	}
+
+	// Validate request
+	h.logger.Info("About to validate request struct")
+	if err := validateStruct(&uploadReq.DocumentCreateRequest); err != nil {
+		h.logger.Error("Struct validation failed", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
+		return
+	}
+	h.logger.Info("Request struct validation passed")
+
+	// Get space context
+	h.logger.Info("Getting space context...")
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		h.logger.Error("Failed to get space context", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+	h.logger.Info("Space context retrieved", 
+		zap.String("space_type", string(spaceContext.SpaceType)),
+		zap.String("space_id", spaceContext.SpaceID),
+		zap.String("tenant_id", spaceContext.TenantID))
+
+	h.logger.Info("Starting document upload", 
+		zap.String("user_id", userID),
+		zap.String("notebook_id", uploadReq.NotebookID),
+		zap.String("filename", uploadReq.Name))
+	
+	h.logger.Info("About to call documentService.UploadDocument")
+	document, err := h.documentService.UploadDocument(c.Request.Context(), uploadReq, userID, spaceContext, fileInfo)
+	h.logger.Info("documentService.UploadDocument call completed", zap.Bool("has_error", err != nil))
+	if err != nil {
+		h.logger.Error("Failed to upload document", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+	
+	h.logger.Info("Document upload completed successfully", 
+		zap.String("document_id", document.ID))
 
 	c.JSON(http.StatusCreated, document.ToResponse())
 }
@@ -161,7 +407,15 @@ func (h *DocumentHandler) GetDocument(c *gin.Context) {
 	}
 
 	userID := getUserID(c)
-	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID)
+	
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+	
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to get document", zap.String("document_id", documentID), zap.Error(err))
 		handleServiceError(c, err)
@@ -213,7 +467,14 @@ func (h *DocumentHandler) UpdateDocument(c *gin.Context) {
 		return
 	}
 
-	document, err := h.documentService.UpdateDocument(c.Request.Context(), documentID, req, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	document, err := h.documentService.UpdateDocument(c.Request.Context(), documentID, req, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to update document", zap.String("document_id", documentID), zap.Error(err))
 		handleServiceError(c, err)
@@ -251,7 +512,14 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	err := h.documentService.DeleteDocument(c.Request.Context(), documentID, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	err = h.documentService.DeleteDocument(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to delete document", zap.String("document_id", documentID), zap.Error(err))
 		handleServiceError(c, err)
@@ -259,6 +527,72 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// ReprocessDocument reprocesses a document to extract text again
+// @Summary Reprocess document
+// @Description Re-run text extraction and processing for a document
+// @Tags documents
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Document ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 403 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/documents/{id}/reprocess [post]
+func (h *DocumentHandler) ReprocessDocument(c *gin.Context) {
+	documentID := c.Param("id")
+	if documentID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Document ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Get the document first to verify access and get details
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get document for reprocessing", zap.String("document_id", documentID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Submit reprocessing job
+	job, err := h.documentService.ReprocessDocument(c.Request.Context(), document, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to submit document reprocessing job", 
+			zap.String("document_id", documentID), 
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	h.logger.Info("Document reprocessing job submitted", 
+		zap.String("document_id", documentID),
+		zap.String("job_id", job.ID),
+		zap.String("user_id", userID))
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Document reprocessing started",
+		"document_id": documentID,
+		"job_id": job.ID,
+		"status": "processing",
+	})
 }
 
 // ListDocumentsByNotebook lists documents in a notebook
@@ -306,7 +640,14 @@ func (h *DocumentHandler) ListDocumentsByNotebook(c *gin.Context) {
 		}
 	}
 
-	response, err := h.documentService.ListDocumentsByNotebook(c.Request.Context(), notebookID, userID, limit, offset)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	response, err := h.documentService.ListDocumentsByNotebook(c.Request.Context(), notebookID, userID, spaceContext, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to list documents", zap.String("notebook_id", notebookID), zap.Error(err))
 		handleServiceError(c, err)
@@ -373,7 +714,14 @@ func (h *DocumentHandler) SearchDocuments(c *gin.Context) {
 		return
 	}
 
-	response, err := h.documentService.SearchDocuments(c.Request.Context(), req, userID)
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	response, err := h.documentService.SearchDocuments(c.Request.Context(), req, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to search documents", zap.Error(err))
 		handleServiceError(c, err)
@@ -406,22 +754,28 @@ func (h *DocumentHandler) DownloadDocument(c *gin.Context) {
 	}
 
 	userID := getUserID(c)
-	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID)
+	
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
-		h.logger.Error("Failed to get document", zap.String("document_id", documentID), zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+	
+	fileData, document, err := h.documentService.DownloadDocumentFile(c.Request.Context(), documentID, userID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to download document file", zap.String("document_id", documentID), zap.Error(err))
 		handleServiceError(c, err)
 		return
 	}
 
-	// TODO: Implement actual file download from storage service
-	// This would typically involve:
-	// 1. Getting file URL from storage service
-	// 2. Streaming file content to response
-	// 3. Setting appropriate headers
-
-	c.Header("Content-Disposition", "attachment; filename="+document.OriginalName)
+	// Set appropriate headers for file download
+	c.Header("Content-Disposition", "attachment; filename=\""+document.OriginalName+"\"")
 	c.Header("Content-Type", document.MimeType)
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "Download not yet implemented"})
+	c.Header("Content-Length", fmt.Sprintf("%d", len(fileData)))
+	
+	// Stream the file data
+	c.Data(http.StatusOK, document.MimeType, fileData)
 }
 
 // GetDocumentURL gets a presigned URL for document access
@@ -448,7 +802,15 @@ func (h *DocumentHandler) GetDocumentURL(c *gin.Context) {
 	}
 
 	userID := getUserID(c)
-	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID)
+	
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+	
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to get document", zap.String("document_id", documentID), zap.Error(err))
 		handleServiceError(c, err)

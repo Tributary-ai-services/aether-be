@@ -24,6 +24,11 @@ type User struct {
 	Preferences map[string]interface{} `json:"preferences,omitempty" validate:"omitempty,neo4j_compatible"`
 	Status      string                 `json:"status" validate:"required,oneof=active inactive suspended"`
 
+	// Personal tenant information
+	PersonalTenantID string `json:"personal_tenant_id,omitempty"`
+	PersonalSpaceID  string `json:"personal_space_id,omitempty"`
+	PersonalAPIKey   string `json:"-"` // Not serialized in JSON responses
+
 	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -223,4 +228,24 @@ type UserListResponse struct {
 	Limit   int                   `json:"limit"`
 	Offset  int                   `json:"offset"`
 	HasMore bool                  `json:"has_more"`
+}
+
+// HasPersonalTenant checks if user has personal tenant configured
+func (u *User) HasPersonalTenant() bool {
+	return u.PersonalTenantID != "" && u.PersonalAPIKey != ""
+}
+
+// GetPersonalTenantInfo returns the personal tenant ID and API key
+func (u *User) GetPersonalTenantInfo() (tenantID, apiKey string, exists bool) {
+	if !u.HasPersonalTenant() {
+		return "", "", false
+	}
+	return u.PersonalTenantID, u.PersonalAPIKey, true
+}
+
+// SetPersonalTenantInfo sets the personal tenant information
+func (u *User) SetPersonalTenantInfo(tenantID, apiKey string) {
+	u.PersonalTenantID = tenantID
+	u.PersonalAPIKey = apiKey
+	u.UpdatedAt = time.Now()
 }

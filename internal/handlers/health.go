@@ -16,7 +16,6 @@ import (
 // HealthHandler handles health check requests
 type HealthHandler struct {
 	neo4j          *database.Neo4jClient
-	redis          *database.RedisClient
 	storageService *services.S3StorageService
 	kafkaService   *services.KafkaService
 	logger         *logger.Logger
@@ -25,14 +24,12 @@ type HealthHandler struct {
 // NewHealthHandler creates a new health handler
 func NewHealthHandler(
 	neo4j *database.Neo4jClient,
-	redis *database.RedisClient,
 	storageService *services.S3StorageService,
 	kafkaService *services.KafkaService,
 	log *logger.Logger,
 ) *HealthHandler {
 	return &HealthHandler{
 		neo4j:          neo4j,
-		redis:          redis,
 		storageService: storageService,
 		kafkaService:   kafkaService,
 		logger:         log.WithService("health_handler"),
@@ -93,13 +90,6 @@ func (h *HealthHandler) ReadinessCheck(c *gin.Context) {
 	neo4jHealth := h.checkNeo4j(ctx)
 	response.Services["neo4j"] = neo4jHealth
 	if neo4jHealth.Status != "healthy" {
-		allHealthy = false
-	}
-
-	// Check Redis
-	redisHealth := h.checkRedis(ctx)
-	response.Services["redis"] = redisHealth
-	if redisHealth.Status != "healthy" {
 		allHealthy = false
 	}
 
@@ -165,26 +155,7 @@ func (h *HealthHandler) checkNeo4j(ctx context.Context) ServiceHealth {
 	}
 }
 
-func (h *HealthHandler) checkRedis(ctx context.Context) ServiceHealth {
-	start := time.Now()
-
-	err := h.redis.HealthCheck(ctx)
-	responseTime := time.Since(start)
-
-	if err != nil {
-		h.logger.Error("Redis health check failed", zap.Error(err))
-		return ServiceHealth{
-			Status:       "unhealthy",
-			ResponseTime: responseTime,
-			Error:        err.Error(),
-		}
-	}
-
-	return ServiceHealth{
-		Status:       "healthy",
-		ResponseTime: responseTime,
-	}
-}
+// Redis health check removed - no longer using Redis
 
 func (h *HealthHandler) checkStorage(ctx context.Context) ServiceHealth {
 	start := time.Now()

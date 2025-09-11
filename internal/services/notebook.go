@@ -18,27 +18,38 @@ import (
 // NotebookService handles notebook-related business logic
 type NotebookService struct {
 	neo4j  *database.Neo4jClient
-	redis  *database.RedisClient
 	logger *logger.Logger
 }
 
 // NewNotebookService creates a new notebook service
-func NewNotebookService(neo4j *database.Neo4jClient, redis *database.RedisClient, log *logger.Logger) *NotebookService {
+func NewNotebookService(neo4j *database.Neo4jClient, log *logger.Logger) *NotebookService {
 	return &NotebookService{
 		neo4j:  neo4j,
-		redis:  redis,
 		logger: log.WithService("notebook_service"),
 	}
 }
 
 // CreateNotebook creates a new notebook
-func (s *NotebookService) CreateNotebook(ctx context.Context, req models.NotebookCreateRequest, ownerID string) (*models.Notebook, error) {
+func (s *NotebookService) CreateNotebook(ctx context.Context, req models.NotebookCreateRequest, ownerID string, spaceCtx *models.SpaceContext) (*models.Notebook, error) {
+	// Validate user can create in this space
+	if !spaceCtx.CanCreate() {
+		return nil, errors.ForbiddenWithDetails("Insufficient permissions to create notebook", map[string]interface{}{
+			"space_id": spaceCtx.SpaceID,
+			"user_id":  ownerID,
+		})
+	}
+
+	// If organization space and team ID provided, validate team exists
+	if spaceCtx.IsOrganizationSpace() && req.TeamID != "" {
+		// TODO: Validate team exists and user has access to the team
+	}
+
 	// Create new notebook
-	notebook := models.NewNotebook(req, ownerID)
+	notebook := models.NewNotebook(req, ownerID, spaceCtx)
 
 	// Check if parent exists (if specified)
 	if req.ParentID != "" {
-		parentExists, err := s.notebookExists(ctx, req.ParentID)
+		parentExists, err := s.notebookExists(ctx, req.ParentID, spaceCtx.TenantID)
 		if err != nil {
 			return nil, err
 		}
@@ -58,7 +69,11 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 			visibility: $visibility,
 			status: $status,
 			owner_id: $owner_id,
+			space_type: $space_type,
+			space_id: $space_id,
+			tenant_id: $tenant_id,
 			parent_id: $parent_id,
+			team_id: $team_id,
 			compliance_settings: $compliance_settings,
 			document_count: $document_count,
 			total_size_bytes: $total_size_bytes,
@@ -90,7 +105,11 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 		"visibility":          notebook.Visibility,
 		"status":              notebook.Status,
 		"owner_id":            notebook.OwnerID,
-		"parent_id":           req.ParentID,
+		"space_type":          string(notebook.SpaceType),
+		"space_id":            notebook.SpaceID,
+		"tenant_id":           notebook.TenantID,
+		"parent_id":           notebook.ParentID,
+		"team_id":             notebook.TeamID,
 		"compliance_settings": complianceSettingsJSON,
 		"document_count":      notebook.DocumentCount,
 		"total_size_bytes":    notebook.TotalSizeBytes,
@@ -108,14 +127,14 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 
 	// Create parent-child relationship if parent specified
 	if req.ParentID != "" {
-		if err := s.createParentChildRelationship(ctx, req.ParentID, notebook.ID); err != nil {
+		if err := s.createParentChildRelationship(ctx, req.ParentID, notebook.ID, spaceCtx.TenantID); err != nil {
 			s.logger.Error("Failed to create parent-child relationship", zap.Error(err))
 			// Don't fail the entire operation, just log the error
 		}
 	}
 
 	// Create owner relationship
-	if err := s.createOwnerRelationship(ctx, ownerID, notebook.ID); err != nil {
+	if err := s.createOwnerRelationship(ctx, ownerID, notebook.ID, spaceCtx.TenantID); err != nil {
 		s.logger.Error("Failed to create owner relationship", zap.Error(err))
 		// Don't fail the entire operation, but this is more critical
 	}
@@ -130,18 +149,20 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 }
 
 // GetNotebookByID retrieves a notebook by ID
-func (s *NotebookService) GetNotebookByID(ctx context.Context, notebookID string, userID string) (*models.Notebook, error) {
+func (s *NotebookService) GetNotebookByID(ctx context.Context, notebookID string, userID string, spaceCtx *models.SpaceContext) (*models.Notebook, error) {
 	query := `
-		MATCH (n:Notebook {id: $notebook_id})
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})
 		OPTIONAL MATCH (n)-[:OWNED_BY]->(owner:User)
 		RETURN n.id, n.name, n.description, n.visibility, n.status, n.owner_id,
-		       n.parent_id, n.compliance_settings, n.document_count, n.total_size_bytes,
+		       n.space_type, n.space_id, n.tenant_id, n.parent_id, n.team_id,
+		       n.compliance_settings, n.document_count, n.total_size_bytes,
 		       n.tags, n.search_text, n.created_at, n.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 	`
 
 	params := map[string]interface{}{
 		"notebook_id": notebookID,
+		"tenant_id":   spaceCtx.TenantID,
 	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -161,24 +182,32 @@ func (s *NotebookService) GetNotebookByID(ctx context.Context, notebookID string
 		return nil, err
 	}
 
-	// Check access permissions
-	if !s.canUserAccessNotebook(ctx, notebook, userID) {
-		return nil, errors.Forbidden("Access denied to notebook")
+	// Validate notebook belongs to the correct space
+	if notebook.SpaceID != spaceCtx.SpaceID || notebook.TenantID != spaceCtx.TenantID {
+		return nil, errors.ForbiddenWithDetails("Notebook not accessible in this space", map[string]interface{}{
+			"notebook_id": notebookID,
+			"space_id":    spaceCtx.SpaceID,
+		})
+	}
+
+	// Check if user has read permissions in the space
+	if !spaceCtx.CanRead() {
+		return nil, errors.Forbidden("Insufficient permissions to read notebook")
 	}
 
 	return notebook, nil
 }
 
 // UpdateNotebook updates a notebook
-func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string, req models.NotebookUpdateRequest, userID string) (*models.Notebook, error) {
+func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string, req models.NotebookUpdateRequest, userID string, spaceCtx *models.SpaceContext) (*models.Notebook, error) {
 	// Get current notebook and check permissions
-	notebook, err := s.GetNotebookByID(ctx, notebookID, userID)
+	notebook, err := s.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if user can write to notebook
-	if !s.canUserWriteNotebook(ctx, notebook, userID) {
+	// Check if user can update in this space
+	if !spaceCtx.CanUpdate() {
 		return nil, errors.Forbidden("Write access denied to notebook")
 	}
 
@@ -200,7 +229,7 @@ func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string,
 
 	// Update in Neo4j
 	query := `
-		MATCH (n:Notebook {id: $notebook_id})
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})
 		SET n.name = $name,
 		    n.description = $description,
 		    n.visibility = $visibility,
@@ -214,6 +243,7 @@ func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string,
 
 	params := map[string]interface{}{
 		"notebook_id":         notebookID,
+		"tenant_id":           spaceCtx.TenantID,
 		"name":                notebook.Name,
 		"description":         notebook.Description,
 		"visibility":          notebook.Visibility,
@@ -239,21 +269,21 @@ func (s *NotebookService) UpdateNotebook(ctx context.Context, notebookID string,
 }
 
 // DeleteNotebook deletes a notebook (soft delete)
-func (s *NotebookService) DeleteNotebook(ctx context.Context, notebookID string, userID string) error {
+func (s *NotebookService) DeleteNotebook(ctx context.Context, notebookID string, userID string, spaceCtx *models.SpaceContext) error {
 	// Get notebook and check permissions
-	notebook, err := s.GetNotebookByID(ctx, notebookID, userID)
+	notebook, err := s.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
 	if err != nil {
 		return err
 	}
 
-	// Check if user can delete notebook (must be owner or admin)
-	if notebook.OwnerID != userID {
-		return errors.Forbidden("Only notebook owner can delete notebook")
+	// Check if user can delete in this space
+	if !spaceCtx.CanDelete() {
+		return errors.Forbidden("Insufficient permissions to delete notebook")
 	}
 
 	// Soft delete: update status to deleted
 	query := `
-		MATCH (n:Notebook {id: $notebook_id})
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})
 		SET n.status = 'deleted',
 		    n.updated_at = datetime($updated_at)
 		RETURN n
@@ -261,6 +291,7 @@ func (s *NotebookService) DeleteNotebook(ctx context.Context, notebookID string,
 
 	params := map[string]interface{}{
 		"notebook_id": notebookID,
+		"tenant_id":   spaceCtx.TenantID,
 		"updated_at":  time.Now().Format(time.RFC3339),
 	}
 
@@ -278,8 +309,8 @@ func (s *NotebookService) DeleteNotebook(ctx context.Context, notebookID string,
 	return nil
 }
 
-// ListNotebooks lists notebooks for a user
-func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limit, offset int) (*models.NotebookListResponse, error) {
+// ListNotebooks lists notebooks for a user in a specific space
+func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, spaceCtx *models.SpaceContext, limit, offset int) (*models.NotebookListResponse, error) {
 	s.logger.Info("ListNotebooks called",
 		zap.String("user_id", userID),
 		zap.Int("limit", limit),
@@ -294,16 +325,20 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limi
 		offset = 0
 	}
 
+	// Check if user has read permissions in the space
+	if !spaceCtx.CanRead() {
+		return nil, errors.Forbidden("Insufficient permissions to list notebooks")
+	}
+
 	query := `
 		MATCH (n:Notebook)
-		WHERE n.status = 'active' AND (
-			n.visibility = 'public' OR
-			n.owner_id = $user_id OR
-			EXISTS((n)-[:SHARED_WITH]->(:User {id: $user_id}))
-		)
+		WHERE n.status = 'active' 
+			AND n.tenant_id = $tenant_id
+			AND n.space_id = $space_id
 		OPTIONAL MATCH (n)-[:OWNED_BY]->(owner:User)
 		RETURN n.id, n.name, n.description, n.visibility, n.status, n.owner_id,
-		       n.parent_id, n.compliance_settings, n.document_count, n.total_size_bytes,
+		       n.space_type, n.space_id, n.tenant_id, n.parent_id, n.team_id,
+		       n.compliance_settings, n.document_count, n.total_size_bytes,
 		       n.tags, n.created_at, n.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 		ORDER BY n.updated_at DESC
@@ -312,9 +347,11 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limi
 	`
 
 	params := map[string]interface{}{
-		"user_id": userID,
-		"limit":   limit + 1, // Get one extra to check if there are more
-		"offset":  offset,
+		"user_id":   userID,
+		"tenant_id": spaceCtx.TenantID,
+		"space_id":  spaceCtx.SpaceID,
+		"limit":     limit + 1, // Get one extra to check if there are more
+		"offset":    offset,
 	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -349,15 +386,17 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limi
 	// Get total count
 	countQuery := `
 		MATCH (n:Notebook)
-		WHERE n.status = 'active' AND (
-			n.visibility = 'public' OR
-			n.owner_id = $user_id OR
-			EXISTS((n)-[:SHARED_WITH]->(:User {id: $user_id}))
-		)
+		WHERE n.status = 'active' 
+			AND n.tenant_id = $tenant_id
+			AND n.space_id = $space_id
 		RETURN count(n) as total
 	`
 
-	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{"user_id": userID})
+	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{
+		"user_id":   userID,
+		"tenant_id": spaceCtx.TenantID,
+		"space_id":  spaceCtx.SpaceID,
+	})
 	if err != nil {
 		s.logger.Error("Failed to get notebook count", zap.Error(err))
 		return nil, errors.Database("Failed to get notebook count", err)
@@ -381,8 +420,8 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, limi
 	}, nil
 }
 
-// SearchNotebooks searches for notebooks
-func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.NotebookSearchRequest, userID string) (*models.NotebookListResponse, error) {
+// SearchNotebooks searches for notebooks within a space
+func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.NotebookSearchRequest, userID string, spaceCtx *models.SpaceContext) (*models.NotebookListResponse, error) {
 	// Set defaults
 	if req.Limit <= 0 || req.Limit > 100 {
 		req.Limit = 20
@@ -391,17 +430,25 @@ func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.Notebo
 		req.Offset = 0
 	}
 
-	// Build query conditions
-	whereConditions := []string{"n.status = 'active'"}
-	params := map[string]interface{}{
-		"user_id": userID,
-		"limit":   req.Limit + 1,
-		"offset":  req.Offset,
+	// Check if user has read permissions in the space
+	if !spaceCtx.CanRead() {
+		return nil, errors.Forbidden("Insufficient permissions to search notebooks")
 	}
 
-	// Add access control
-	whereConditions = append(whereConditions,
-		"(n.visibility = 'public' OR n.owner_id = $user_id OR EXISTS((n)-[:SHARED_WITH]->(:User {id: $user_id})))")
+	// Build query conditions - filter by space
+	whereConditions := []string{
+		"n.status = 'active'",
+		"n.tenant_id = $tenant_id",
+		"n.space_id = $space_id",
+	}
+	
+	params := map[string]interface{}{
+		"user_id":   userID,
+		"tenant_id": spaceCtx.TenantID,
+		"space_id":  spaceCtx.SpaceID,
+		"limit":     req.Limit + 1,
+		"offset":    req.Offset,
+	}
 
 	if req.Query != "" {
 		whereConditions = append(whereConditions, "n.search_text CONTAINS $query")
@@ -438,7 +485,8 @@ func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.Notebo
 		%s
 		OPTIONAL MATCH (n)-[:OWNED_BY]->(owner:User)
 		RETURN n.id, n.name, n.description, n.visibility, n.status, n.owner_id,
-		       n.parent_id, n.document_count, n.total_size_bytes, n.tags, n.created_at, n.updated_at,
+		       n.space_type, n.space_id, n.tenant_id, n.parent_id, n.team_id,
+		       n.document_count, n.total_size_bytes, n.tags, n.created_at, n.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 		ORDER BY n.updated_at DESC
 		SKIP $offset
@@ -479,9 +527,9 @@ func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.Notebo
 }
 
 // ShareNotebook shares a notebook with users or groups
-func (s *NotebookService) ShareNotebook(ctx context.Context, notebookID string, req models.NotebookShareRequest, userID string) error {
+func (s *NotebookService) ShareNotebook(ctx context.Context, notebookID string, req models.NotebookShareRequest, userID string, spaceCtx *models.SpaceContext) error {
 	// Get notebook and check permissions
-	notebook, err := s.GetNotebookByID(ctx, notebookID, userID)
+	notebook, err := s.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
 	if err != nil {
 		return err
 	}
@@ -532,9 +580,12 @@ func (s *NotebookService) ShareNotebook(ctx context.Context, notebookID string, 
 
 // Helper methods (simplified implementations)
 
-func (s *NotebookService) notebookExists(ctx context.Context, notebookID string) (bool, error) {
-	query := "MATCH (n:Notebook {id: $notebook_id}) RETURN count(n) > 0 as exists"
-	params := map[string]interface{}{"notebook_id": notebookID}
+func (s *NotebookService) notebookExists(ctx context.Context, notebookID string, tenantID string) (bool, error) {
+	query := "MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}) RETURN count(n) > 0 as exists"
+	params := map[string]interface{}{
+		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
+	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
@@ -552,28 +603,32 @@ func (s *NotebookService) notebookExists(ctx context.Context, notebookID string)
 	return false, nil
 }
 
-func (s *NotebookService) createParentChildRelationship(ctx context.Context, parentID, childID string) error {
+func (s *NotebookService) createParentChildRelationship(ctx context.Context, parentID, childID string, tenantID string) error {
 	query := `
-		MATCH (parent:Notebook {id: $parent_id}), (child:Notebook {id: $child_id})
+		MATCH (parent:Notebook {id: $parent_id, tenant_id: $tenant_id}), 
+		      (child:Notebook {id: $child_id, tenant_id: $tenant_id})
 		CREATE (parent)-[:CONTAINS]->(child)
 	`
 	params := map[string]interface{}{
 		"parent_id": parentID,
 		"child_id":  childID,
+		"tenant_id": tenantID,
 	}
 
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	return err
 }
 
-func (s *NotebookService) createOwnerRelationship(ctx context.Context, userID, notebookID string) error {
+func (s *NotebookService) createOwnerRelationship(ctx context.Context, userID, notebookID string, tenantID string) error {
 	query := `
-		MATCH (user:User {id: $user_id}), (notebook:Notebook {id: $notebook_id})
+		MATCH (user:User {id: $user_id}), 
+		      (notebook:Notebook {id: $notebook_id, tenant_id: $tenant_id})
 		CREATE (notebook)-[:OWNED_BY]->(user)
 	`
 	params := map[string]interface{}{
 		"user_id":     userID,
 		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
 	}
 
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -665,6 +720,12 @@ func (s *NotebookService) recordToNotebook(record interface{}) (*models.Notebook
 		}
 	}
 
+	// Extract space fields
+	spaceType, _ := neo4jRecord.Get("n.space_type")
+	spaceID, _ := neo4jRecord.Get("n.space_id")
+	tenantID, _ := neo4jRecord.Get("n.tenant_id")
+	teamID, _ := neo4jRecord.Get("n.team_id")
+
 	// Build the notebook model
 	notebook := &models.Notebook{
 		ID:                 s.getString(id),
@@ -673,7 +734,11 @@ func (s *NotebookService) recordToNotebook(record interface{}) (*models.Notebook
 		Visibility:         s.getString(visibility),
 		Status:             s.getString(status),
 		OwnerID:            s.getString(ownerID),
+		SpaceType:          models.SpaceType(s.getString(spaceType)),
+		SpaceID:            s.getString(spaceID),
+		TenantID:           s.getString(tenantID),
 		ParentID:           s.getString(parentID),
+		TeamID:             s.getString(teamID),
 		ComplianceSettings: complianceSettings,
 		DocumentCount:      s.getInt(documentCount),
 		TotalSizeBytes:     s.getInt64(totalSizeBytes),

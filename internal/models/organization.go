@@ -23,6 +23,10 @@ type Organization struct {
 	// Settings
 	Settings map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
 
+	// Tenant information for AudiModal/DeepLake integration
+	TenantID     string `json:"tenant_id,omitempty" validate:"omitempty,uuid"`
+	TenantAPIKey string `json:"-"` // Not serialized to JSON, stored securely
+
 	// Metadata
 	CreatedBy    string    `json:"created_by" validate:"required,uuid"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -72,6 +76,7 @@ type OrganizationResponse struct {
 	Website        string                 `json:"website,omitempty"`
 	Location       string                 `json:"location,omitempty"`
 	Visibility     string                 `json:"visibility"`
+	TenantID       string                 `json:"tenantId,omitempty"` // Include tenant ID for frontend
 	Billing        map[string]interface{} `json:"billing,omitempty"`
 	Settings       map[string]interface{} `json:"settings,omitempty"`
 	CreatedBy      string                 `json:"createdBy"` // camelCase for frontend
@@ -169,6 +174,7 @@ func (o *Organization) ToResponse() *OrganizationResponse {
 		Website:         o.Website,
 		Location:        o.Location,
 		Visibility:      o.Visibility,
+		TenantID:        o.TenantID, // Include tenant ID in response
 		Billing:         o.Billing,
 		Settings:        o.Settings,
 		CreatedBy:       o.CreatedBy,
@@ -246,6 +252,28 @@ func (o *Organization) CanUserInvite(userRole string) bool {
 // CanUserManageBilling checks if a user can manage billing for the organization
 func (o *Organization) CanUserManageBilling(userRole string) bool {
 	return userRole == "owner" || userRole == "billing"
+}
+
+// HasTenant checks if the organization has an associated tenant
+func (o *Organization) HasTenant() bool {
+	return o.TenantID != "" && o.TenantAPIKey != ""
+}
+
+// GetTenantInfo returns tenant information (without exposing API key)
+func (o *Organization) GetTenantInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"tenant_id":    o.TenantID,
+		"has_api_key":  o.TenantAPIKey != "",
+		"space_type":   "organization",
+		"space_name":   o.Name,
+	}
+}
+
+// SetTenantInfo updates tenant information securely
+func (o *Organization) SetTenantInfo(tenantID, apiKey string) {
+	o.TenantID = tenantID
+	o.TenantAPIKey = apiKey
+	o.UpdatedAt = time.Now()
 }
 
 // DefaultOrganizationSettings returns default settings for a new organization

@@ -17,39 +17,184 @@ import (
 
 // UserService handles user-related business logic
 type UserService struct {
-	neo4j  *database.Neo4jClient
-	redis  *database.RedisClient
-	logger *logger.Logger
+	neo4j     *database.Neo4jClient
+	audiModal *AudiModalService
+	logger    *logger.Logger
 }
 
 // NewUserService creates a new user service
-func NewUserService(neo4j *database.Neo4jClient, redis *database.RedisClient, log *logger.Logger) *UserService {
+func NewUserService(neo4j *database.Neo4jClient, audiModal *AudiModalService, log *logger.Logger) *UserService {
 	return &UserService{
-		neo4j:  neo4j,
-		redis:  redis,
-		logger: log.WithService("user_service"),
+		neo4j:     neo4j,
+		audiModal: audiModal,
+		logger:    log.WithService("user_service"),
 	}
 }
 
 // CreateUser creates a new user
 func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateRequest) (*models.User, error) {
-	// Check if user already exists by email or Keycloak ID
-	existingUser, err := s.GetUserByEmail(ctx, req.Email)
+	// Check if user already exists by Keycloak ID
+	existingUser, err := s.GetUserByKeycloakID(ctx, req.KeycloakID)
 	if err == nil && existingUser != nil {
-		return nil, errors.ConflictWithDetails("User already exists", map[string]interface{}{
-			"email": req.Email,
-		})
+		// User with this Keycloak ID already exists, return it
+		s.logger.Info("User with Keycloak ID already exists, returning existing user",
+			zap.String("keycloak_id", req.KeycloakID),
+			zap.String("email", existingUser.Email),
+		)
+		return existingUser, nil
 	}
 
-	existingUser, err = s.GetUserByKeycloakID(ctx, req.KeycloakID)
-	if err == nil && existingUser != nil {
-		return nil, errors.ConflictWithDetails("User already exists", map[string]interface{}{
-			"keycloak_id": req.KeycloakID,
-		})
+	// Check if user exists by email but with different Keycloak ID
+	existingUserByEmail, err := s.GetUserByEmail(ctx, req.Email)
+	if err == nil && existingUserByEmail != nil {
+		// User exists with same email but different Keycloak ID - update the Keycloak ID
+		s.logger.Info("User exists with same email but different Keycloak ID, updating Keycloak ID",
+			zap.String("old_keycloak_id", existingUserByEmail.KeycloakID),
+			zap.String("new_keycloak_id", req.KeycloakID),
+			zap.String("email", req.Email),
+		)
+		
+		// Update the Keycloak ID in the database
+		updateQuery := `
+			MATCH (u:User {email: $email})
+			SET u.keycloak_id = $new_keycloak_id,
+			    u.updated_at = datetime($updated_at)
+			RETURN u
+		`
+		
+		updateParams := map[string]interface{}{
+			"email":            req.Email,
+			"new_keycloak_id":  req.KeycloakID,
+			"updated_at":       time.Now().Format(time.RFC3339),
+		}
+		
+		_, err = s.neo4j.ExecuteQueryWithLogging(ctx, updateQuery, updateParams)
+		if err != nil {
+			s.logger.Error("Failed to update user Keycloak ID", zap.Error(err))
+			return nil, errors.Database("Failed to update user Keycloak ID", err)
+		}
+		
+		// Cache invalidation removed - no longer using Redis
+		
+		// Check if user needs personal tenant setup
+		if !existingUserByEmail.HasPersonalTenant() {
+			s.logger.Info("User missing personal tenant, creating one",
+				zap.String("user_id", existingUserByEmail.ID),
+				zap.String("email", req.Email),
+			)
+			
+			// Create personal tenant in AudiModal
+			tenantReq := CreateTenantRequest{
+				Name:         fmt.Sprintf("%s-personal", existingUserByEmail.Username),
+				DisplayName:  fmt.Sprintf("%s's Personal Space", existingUserByEmail.FullName),
+				BillingPlan:  "personal",
+				ContactEmail: existingUserByEmail.Email,
+				Quotas: map[string]interface{}{
+					"max_data_sources":      10,
+					"max_files":            1000,
+					"max_storage_mb":        5120, // 5GB
+					"max_vector_dimensions": 1536,
+					"max_monthly_searches":  10000,
+				},
+				Compliance: map[string]interface{}{
+					"data_retention_days":   365,
+					"encryption_enabled":    true,
+					"audit_logging_enabled": true,
+					"gdpr_compliant":       true,
+				},
+				Settings: map[string]interface{}{
+					"user_id":       existingUserByEmail.ID,
+					"user_email":    existingUserByEmail.Email,
+					"creation_type": "retroactive_setup",
+				},
+			}
+			
+			tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
+			if err != nil {
+				s.logger.Error("Failed to create personal tenant for existing user", zap.Error(err))
+				// Don't fail the login - just log the error
+			} else {
+				// Update user with personal tenant info
+				updateTenantQuery := `
+					MATCH (u:User {email: $email})
+					SET u.personal_tenant_id = $tenant_id,
+					    u.personal_api_key = $api_key,
+					    u.updated_at = datetime($updated_at)
+					RETURN u
+				`
+				
+				updateTenantParams := map[string]interface{}{
+					"email":      req.Email,
+					"tenant_id":  tenant.TenantID,
+					"api_key":    tenant.APIKey,
+					"updated_at": time.Now().Format(time.RFC3339),
+				}
+				
+				_, err = s.neo4j.ExecuteQueryWithLogging(ctx, updateTenantQuery, updateTenantParams)
+				if err != nil {
+					s.logger.Error("Failed to update user with tenant info", zap.Error(err))
+					// Don't fail the login - just log the error
+				} else {
+					// Update the user object
+					existingUserByEmail.SetPersonalTenantInfo(tenant.TenantID, tenant.APIKey)
+					s.logger.Info("Successfully created personal tenant for existing user",
+						zap.String("user_id", existingUserByEmail.ID),
+						zap.String("tenant_id", tenant.TenantID),
+					)
+				}
+			}
+		}
+		
+		// Update the existing user object and return it
+		existingUserByEmail.KeycloakID = req.KeycloakID
+		existingUserByEmail.UpdatedAt = time.Now()
+		
+		s.logger.Info("Successfully updated user Keycloak ID",
+			zap.String("user_id", existingUserByEmail.ID),
+			zap.String("email", req.Email),
+			zap.String("new_keycloak_id", req.KeycloakID),
+		)
+		
+		return existingUserByEmail, nil
 	}
 
 	// Create new user
 	user := models.NewUser(req)
+
+	// Create personal tenant in AudiModal
+	tenantReq := CreateTenantRequest{
+		Name:         fmt.Sprintf("%s-personal", user.Username),
+		DisplayName:  fmt.Sprintf("%s's Personal Space", user.FullName),
+		BillingPlan:  "personal",
+		ContactEmail: user.Email,
+		Quotas: map[string]interface{}{
+			"max_data_sources":      10,
+			"max_files":            1000,
+			"max_storage_mb":        5120, // 5GB
+			"max_vector_dimensions": 1536,
+			"max_monthly_searches":  10000,
+		},
+		Compliance: map[string]interface{}{
+			"data_retention_days":   365,
+			"encryption_enabled":    true,
+			"audit_logging_enabled": true,
+			"gdpr_compliant":       true,
+		},
+		Settings: map[string]interface{}{
+			"user_id":       user.ID,
+			"user_email":    user.Email,
+			"creation_type": "user_registration",
+		},
+	}
+
+	tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
+	if err != nil {
+		s.logger.Error("Failed to create personal tenant", zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to create personal workspace", err)
+	}
+
+	// Set personal tenant info on user
+	user.SetPersonalTenantInfo(tenant.TenantID, tenant.APIKey)
 
 	// Create user in Neo4j
 	query := `
@@ -62,6 +207,8 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 			avatar_url: $avatar_url,
 			preferences: $preferences,
 			status: $status,
+			personal_tenant_id: $personal_tenant_id,
+			personal_api_key: $personal_api_key,
 			created_at: datetime($created_at),
 			updated_at: datetime($updated_at)
 		})
@@ -82,16 +229,18 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 	}
 
 	params := map[string]interface{}{
-		"id":          user.ID,
-		"keycloak_id": user.KeycloakID,
-		"email":       user.Email,
-		"username":    user.Username,
-		"full_name":   user.FullName,
-		"avatar_url":  user.AvatarURL,
-		"preferences": preferencesJSON,
-		"status":      user.Status,
-		"created_at":  user.CreatedAt.Format(time.RFC3339),
-		"updated_at":  user.UpdatedAt.Format(time.RFC3339),
+		"id":                 user.ID,
+		"keycloak_id":        user.KeycloakID,
+		"email":              user.Email,
+		"username":           user.Username,
+		"full_name":          user.FullName,
+		"avatar_url":         user.AvatarURL,
+		"preferences":        preferencesJSON,
+		"status":             user.Status,
+		"personal_tenant_id": user.PersonalTenantID,
+		"personal_api_key":   user.PersonalAPIKey,
+		"created_at":         user.CreatedAt.Format(time.RFC3339),
+		"updated_at":         user.UpdatedAt.Format(time.RFC3339),
 	}
 
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -111,18 +260,12 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 
 // GetUserByID retrieves a user by ID
 func (s *UserService) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
-	// Try cache first
-	cacheKey := fmt.Sprintf("user:%s", userID)
-	if cachedUser, err := s.getUserFromCache(ctx, cacheKey); err == nil && cachedUser != nil {
-		return cachedUser, nil
-	}
-
 	query := `
 		MATCH (u:User {id: $user_id})
 		RETURN u.id, u.keycloak_id, u.email, u.username, u.full_name, u.avatar_url,
 		       u.keycloak_roles, u.keycloak_groups, u.keycloak_attributes,
 		       u.preferences, u.status, u.created_at, u.updated_at,
-		       u.last_login_at, u.last_sync_at
+		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key
 	`
 
 	params := map[string]interface{}{
@@ -146,9 +289,6 @@ func (s *UserService) GetUserByID(ctx context.Context, userID string) (*models.U
 		return nil, err
 	}
 
-	// Cache the user
-	s.cacheUser(ctx, cacheKey, user)
-
 	return user, nil
 }
 
@@ -159,7 +299,7 @@ func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*models
 		RETURN u.id, u.keycloak_id, u.email, u.username, u.full_name, u.avatar_url,
 		       u.keycloak_roles, u.keycloak_groups, u.keycloak_attributes,
 		       u.preferences, u.status, u.created_at, u.updated_at,
-		       u.last_login_at, u.last_sync_at
+		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key
 	`
 
 	params := map[string]interface{}{
@@ -188,7 +328,7 @@ func (s *UserService) GetUserByKeycloakID(ctx context.Context, keycloakID string
 		RETURN u.id, u.keycloak_id, u.email, u.username, u.full_name, u.avatar_url,
 		       u.keycloak_roles, u.keycloak_groups, u.keycloak_attributes,
 		       u.preferences, u.status, u.created_at, u.updated_at,
-		       u.last_login_at, u.last_sync_at
+		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key
 	`
 
 	params := map[string]interface{}{
@@ -260,11 +400,7 @@ func (s *UserService) UpdateUser(ctx context.Context, userID string, req models.
 		return nil, errors.Database("Failed to update user", err)
 	}
 
-	// Invalidate cache
-	cacheKey := fmt.Sprintf("user:%s", userID)
-	if err := s.redis.Delete(ctx, cacheKey); err != nil {
-		s.logger.Warn("Failed to invalidate user cache", zap.Error(err))
-	}
+	// Cache invalidation removed - no longer using Redis
 
 	s.logger.Info("User updated successfully",
 		zap.String("user_id", userID),
@@ -280,6 +416,23 @@ func (s *UserService) DeleteUser(ctx context.Context, userID string) error {
 	user, err := s.GetUserByID(ctx, userID)
 	if err != nil {
 		return err
+	}
+
+	// Delete personal tenant if exists
+	if user.HasPersonalTenant() {
+		s.logger.Info("Deleting personal tenant for user",
+			zap.String("user_id", userID),
+			zap.String("tenant_id", user.PersonalTenantID),
+		)
+		
+		if err := s.audiModal.DeleteTenant(ctx, user.PersonalTenantID); err != nil {
+			s.logger.Error("Failed to delete personal tenant",
+				zap.String("user_id", userID),
+				zap.String("tenant_id", user.PersonalTenantID),
+				zap.Error(err),
+			)
+			// Continue with user deletion even if tenant deletion fails
+		}
 	}
 
 	// Soft delete: update status to inactive
@@ -301,11 +454,7 @@ func (s *UserService) DeleteUser(ctx context.Context, userID string) error {
 		return errors.Database("Failed to delete user", err)
 	}
 
-	// Invalidate cache
-	cacheKey := fmt.Sprintf("user:%s", userID)
-	if err := s.redis.Delete(ctx, cacheKey); err != nil {
-		s.logger.Warn("Failed to invalidate user cache", zap.Error(err))
-	}
+	// Cache invalidation removed - no longer using Redis
 
 	s.logger.Info("User deleted successfully",
 		zap.String("user_id", userID),
@@ -447,11 +596,7 @@ func (s *UserService) UpdateLastLogin(ctx context.Context, userID string) error 
 		return errors.Database("Failed to update last login", err)
 	}
 
-	// Invalidate cache
-	cacheKey := fmt.Sprintf("user:%s", userID)
-	if err := s.redis.Delete(ctx, cacheKey); err != nil {
-		s.logger.Warn("Failed to invalidate user cache", zap.Error(err))
-	}
+	// Cache invalidation removed - no longer using Redis
 
 	return nil
 }
@@ -484,11 +629,7 @@ func (s *UserService) SyncWithKeycloak(ctx context.Context, userID string, roles
 		return errors.Database("Failed to sync user with Keycloak", err)
 	}
 
-	// Invalidate cache
-	cacheKey := fmt.Sprintf("user:%s", userID)
-	if err := s.redis.Delete(ctx, cacheKey); err != nil {
-		s.logger.Warn("Failed to invalidate user cache", zap.Error(err))
-	}
+	// Cache invalidation removed - no longer using Redis
 
 	s.logger.Debug("User synced with Keycloak",
 		zap.String("user_id", userID),
@@ -567,6 +708,17 @@ func (s *UserService) recordToUser(record interface{}) (*models.User, error) {
 		}
 	}
 
+	// Parse personal tenant fields
+	if val, ok := r.Get("u.personal_tenant_id"); ok && val != nil {
+		user.PersonalTenantID = val.(string)
+	}
+	if val, ok := r.Get("u.personal_space_id"); ok && val != nil {
+		user.PersonalSpaceID = val.(string)
+	}
+	if val, ok := r.Get("u.personal_api_key"); ok && val != nil {
+		user.PersonalAPIKey = val.(string)
+	}
+
 	// Parse arrays
 	if val, ok := r.Get("u.keycloak_roles"); ok && val != nil {
 		if roles, ok := val.([]interface{}); ok {
@@ -607,18 +759,7 @@ func (s *UserService) recordToUserResponse(record interface{}) (*models.UserResp
 	return &models.UserResponse{}, nil
 }
 
-func (s *UserService) getUserFromCache(ctx context.Context, key string) (*models.User, error) {
-	// Implementation would deserialize user from Redis cache
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (s *UserService) cacheUser(ctx context.Context, key string, user *models.User) {
-	// Implementation would serialize and cache user in Redis
-	// Cache for 1 hour
-	if err := s.redis.Set(ctx, key, user, time.Hour); err != nil {
-		s.logger.Warn("Failed to cache user", zap.Error(err))
-	}
-}
+// Redis caching methods removed - no longer using Redis
 
 // UpdateUserPreferences updates user preferences
 func (s *UserService) UpdateUserPreferences(ctx context.Context, userID string, preferences models.UserPreferences) (*models.UserPreferences, error) {
@@ -642,4 +783,40 @@ func (s *UserService) GetUserStats(ctx context.Context, userID string) (*models.
 	}
 
 	return stats, nil
+}
+
+// UpdatePersonalTenantInfo updates a user's personal tenant information
+func (s *UserService) UpdatePersonalTenantInfo(ctx context.Context, userID, tenantID, apiKey string) error {
+	query := `
+		MATCH (u:User {id: $user_id})
+		SET u.personal_tenant_id = $tenant_id,
+		    u.personal_api_key = $api_key,
+		    u.updated_at = datetime($updated_at)
+		RETURN u
+	`
+	
+	params := map[string]interface{}{
+		"user_id":    userID,
+		"tenant_id":  tenantID,
+		"api_key":    apiKey,
+		"updated_at": time.Now().Format(time.RFC3339),
+	}
+	
+	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to update user personal tenant info", 
+			zap.String("user_id", userID), 
+			zap.String("tenant_id", tenantID),
+			zap.Error(err))
+		return errors.Database("Failed to update user personal tenant info", err)
+	}
+	
+	// Cache invalidation removed - no longer using Redis
+	
+	s.logger.Info("Updated user personal tenant info",
+		zap.String("user_id", userID),
+		zap.String("tenant_id", tenantID),
+	)
+	
+	return nil
 }

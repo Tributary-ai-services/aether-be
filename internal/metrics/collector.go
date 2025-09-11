@@ -35,7 +35,6 @@ type MetricsCollector struct {
 
 	// Database clients for metrics collection
 	neo4j *database.Neo4jClient
-	redis *database.RedisClient
 
 	// Control channels
 	done chan struct{}
@@ -45,18 +44,16 @@ type MetricsCollector struct {
 func NewMetricsCollector(
 	metrics *Metrics,
 	neo4j *database.Neo4jClient,
-	redis *database.RedisClient,
 	log *logger.Logger,
 ) *MetricsCollector {
 	return &MetricsCollector{
 		metrics:             metrics,
 		logger:              log.WithService("metrics_collector"),
 		neo4j:               neo4j,
-		redis:               redis,
 		done:                make(chan struct{}),
 		systemCollector:     NewSystemMetricsCollector(metrics, log),
-		businessCollector:   NewBusinessMetricsCollector(metrics, neo4j, redis, log),
-		connectionCollector: NewConnectionMetricsCollector(metrics, neo4j, redis, log),
+		businessCollector:   NewBusinessMetricsCollector(metrics, neo4j, log),
+		connectionCollector: NewConnectionMetricsCollector(metrics, neo4j, log),
 	}
 }
 
@@ -145,7 +142,6 @@ func (smc *SystemMetricsCollector) collectSystemMetrics() {
 func NewBusinessMetricsCollector(
 	metrics *Metrics,
 	neo4j *database.Neo4jClient,
-	redis *database.RedisClient,
 	log *logger.Logger,
 ) *BusinessMetricsCollector {
 	return &BusinessMetricsCollector{
@@ -225,7 +221,6 @@ type ConnectionMetricsCollector struct {
 	metrics *Metrics
 	logger  *logger.Logger
 	neo4j   *database.Neo4jClient
-	redis   *database.RedisClient
 	done    chan struct{}
 }
 
@@ -233,14 +228,12 @@ type ConnectionMetricsCollector struct {
 func NewConnectionMetricsCollector(
 	metrics *Metrics,
 	neo4j *database.Neo4jClient,
-	redis *database.RedisClient,
 	log *logger.Logger,
 ) *ConnectionMetricsCollector {
 	return &ConnectionMetricsCollector{
 		metrics: metrics,
 		logger:  log.WithService("connection_metrics"),
 		neo4j:   neo4j,
-		redis:   redis,
 		done:    make(chan struct{}),
 	}
 }
@@ -275,12 +268,7 @@ func (cmc *ConnectionMetricsCollector) collectConnectionMetrics(ctx context.Cont
 		cmc.metrics.SetDBConnections(5, 2) // active, idle
 	}
 
-	// Collect Redis connection metrics
-	if cmc.redis != nil {
-		// TODO: Get actual connection stats from Redis client
-		// For now, simulate
-		cmc.metrics.SetRedisConnections(3) // active
-	}
+	// Redis metrics collection removed - no longer using Redis
 
 	cmc.logger.Debug("Connection metrics collected")
 }

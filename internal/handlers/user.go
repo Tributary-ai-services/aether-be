@@ -15,15 +15,17 @@ import (
 
 // UserHandler handles user-related HTTP requests
 type UserHandler struct {
-	userService *services.UserService
-	logger      *logger.Logger
+	userService     *services.UserService
+	spaceService    *services.SpaceContextService
+	logger          *logger.Logger
 }
 
 // NewUserHandler creates a new user handler
-func NewUserHandler(userService *services.UserService, log *logger.Logger) *UserHandler {
+func NewUserHandler(userService *services.UserService, spaceService *services.SpaceContextService, log *logger.Logger) *UserHandler {
 	return &UserHandler{
-		userService: userService,
-		logger:      log.WithService("user_handler"),
+		userService:  userService,
+		spaceService: spaceService,
+		logger:       log.WithService("user_handler"),
 	}
 }
 
@@ -330,4 +332,88 @@ func (h *UserHandler) DeleteCurrentUser(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// GetUserSpaces gets available spaces for the current user
+// @Summary Get user spaces
+// @Description Get all spaces accessible to the current user
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {array} models.SpaceInfo
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/spaces [get]
+func (h *UserHandler) GetUserSpaces(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get internal user ID from Keycloak ID
+	user, err := h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
+	if err != nil {
+		// If user doesn't exist in Neo4j, try to create from JWT token
+		if errors.IsNotFound(err) {
+			h.logger.Info("User not found in database, creating from JWT token", zap.String("keycloak_id", userID))
+			
+			// Extract user info from JWT token context
+			email, _ := c.Get("user_email")
+			name, _ := c.Get("user_name")
+			username, _ := c.Get("username")
+			
+			emailStr, _ := email.(string)
+			nameStr, _ := name.(string)
+			usernameStr, _ := username.(string)
+			
+			// If username is empty, use email as username
+			if usernameStr == "" {
+				usernameStr = emailStr
+			}
+			
+			// Create user from JWT token data
+			createReq := models.UserCreateRequest{
+				KeycloakID: userID,
+				Email:      emailStr,
+				Username:   usernameStr,
+				FullName:   nameStr,
+			}
+			
+			user, err = h.userService.CreateUser(c.Request.Context(), createReq)
+			if err != nil {
+				// Check if it's a conflict error (user already exists)
+				if errors.IsConflict(err) {
+					h.logger.Warn("User creation conflict, attempting to fetch existing user", zap.String("keycloak_id", userID), zap.Error(err))
+					// Try one more time to get the user
+					user, err = h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
+					if err != nil {
+						h.logger.Error("Failed to fetch existing user after conflict", zap.String("keycloak_id", userID), zap.Error(err))
+						c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve user profile"))
+						return
+					}
+				} else {
+					h.logger.Error("Failed to create user from JWT token", zap.String("keycloak_id", userID), zap.Error(err))
+					c.JSON(http.StatusInternalServerError, errors.Internal("Failed to create user profile"))
+					return
+				}
+			} else {
+				h.logger.Info("Successfully created user from JWT token", zap.String("keycloak_id", userID), zap.String("email", emailStr))
+			}
+		} else {
+			h.logger.Error("Failed to get user", zap.String("keycloak_id", userID), zap.Error(err))
+			handleServiceError(c, err)
+			return
+		}
+	}
+
+	spaces, err := h.spaceService.GetUserSpaces(c.Request.Context(), user.ID)
+	if err != nil {
+		h.logger.Error("Failed to get user spaces", zap.String("user_id", user.ID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, spaces)
 }
