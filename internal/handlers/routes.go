@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"os"
+	
 	"github.com/gin-gonic/gin"
 
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
+	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/database"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/metrics"
@@ -17,10 +20,18 @@ type APIServer struct {
 	UserHandler         *UserHandler
 	NotebookHandler     *NotebookHandler
 	DocumentHandler     *DocumentHandler
+	ChunkHandler        *ChunkHandler
+	JobHandler          *JobHandler
+	WebSocketHandler    *WebSocketHandler
+	MLHandler           *MLHandler
+	WorkflowHandler     *WorkflowHandler
 	TeamHandler         *TeamHandler
 	OrganizationHandler *OrganizationHandler
 	SpaceHandler        *SpaceHandler
+	AgentHandler        *AgentHandler
 	HealthHandler       *HealthHandler
+	StreamHandler       *StreamHandler
+	RouterHandler       *RouterHandler
 	SpaceService        *services.SpaceContextService
 	Metrics             *metrics.Metrics
 	logger              *logger.Logger
@@ -28,6 +39,7 @@ type APIServer struct {
 
 // NewAPIServer creates a new API server with all routes configured
 func NewAPIServer(
+	cfg *config.Config,
 	neo4j *database.Neo4jClient,
 	keycloakClient *auth.KeycloakClient,
 	storageService *services.S3StorageService,
@@ -42,20 +54,58 @@ func NewAPIServer(
 	spaceService := services.NewSpaceContextService(userService, organizationService, audiModalClient, log)
 	notebookService := services.NewNotebookService(neo4j, log)
 	documentService := services.NewDocumentService(neo4j, notebookService, log)
+	chunkService := services.NewChunkService(neo4j, log)
+	mlService := services.NewMLService(neo4j, log)
+	workflowService := services.NewWorkflowService(neo4j, log)
 	teamService := services.NewTeamService(neo4j, log)
+	streamService := services.NewStreamService(neo4j, log)
+
+	// Agent service with agent-builder URL configuration
+	agentBuilderURL := os.Getenv("AGENT_BUILDER_URL")
+	if agentBuilderURL == "" {
+		// For now, disable agent-builder proxy if not configured
+		// This will cause agent endpoints to return errors but won't crash the server
+		agentBuilderURL = "http://agent-builder-not-configured:8080"
+		log.Warn("AGENT_BUILDER_URL not configured - agent endpoints will not work")
+	}
+	agentService := services.NewAgentService(neo4j, userService, notebookService, teamService, agentBuilderURL, log)
+
+	// Onboarding service for automatic new user setup
+	onboardingService := services.NewOnboardingService(
+		userService,
+		spaceService,
+		notebookService,
+		agentService,
+		documentService,
+		log,
+	)
 
 	// Set dependencies for document service
 	documentService.SetStorageService(storageService)
 	documentService.SetProcessingService(audiModalClient)
 
 	// Initialize handlers
-	userHandler := NewUserHandler(userService, spaceService, log)
+	userHandler := NewUserHandler(userService, spaceService, onboardingService, log)
 	notebookHandler := NewNotebookHandler(notebookService, userService, log)
 	documentHandler := NewDocumentHandler(documentService, log)
+	chunkHandler := NewChunkHandler(neo4j, chunkService, audiModalClient, log)
+	jobHandler := NewJobHandler(documentService, audiModalClient, log)
+	webSocketHandler := NewWebSocketHandler(documentService, audiModalClient, log)
+	mlHandler := NewMLHandler(mlService, log)
+	workflowHandler := NewWorkflowHandler(workflowService, log)
 	teamHandler := NewTeamHandler(teamService, userService, log)
 	organizationHandler := NewOrganizationHandler(organizationService, userService, log)
 	spaceHandler := NewSpaceHandler(spaceService, userService, organizationService, log)
+	agentHandler := NewAgentHandler(agentService, userService, teamService, log)
+	streamHandler := NewStreamHandler(streamService, log)
 	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
+
+	// Initialize router handler (may be nil if disabled)
+	routerHandler, err := NewRouterHandler(&cfg.Router, log)
+	if err != nil {
+		log.WithError(err).Error("Failed to initialize router handler")
+		// Continue without router handler - it will be nil
+	}
 
 	// Create Gin router
 	gin.SetMode(gin.ReleaseMode) // Set to DebugMode for development
@@ -77,10 +127,18 @@ func NewAPIServer(
 		UserHandler:         userHandler,
 		NotebookHandler:     notebookHandler,
 		DocumentHandler:     documentHandler,
+		ChunkHandler:        chunkHandler,
+		JobHandler:          jobHandler,
+		WebSocketHandler:    webSocketHandler,
+		MLHandler:           mlHandler,
+		WorkflowHandler:     workflowHandler,
 		TeamHandler:         teamHandler,
 		OrganizationHandler: organizationHandler,
 		SpaceHandler:        spaceHandler,
+		AgentHandler:        agentHandler,
 		HealthHandler:       healthHandler,
+		StreamHandler:       streamHandler,
+		RouterHandler:       routerHandler,
 		SpaceService:        spaceService,
 		Metrics:             metricsInstance,
 		logger:              log.WithService("api_server"),
@@ -99,6 +157,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 	s.Router.GET("/health/live", s.HealthHandler.LivenessCheck)
 	s.Router.GET("/health/ready", s.HealthHandler.ReadinessCheck)
 
+	// Webhook routes (no auth required)
+	s.Router.POST("/webhooks/audimodal/processing-complete", s.DocumentHandler.AudiModalProcessingWebhook)
+
 	// API routes with authentication
 	api := s.Router.Group("/api/v1")
 	api.Use(middleware.AuthMiddleware(keycloakClient, s.logger))
@@ -113,6 +174,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		users.PUT("/me/preferences", s.UserHandler.UpdateUserPreferences)
 		users.GET("/me/stats", s.UserHandler.GetUserStats)
 		users.GET("/me/spaces", s.UserHandler.GetUserSpaces)
+		users.GET("/me/onboarding", s.UserHandler.GetOnboardingStatus)
 		users.GET("/search", s.UserHandler.SearchUsers)
 		users.GET("/:id", s.UserHandler.GetUserByID)
 	}
@@ -144,11 +206,48 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		documents.POST("/upload-base64", s.DocumentHandler.UploadDocumentBase64)
 		documents.GET("/search", s.DocumentHandler.SearchDocuments)
 		documents.GET("/:id", s.DocumentHandler.GetDocument)
+		documents.GET("/:id/status", s.DocumentHandler.GetDocumentStatus)
+		documents.GET("/:id/stream", s.WebSocketHandler.StreamDocumentStatus)
 		documents.PUT("/:id", s.DocumentHandler.UpdateDocument)
 		documents.DELETE("/:id", s.DocumentHandler.DeleteDocument)
 		documents.POST("/:id/reprocess", s.DocumentHandler.ReprocessDocument)
+		documents.POST("/refresh-processing", s.DocumentHandler.RefreshProcessingResults)
 		documents.GET("/:id/download", s.DocumentHandler.DownloadDocument)
 		documents.GET("/:id/url", s.DocumentHandler.GetDocumentURL)
+	}
+
+	// Chunk routes - file-specific chunks
+	files := api.Group("/files")
+	files.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	files.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		files.GET("/:file_id/chunks", s.ChunkHandler.GetFileChunks)
+		files.GET("/:file_id/chunks/:chunk_id", s.ChunkHandler.GetChunk)
+		files.POST("/:file_id/reprocess", s.ChunkHandler.ReprocessFileWithStrategy)
+	}
+
+	// Chunk search routes
+	chunks := api.Group("/chunks")
+	chunks.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	chunks.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		chunks.POST("/search", s.ChunkHandler.SearchChunks)
+	}
+
+	// Strategy routes - no space context required (global)
+	strategies := api.Group("/strategies")
+	{
+		strategies.GET("", s.ChunkHandler.GetAvailableStrategies)
+		strategies.POST("/recommend", s.ChunkHandler.GetOptimalStrategy)
+	}
+
+	// Job tracking routes
+	jobs := api.Group("/jobs")
+	jobs.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	jobs.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		jobs.GET("/:id", s.JobHandler.GetJobStatus)
+		jobs.GET("/:id/stream", s.WebSocketHandler.StreamJobStatus)
 	}
 
 	// Team routes
@@ -183,6 +282,42 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		organizations.DELETE("/:id/members/:user_id", s.OrganizationHandler.RemoveOrganizationMember)
 	}
 
+	// Agent routes - with space context for multi-tenancy
+	agents := api.Group("/agents")
+	agents.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	agents.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		agents.POST("", s.AgentHandler.CreateAgent)
+		agents.GET("", s.AgentHandler.ListAgents)
+		agents.GET("/:id", s.AgentHandler.GetAgent)
+		agents.PUT("/:id", s.AgentHandler.UpdateAgent)
+		agents.DELETE("/:id", s.AgentHandler.DeleteAgent)
+		
+		// Agent knowledge source management
+		agents.POST("/:id/knowledge-sources", s.AgentHandler.AddKnowledgeSource)
+		agents.GET("/:id/knowledge-sources", s.AgentHandler.GetKnowledgeSources)
+		agents.DELETE("/:id/knowledge-sources/:notebook_id", s.AgentHandler.RemoveKnowledgeSource)
+		
+		// Agent execution
+		agents.POST("/:id/execute", s.AgentHandler.ExecuteAgent)
+	}
+
+	// Execution history routes
+	executions := api.Group("/executions")
+	executions.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	executions.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		executions.GET("", s.AgentHandler.ListExecutions)
+	}
+
+	// Stats routes
+	stats := api.Group("/stats")
+	stats.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	stats.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		stats.GET("/agents/:id", s.AgentHandler.GetAgentStats)
+	}
+
 	// Space routes
 	spaces := api.Group("/spaces")
 	{
@@ -191,6 +326,100 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		spaces.GET("/:id", s.SpaceHandler.GetSpace)
 		spaces.PUT("/:id", s.SpaceHandler.UpdateSpace)
 		spaces.DELETE("/:id", s.SpaceHandler.DeleteSpace)
+	}
+
+	// ML/Analytics routes
+	ml := api.Group("/ml")
+	ml.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	ml.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		// Model management
+		ml.POST("/models", s.MLHandler.CreateModel)
+		ml.GET("/models", s.MLHandler.GetModels)
+		ml.GET("/models/:id", s.MLHandler.GetModel)
+		ml.PUT("/models/:id", s.MLHandler.UpdateModel)
+		ml.DELETE("/models/:id", s.MLHandler.DeleteModel)
+		ml.POST("/models/:id/deploy", s.MLHandler.DeployModel)
+
+		// Experiment management
+		ml.POST("/experiments", s.MLHandler.CreateExperiment)
+		ml.GET("/experiments", s.MLHandler.GetExperiments)
+		ml.GET("/experiments/:id", s.MLHandler.GetExperiment)
+		ml.PUT("/experiments/:id", s.MLHandler.UpdateExperiment)
+		ml.DELETE("/experiments/:id", s.MLHandler.DeleteExperiment)
+
+		// Analytics
+		ml.GET("/analytics", s.MLHandler.GetAnalytics)
+	}
+
+	// Workflow automation routes
+	workflows := api.Group("/workflows")
+	workflows.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	workflows.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		// Workflow management
+		workflows.POST("", s.WorkflowHandler.CreateWorkflow)
+		workflows.GET("", s.WorkflowHandler.GetWorkflows)
+		workflows.GET("/analytics", s.WorkflowHandler.GetWorkflowAnalytics)
+		workflows.GET("/:id", s.WorkflowHandler.GetWorkflow)
+		workflows.PUT("/:id", s.WorkflowHandler.UpdateWorkflow)
+		workflows.DELETE("/:id", s.WorkflowHandler.DeleteWorkflow)
+		
+		// Workflow execution
+		workflows.POST("/:id/execute", s.WorkflowHandler.ExecuteWorkflow)
+		workflows.PUT("/:id/status", s.WorkflowHandler.UpdateWorkflowStatus)
+		workflows.GET("/:id/executions", s.WorkflowHandler.GetWorkflowExecutions)
+	}
+
+	// Live streaming routes
+	streams := api.Group("/streams")
+	streams.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	streams.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		// Stream source management
+		streams.POST("/sources", s.StreamHandler.CreateStreamSource)
+		streams.GET("/sources", s.StreamHandler.GetStreamSources)
+		streams.GET("/sources/:id", s.StreamHandler.GetStreamSource)
+		streams.PUT("/sources/:id", s.StreamHandler.UpdateStreamSource)
+		streams.DELETE("/sources/:id", s.StreamHandler.DeleteStreamSource)
+		streams.PUT("/sources/:id/status", s.StreamHandler.UpdateStreamSourceStatus)
+		
+		// Live event management
+		streams.POST("/sources/:id/events", s.StreamHandler.IngestEvent)
+		streams.GET("/events", s.StreamHandler.GetLiveEvents)
+		streams.GET("/events/:id", s.StreamHandler.GetLiveEvent)
+		
+		// Real-time WebSocket streaming
+		streams.GET("/live", s.StreamHandler.StreamEvents)
+		
+		// Stream analytics
+		streams.GET("/analytics", s.StreamHandler.GetStreamAnalytics)
+		streams.GET("/analytics/realtime", s.StreamHandler.GetRealtimeAnalytics)
+	}
+
+	// Router proxy routes with flexible authentication
+	if s.RouterHandler != nil {
+		// Tier 1: Public router endpoints (no authentication required)
+		// These provide informational data and don't need user context
+		publicRouter := s.Router.Group("/api/v1/router")
+		{
+			publicRouter.GET("/health", s.RouterHandler.GetHealth)
+			publicRouter.GET("/providers", s.RouterHandler.GetProviders)
+			publicRouter.GET("/providers/:name", s.RouterHandler.GetProvider) // Provider details are informational
+			publicRouter.GET("/capabilities", s.RouterHandler.GetCapabilities)
+		}
+
+		// Tier 2: Authenticated router endpoints (user context required)
+		// These perform operations that need user tracking and billing
+		authRouter := api.Group("/router")
+		{
+			authRouter.POST("/chat/completions", s.RouterHandler.ChatCompletions)
+			authRouter.POST("/completions", s.RouterHandler.Completions)
+			authRouter.POST("/messages", s.RouterHandler.Messages)
+		}
+		
+		// Note: When UseServiceAuth=true, the RouterHandler will automatically
+		// use service authentication regardless of which tier the request comes from
 	}
 
 	// Admin routes (require admin role)

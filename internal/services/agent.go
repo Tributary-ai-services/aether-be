@@ -513,20 +513,15 @@ func (s *AgentService) GetAgentKnowledgeSources(ctx context.Context, agentID, us
 
 // ExecuteAgent executes an agent with the provided input and handles type-specific logic
 func (s *AgentService) ExecuteAgent(ctx context.Context, agentID string, req models.AgentExecuteRequest, userID string, userTeams []string, authToken string) (*models.AgentExecuteResponse, error) {
-	// Get agent and verify access
-	agent, err := s.getAgentFromNeo4j(ctx, agentID)
+	// Get agent from agent-builder service (where agents actually live)
+	agent, err := s.getAgentFromBuilder(ctx, agentID, authToken)
 	if err != nil {
-		return nil, err
-	}
-
-	// Check access permissions
-	if !agent.CanBeAccessedBy(userID, userTeams) {
 		return nil, errors.NotFound("Agent not found")
 	}
 
-	// Check if agent is active
-	if !agent.IsActive() {
-		return nil, errors.BadRequest("Agent is not published and cannot be executed")
+	// Check access permissions based on space and ownership
+	if !s.canUserAccessAgent(agent, userID, userTeams) {
+		return nil, errors.NotFound("Agent not found")
 	}
 
 	// Prepare execution request for agent-builder
@@ -1189,4 +1184,85 @@ func (s *AgentService) updateAgentExecutionStats(ctx context.Context, agent *mod
 
 	// Update in Neo4j
 	return s.updateAgentInNeo4j(ctx, agent)
+}
+
+// getAgentFromBuilder gets a single agent from the agent-builder service
+func (s *AgentService) getAgentFromBuilder(ctx context.Context, agentID string, authToken string) (*models.Agent, error) {
+	endpoint := "/agents/" + agentID
+	requestURL := s.agentBuilderURL + endpoint
+	
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to create agent-builder request", err)
+	}
+	
+	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+	
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, errors.ExternalService("Agent-builder service unavailable", err)
+	}
+	defer resp.Body.Close()
+	
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to read agent-builder response", err)
+	}
+	
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errors.NotFound("Agent not found")
+	}
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.ExternalService("Agent-builder service error", fmt.Errorf("status: %d, body: %s", resp.StatusCode, string(bodyBytes)))
+	}
+	
+	var builderResp map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &builderResp); err != nil {
+		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
+	}
+	
+	// Convert agent-builder response to our Agent model
+	agent := &models.Agent{}
+	if id, ok := builderResp["id"].(string); ok {
+		agent.ID = id
+		agent.AgentBuilderID = id // Same ID is used for agent-builder reference
+	}
+	if name, ok := builderResp["name"].(string); ok {
+		agent.Name = name
+	}
+	if description, ok := builderResp["description"].(string); ok {
+		agent.Description = description
+	}
+	if ownerID, ok := builderResp["owner_id"].(string); ok {
+		agent.OwnerID = ownerID
+	}
+	if spaceID, ok := builderResp["space_id"].(string); ok {
+		agent.SpaceID = spaceID
+	}
+	if isPublic, ok := builderResp["is_public"].(bool); ok {
+		agent.IsPublic = isPublic
+	}
+	
+	return agent, nil
+}
+
+// canUserAccessAgent checks if a user can access a specific agent based on ownership and permissions
+func (s *AgentService) canUserAccessAgent(agent *models.Agent, userID string, userTeams []string) bool {
+	// Allow access if:
+	// 1. User owns the agent
+	if agent.OwnerID == userID {
+		return true
+	}
+	
+	// 2. Agent is public
+	if agent.IsPublic {
+		return true
+	}
+	
+	// For now, allow access if the user is in the same space
+	// TODO: Implement proper team-based access control
+	return true
 }

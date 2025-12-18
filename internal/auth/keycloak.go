@@ -110,6 +110,18 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
 	}
 
+	// Add external issuer for K8s deployment (when configured Keycloak is internal but advertises external)
+	if cfg.URL == "http://keycloak-shared.tas-shared:8080" {
+		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+	}
+
+	// Add external issuer for K8s deployment with full service DNS
+	if cfg.URL == "http://keycloak-shared.tas-shared.svc.cluster.local:8080" {
+		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+	}
+
 	client := &KeycloakClient{
 		provider:       provider,
 		verifier:       verifier,

@@ -634,3 +634,118 @@ func (h *AgentHandler) getUserTeams(c *gin.Context, userID string) ([]string, er
 	
 	return teamIDs, nil
 }
+
+// ListExecutions lists execution history for agents
+// @Summary Get execution history
+// @Description Retrieve execution history with optional filtering by agent_id
+// @Tags Executions
+// @Accept json
+// @Produce json
+// @Param agent_id query string false "Filter by agent ID"
+// @Param limit query int false "Number of results to return" default(20)
+// @Param offset query int false "Number of results to skip" default(0)
+// @Success 200 {object} ExecutionListResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /executions [get]
+func (h *AgentHandler) ListExecutions(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// Get query parameters
+	agentID := c.Query("agent_id")
+	limit := 20
+	offset := 0
+	
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 100 {
+			limit = parsedLimit
+		}
+	}
+	
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// For now, return empty list since we don't have execution history storage yet
+	// TODO: Implement actual execution history retrieval from Neo4j or agent-builder
+	response := gin.H{
+		"executions": []interface{}{},
+		"total":      0,
+		"limit":      limit,
+		"offset":     offset,
+	}
+
+	if agentID != "" {
+		h.logger.Debug("Listing executions for specific agent",
+			zap.String("agent_id", agentID),
+			zap.String("user_id", userID.(string)),
+			zap.Int("limit", limit),
+			zap.Int("offset", offset))
+	} else {
+		h.logger.Debug("Listing all executions for user",
+			zap.String("user_id", userID.(string)),
+			zap.Int("limit", limit),
+			zap.Int("offset", offset))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetAgentStats returns statistics for a specific agent
+// @Summary Get agent statistics
+// @Description Retrieve statistics and metrics for a specific agent
+// @Tags Stats
+// @Accept json
+// @Produce json
+// @Param id path string true "Agent ID"
+// @Success 200 {object} AgentStatsResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /stats/agents/{id} [get]
+func (h *AgentHandler) GetAgentStats(c *gin.Context) {
+	agentID := c.Param("id")
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Agent ID is required"))
+		return
+	}
+	
+	// Get auth token for agent-builder proxy
+	authToken := extractAuthToken(c)
+	if authToken == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
+		return
+	}
+	
+	// For now, return basic stats structure
+	// In the future, this should query agent-builder or Neo4j for actual stats
+	stats := gin.H{
+		"agent_id":              agentID,
+		"total_executions":      0,
+		"successful_executions": 0,
+		"failed_executions":     0,
+		"avg_response_time_ms":  0,
+		"total_cost_usd":        0.0,
+		"last_executed_at":      nil,
+		"execution_trend": []interface{}{},  // Array of execution counts per day
+		"performance_metrics": gin.H{
+			"p50_response_time_ms": 0,
+			"p95_response_time_ms": 0,
+			"p99_response_time_ms": 0,
+		},
+	}
+	
+	h.logger.Info("Agent stats retrieved",
+		zap.String("agent_id", agentID),
+	)
+	
+	c.JSON(http.StatusOK, stats)
+}

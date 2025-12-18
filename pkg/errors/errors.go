@@ -31,6 +31,17 @@ const (
 	ErrResourceNotFound = "RESOURCE_NOT_FOUND"
 	ErrDatabaseError    = "DATABASE_ERROR"
 	ErrExternalService  = "EXTERNAL_SERVICE_ERROR"
+
+	// Chunk processing errors
+	ErrChunkNotFound        = "CHUNK_NOT_FOUND"
+	ErrChunkProcessing      = "CHUNK_PROCESSING_ERROR"
+	ErrChunkEmbedding       = "CHUNK_EMBEDDING_ERROR"
+	ErrChunkValidation      = "CHUNK_VALIDATION_ERROR"
+	ErrStrategy             = "STRATEGY_ERROR"
+	ErrStrategyNotFound     = "STRATEGY_NOT_FOUND"
+	ErrStrategyValidation   = "STRATEGY_VALIDATION_ERROR"
+	ErrFileNotProcessed     = "FILE_NOT_PROCESSED"
+	ErrProcessingInProgress = "PROCESSING_IN_PROGRESS"
 )
 
 // APIError represents a structured API error
@@ -87,19 +98,19 @@ func GetHTTPStatusCode(err error) int {
 // GetHTTPStatusCodeFromErrorCode maps error codes to HTTP status codes
 func GetHTTPStatusCodeFromErrorCode(code string) int {
 	switch code {
-	case ErrBadRequest, ErrValidation:
+	case ErrBadRequest, ErrValidation, ErrChunkValidation, ErrStrategyValidation:
 		return http.StatusBadRequest
 	case ErrUnauthorized, ErrAuthentication:
 		return http.StatusUnauthorized
 	case ErrForbidden, ErrAuthorization:
 		return http.StatusForbidden
-	case ErrNotFound, ErrResourceNotFound:
+	case ErrNotFound, ErrResourceNotFound, ErrChunkNotFound, ErrStrategyNotFound, ErrFileNotProcessed:
 		return http.StatusNotFound
 	case ErrMethodNotAllowed:
 		return http.StatusMethodNotAllowed
-	case ErrConflict, ErrResourceExists:
+	case ErrConflict, ErrResourceExists, ErrProcessingInProgress:
 		return http.StatusConflict
-	case ErrUnprocessableEntity:
+	case ErrUnprocessableEntity, ErrChunkProcessing, ErrChunkEmbedding, ErrStrategy:
 		return http.StatusUnprocessableEntity
 	case ErrTooManyRequests:
 		return http.StatusTooManyRequests
@@ -283,6 +294,127 @@ func IsDatabase(err error) bool {
 func IsExternalService(err error) bool {
 	if apiErr, ok := err.(*APIError); ok {
 		return apiErr.Code == ErrExternalService || apiErr.Code == ErrBadGateway
+	}
+	return false
+}
+
+// Chunk-specific error constructors
+
+// ChunkNotFound creates a chunk not found error
+func ChunkNotFound(message string) *APIError {
+	return NewAPIError(ErrChunkNotFound, message, nil)
+}
+
+// ChunkNotFoundWithDetails creates a chunk not found error with details
+func ChunkNotFoundWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrChunkNotFound, message, details)
+}
+
+// ChunkProcessing creates a chunk processing error
+func ChunkProcessing(message string, cause error) *APIError {
+	return NewAPIErrorWithCause(ErrChunkProcessing, message, cause, nil)
+}
+
+// ChunkProcessingWithDetails creates a chunk processing error with details
+func ChunkProcessingWithDetails(message string, cause error, details map[string]interface{}) *APIError {
+	return NewAPIErrorWithCause(ErrChunkProcessing, message, cause, details)
+}
+
+// ChunkEmbedding creates a chunk embedding error
+func ChunkEmbedding(message string, cause error) *APIError {
+	return NewAPIErrorWithCause(ErrChunkEmbedding, message, cause, nil)
+}
+
+// ChunkValidation creates a chunk validation error
+func ChunkValidation(message string) *APIError {
+	return NewAPIError(ErrChunkValidation, message, nil)
+}
+
+// ChunkValidationWithDetails creates a chunk validation error with details
+func ChunkValidationWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrChunkValidation, message, details)
+}
+
+// StrategyNotFound creates a strategy not found error
+func StrategyNotFound(message string) *APIError {
+	return NewAPIError(ErrStrategyNotFound, message, nil)
+}
+
+// StrategyNotFoundWithDetails creates a strategy not found error with details
+func StrategyNotFoundWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrStrategyNotFound, message, details)
+}
+
+// StrategyError creates a strategy error
+func StrategyError(message string, cause error) *APIError {
+	return NewAPIErrorWithCause(ErrStrategy, message, cause, nil)
+}
+
+// StrategyValidation creates a strategy validation error
+func StrategyValidation(message string) *APIError {
+	return NewAPIError(ErrStrategyValidation, message, nil)
+}
+
+// FileNotProcessed creates a file not processed error
+func FileNotProcessed(message string) *APIError {
+	return NewAPIError(ErrFileNotProcessed, message, nil)
+}
+
+// FileNotProcessedWithDetails creates a file not processed error with details
+func FileNotProcessedWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrFileNotProcessed, message, details)
+}
+
+// ProcessingInProgress creates a processing in progress error
+func ProcessingInProgress(message string) *APIError {
+	return NewAPIError(ErrProcessingInProgress, message, nil)
+}
+
+// ProcessingInProgressWithDetails creates a processing in progress error with details
+func ProcessingInProgressWithDetails(message string, details map[string]interface{}) *APIError {
+	return NewAPIError(ErrProcessingInProgress, message, details)
+}
+
+// Chunk error type checking functions
+
+func IsChunkNotFound(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.Code == ErrChunkNotFound
+	}
+	return false
+}
+
+func IsChunkProcessing(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.Code == ErrChunkProcessing
+	}
+	return false
+}
+
+func IsChunkEmbedding(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.Code == ErrChunkEmbedding
+	}
+	return false
+}
+
+func IsChunkValidation(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.Code == ErrChunkValidation
+	}
+	return false
+}
+
+func IsStrategyError(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.Code == ErrStrategy || apiErr.Code == ErrStrategyNotFound || apiErr.Code == ErrStrategyValidation
+	}
+	return false
+}
+
+func IsProcessingInProgress(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.Code == ErrProcessingInProgress
 	}
 	return false
 }

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"reflect"
 	"time"
@@ -32,6 +33,16 @@ func NewNeo4jClient(cfg config.DatabaseConfig, log *logger.Logger) (*Neo4jClient
 		conf.ConnectionAcquisitionTimeout = 30 * time.Second
 		conf.SocketConnectTimeout = 5 * time.Second
 		conf.SocketKeepalive = true
+
+		// Configure TLS if using bolt+s:// or neo4j+s://
+		if cfg.TLSInsecure {
+			log.Info("Configuring Neo4j with TLS InsecureSkipVerify=true (development mode)")
+			conf.TlsConfig = &tls.Config{
+				InsecureSkipVerify: true,
+			}
+		} else {
+			log.Info("Neo4j TLS verification enabled (TLSInsecure=false)")
+		}
 	}
 
 	// Create driver

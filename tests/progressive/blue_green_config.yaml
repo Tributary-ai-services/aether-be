@@ -1,0 +1,374 @@
+# Blue-Green Deployment Configuration for Aether-BE
+# This configuration defines the blue-green deployment strategy for production releases
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-blue-green-config
+  namespace: aether-be
+data:
+  # Blue-Green deployment strategy
+  deployment_strategy: |
+    strategy:
+      type: "blue_green"
+      environments:
+        blue:
+          name: "production-blue"
+          namespace: "aether-be-blue"
+          replicas: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+        
+        green:
+          name: "production-green"
+          namespace: "aether-be-green"
+          replicas: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+      
+      traffic_routing:
+        type: "istio"  # or "nginx", "alb", etc.
+        primary_weight: 100
+        secondary_weight: 0
+        switch_duration: "5m"
+        
+      health_checks:
+        startup_probe:
+          path: "/health/ready"
+          initial_delay: 30
+          period: 10
+          timeout: 5
+          failure_threshold: 3
+        
+        liveness_probe:
+          path: "/health/live"
+          period: 30
+          timeout: 10
+          failure_threshold: 3
+        
+        readiness_probe:
+          path: "/health/ready"
+          period: 10
+          timeout: 5
+          failure_threshold: 2
+
+  # Pre-switch validation
+  pre_switch_validation: |
+    validation_phases:
+      - phase: "deployment_health"
+        timeout: "10m"
+        checks:
+          - name: "pods_ready"
+            type: "kubernetes"
+            query: "kubectl get pods -l app=aether-be -n aether-be-green --field-selector=status.phase=Running | wc -l"
+            expected: "3"
+          
+          - name: "services_healthy"
+            type: "kubernetes"
+            query: "kubectl get svc -n aether-be-green -o jsonpath='{.items[*].status}'"
+            expected: "healthy"
+          
+          - name: "ingress_ready"
+            type: "kubernetes"
+            query: "kubectl get ingress -n aether-be-green -o jsonpath='{.items[*].status.loadBalancer.ingress}'"
+            expected: "not_empty"
+      
+      - phase: "application_health"
+        timeout: "15m"
+        checks:
+          - name: "health_endpoint"
+            type: "http"
+            url: "https://green.aether-be.internal/health"
+            expected_status: 200
+            timeout: 10
+            retries: 5
+          
+          - name: "ready_endpoint"
+            type: "http"
+            url: "https://green.aether-be.internal/health/ready"
+            expected_status: 200
+            timeout: 15
+            retries: 3
+          
+          - name: "database_connectivity"
+            type: "http"
+            url: "https://green.aether-be.internal/health/database"
+            expected_status: 200
+            timeout: 30
+            retries: 2
+      
+      - phase: "functional_validation"
+        timeout: "20m"
+        checks:
+          - name: "document_upload_test"
+            type: "api_test"
+            endpoint: "/api/v1/documents/upload"
+            method: "POST"
+            test_data: "test_document.pdf"
+            expected_status: 200
+            validation:
+              - response_time_ms: 2000
+              - response_contains: "processing_job_id"
+          
+          - name: "strategies_endpoint"
+            type: "api_test"
+            endpoint: "/api/v1/strategies"
+            method: "GET"
+            expected_status: 200
+            validation:
+              - response_contains: "semantic"
+              - response_contains: "fixed"
+              - response_contains: "adaptive"
+          
+          - name: "search_functionality"
+            type: "api_test"
+            endpoint: "/api/v1/chunks/search"
+            method: "POST"
+            payload: '{"query": "test search", "limit": 5}'
+            expected_status: 200
+            validation:
+              - response_time_ms: 1000
+              - response_structure: "valid_search_response"
+      
+      - phase: "performance_validation"
+        timeout: "25m"
+        checks:
+          - name: "load_test"
+            type: "k6"
+            script: "tests/performance/blue-green-validation.js"
+            duration: "10m"
+            virtual_users: 50
+            thresholds:
+              - "http_req_duration{p(95)}<2000"
+              - "http_req_failed<0.1"
+              - "http_reqs>100"
+          
+          - name: "resource_utilization"
+            type: "metrics"
+            duration: "15m"
+            checks:
+              - metric: "cpu_utilization"
+                threshold: 75  # %
+                comparison: "less_than"
+              
+              - metric: "memory_utilization"
+                threshold: 80  # %
+                comparison: "less_than"
+              
+              - metric: "disk_utilization"
+                threshold: 85  # %
+                comparison: "less_than"
+
+  # Traffic switching configuration
+  traffic_switching: |
+    switch_strategy:
+      type: "gradual"  # or "immediate"
+      phases:
+        - phase: "preparation"
+          duration: "2m"
+          actions:
+            - "validate_green_health"
+            - "prepare_traffic_rules"
+            - "notify_monitoring_systems"
+        
+        - phase: "initial_switch"
+          duration: "5m"
+          blue_weight: 90
+          green_weight: 10
+          validation:
+            - "monitor_error_rates"
+            - "check_response_times"
+            - "validate_business_metrics"
+        
+        - phase: "progressive_switch"
+          duration: "10m"
+          steps:
+            - { blue_weight: 75, green_weight: 25, duration: "2m" }
+            - { blue_weight: 50, green_weight: 50, duration: "3m" }
+            - { blue_weight: 25, green_weight: 75, duration: "3m" }
+            - { blue_weight: 10, green_weight: 90, duration: "2m" }
+          validation_per_step:
+            - "continuous_health_monitoring"
+            - "performance_regression_check"
+        
+        - phase: "complete_switch"
+          duration: "5m"
+          blue_weight: 0
+          green_weight: 100
+          final_validation:
+            - "full_functionality_test"
+            - "performance_baseline_check"
+            - "business_continuity_validation"
+        
+        - phase: "post_switch_monitoring"
+          duration: "30m"
+          actions:
+            - "extended_monitoring"
+            - "user_experience_validation"
+            - "business_metrics_verification"
+
+  # Rollback configuration
+  rollback_strategy: |
+    triggers:
+      automatic:
+        - condition: "error_rate > 2.0%"
+          window: "5m"
+          action: "immediate_rollback"
+        
+        - condition: "response_time_p95 > 5000ms"
+          window: "10m"
+          action: "immediate_rollback"
+        
+        - condition: "success_rate < 98.0%"
+          window: "5m"
+          action: "immediate_rollback"
+        
+        - condition: "green_pods_unavailable > 1"
+          window: "immediate"
+          action: "immediate_rollback"
+      
+      manual:
+        - trigger: "operator_command"
+          action: "controlled_rollback"
+        
+        - trigger: "emergency_button"
+          action: "immediate_rollback"
+    
+    rollback_process:
+      immediate:
+        - step: "stop_traffic_to_green"
+          duration: "30s"
+          action: "set_green_weight_to_0"
+        
+        - step: "route_all_traffic_to_blue"
+          duration: "1m"
+          action: "set_blue_weight_to_100"
+        
+        - step: "validate_blue_stability"
+          duration: "5m"
+          checks:
+            - "blue_health_endpoints"
+            - "blue_error_rates"
+            - "blue_response_times"
+        
+        - step: "notify_stakeholders"
+          duration: "immediate"
+          actions:
+            - "send_rollback_alerts"
+            - "update_status_page"
+            - "create_incident_ticket"
+      
+      controlled:
+        - step: "gradual_traffic_reduction"
+          duration: "10m"
+          phases:
+            - { green_weight: 75, duration: "2m" }
+            - { green_weight: 50, duration: "2m" }
+            - { green_weight: 25, duration: "3m" }
+            - { green_weight: 10, duration: "2m" }
+            - { green_weight: 0, duration: "1m" }
+        
+        - step: "validate_rollback_success"
+          duration: "15m"
+          validation:
+            - "full_system_health"
+            - "performance_restoration"
+            - "business_continuity"
+
+  # Data consistency and migration
+  data_management: |
+    consistency_checks:
+      - name: "database_schema_version"
+        type: "database"
+        query: "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
+        validation: "version_compatibility"
+      
+      - name: "data_integrity"
+        type: "database"
+        checks:
+          - "document_count_consistency"
+          - "chunk_relationship_integrity"
+          - "user_data_consistency"
+          - "processing_job_states"
+      
+      - name: "storage_consistency"
+        type: "storage"
+        checks:
+          - "minio_bucket_integrity"
+          - "deeplake_vector_consistency"
+          - "file_metadata_alignment"
+    
+    migration_strategy:
+      - phase: "pre_deployment"
+        actions:
+          - "backup_critical_data"
+          - "validate_migration_scripts"
+          - "test_rollback_procedures"
+      
+      - phase: "deployment"
+        actions:
+          - "run_forward_migrations"
+          - "validate_data_integrity"
+          - "update_schema_version"
+      
+      - phase: "post_deployment"
+        actions:
+          - "verify_application_compatibility"
+          - "run_data_validation_tests"
+          - "cleanup_old_migration_artifacts"
+
+  # Monitoring and alerting
+  monitoring_config: |
+    dashboards:
+      - name: "blue_green_deployment_status"
+        panels:
+          - "traffic_distribution"
+          - "error_rates_comparison"
+          - "response_times_comparison"
+          - "resource_utilization"
+          - "business_metrics"
+      
+      - name: "deployment_health"
+        panels:
+          - "pod_status"
+          - "service_health"
+          - "database_connections"
+          - "storage_operations"
+    
+    alerts:
+      critical:
+        - alert: "BlueGreenSwitchFailure"
+          condition: "deployment_switch_failed"
+          severity: "critical"
+          notification: "immediate"
+        
+        - alert: "HighErrorRateDuringSwitching"
+          condition: "error_rate > 5% during traffic_switch"
+          severity: "critical"
+          notification: "immediate"
+        
+        - alert: "GreenEnvironmentUnhealthy"
+          condition: "green_health_check_failures > 3"
+          severity: "critical"
+          notification: "immediate"
+      
+      warning:
+        - alert: "SlowTrafficSwitching"
+          condition: "switch_duration > expected_duration * 1.5"
+          severity: "warning"
+          notification: "5m_delay"
+        
+        - alert: "PerformanceDegradation"
+          condition: "response_time_p95 > baseline * 1.2"
+          severity: "warning"
+          notification: "10m_delay"

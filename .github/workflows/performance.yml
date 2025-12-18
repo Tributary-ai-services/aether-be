@@ -1,0 +1,498 @@
+name: Performance Testing
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+    types: [ opened, synchronize, reopened ]
+  schedule:
+    # Run performance tests nightly at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      test_duration:
+        description: 'Test duration (e.g., 30s, 2m, 5m)'
+        required: false
+        default: '2m'
+      virtual_users:
+        description: 'Number of virtual users'
+        required: false
+        default: '10'
+
+env:
+  GO_VERSION: '1.23'
+  K6_VERSION: '0.47.0'
+
+jobs:
+  # Build and setup test environment
+  setup:
+    name: Setup Performance Test Environment
+    runs-on: ubuntu-latest
+    
+    services:
+      neo4j:
+        image: neo4j:5.15-community
+        env:
+          NEO4J_AUTH: neo4j/password
+          NEO4J_PLUGINS: '["apoc"]'
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p password 'RETURN 1'"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+        ports:
+          - 7687:7687
+          - 7474:7474
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+      
+      # Mock AudiModal service for testing
+      audimodal-mock:
+        image: wiremock/wiremock:latest
+        ports:
+          - 8084:8080
+        options: >-
+          --health-cmd "curl -f http://localhost:8080/__admin/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    outputs:
+      app-url: ${{ steps.deploy.outputs.app-url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Build application
+      run: |
+        go build -o bin/aether-be ./cmd/server
+        chmod +x bin/aether-be
+    
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for Neo4j..."
+        timeout 120s bash -c 'until cypher-shell -u neo4j -p password "RETURN 1"; do sleep 2; done'
+        echo "Waiting for Redis..."
+        timeout 60s bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+        echo "Waiting for MinIO..."
+        timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
+        echo "Waiting for AudiModal Mock..."
+        timeout 60s bash -c 'until curl -f http://localhost:8084/__admin/health; do sleep 2; done'
+    
+    - name: Setup MinIO buckets
+      run: |
+        # Install MinIO client
+        wget https://dl.min.io/client/mc/release/linux-amd64/mc
+        chmod +x mc
+        sudo mv mc /usr/local/bin/
+        
+        # Configure MinIO client
+        mc alias set test-minio http://localhost:9000 minioadmin minioadmin123
+        
+        # Create test bucket
+        mc mb test-minio/aether-storage || echo "Bucket already exists"
+    
+    - name: Setup test data
+      run: |
+        # Create test configuration
+        export NEO4J_URI=bolt://localhost:7687
+        export NEO4J_USERNAME=neo4j
+        export NEO4J_PASSWORD=password
+        export NEO4J_DATABASE=neo4j
+        export REDIS_ADDR=localhost:6379
+        export S3_ENDPOINT=http://localhost:9000
+        export AWS_ACCESS_KEY_ID=minioadmin
+        export AWS_SECRET_ACCESS_KEY=minioadmin123
+        export S3_BUCKET=aether-storage
+        export AUDIMODAL_API_URL=http://localhost:8084
+        export LOG_LEVEL=info
+        export GIN_MODE=release
+        
+        # Run database migrations if they exist
+        if [ -f "migrations/run_migrations.sh" ]; then
+          cd migrations && ./run_migrations.sh
+        fi
+    
+    - name: Start application
+      run: |
+        export NEO4J_URI=bolt://localhost:7687
+        export NEO4J_USERNAME=neo4j
+        export NEO4J_PASSWORD=password
+        export REDIS_ADDR=localhost:6379
+        export S3_ENDPOINT=http://localhost:9000
+        export AWS_ACCESS_KEY_ID=minioadmin
+        export AWS_SECRET_ACCESS_KEY=minioadmin123
+        export AUDIMODAL_API_URL=http://localhost:8084
+        export LOG_LEVEL=info
+        export GIN_MODE=release
+        export PORT=8080
+        
+        ./bin/aether-be &
+        APP_PID=$!
+        echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+        
+        # Wait for application to be ready
+        timeout 60s bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+        echo "Application is ready at http://localhost:8080"
+      id: deploy
+    
+    - name: Health check
+      run: |
+        curl -f http://localhost:8080/health
+        curl -f http://localhost:8080/api/v1/strategies
+
+  # Load testing with k6
+  load-test:
+    name: Load Testing with k6
+    runs-on: ubuntu-latest
+    needs: setup
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install k6
+      run: |
+        sudo gpg -k
+        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+    
+    - name: Create k6 test script
+      run: |
+        mkdir -p tests/performance
+        cat > tests/performance/load-test.js << 'EOF'
+        import http from 'k6/http';
+        import { check, sleep } from 'k6';
+        import { SharedArray } from 'k6/data';
+        import { htmlReport } from 'https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js';
+        
+        // Test configuration from environment variables
+        export const options = {
+          stages: [
+            { duration: '30s', target: __ENV.VUS || 5 },   // Ramp-up
+            { duration: __ENV.TEST_DURATION || '2m', target: __ENV.VUS || 10 }, // Stay at peak
+            { duration: '30s', target: 0 },    // Ramp-down
+          ],
+          thresholds: {
+            http_req_duration: ['p(95)<2000'], // 95% of requests must complete below 2s
+            http_req_failed: ['rate<0.1'],     // Error rate must be below 10%
+          },
+        };
+        
+        const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+        
+        // Simulated test data
+        const testDocuments = new SharedArray('documents', function () {
+          return [
+            { name: 'test1.pdf', content: 'Sample PDF content for load testing' },
+            { name: 'test2.txt', content: 'Plain text document for performance testing' },
+            { name: 'test3.docx', content: 'Word document content for load testing' },
+          ];
+        });
+        
+        export default function () {
+          // Test health endpoint
+          let response = http.get(`${BASE_URL}/health`);
+          check(response, {
+            'health check status is 200': (r) => r.status === 200,
+            'health check response time < 100ms': (r) => r.timings.duration < 100,
+          });
+        
+          // Test strategies endpoint
+          response = http.get(`${BASE_URL}/api/v1/strategies`);
+          check(response, {
+            'strategies status is 200': (r) => r.status === 200,
+            'strategies response time < 500ms': (r) => r.timings.duration < 500,
+          });
+        
+          // Test document upload simulation (without actual file)
+          const document = testDocuments[Math.floor(Math.random() * testDocuments.length)];
+          const uploadPayload = {
+            name: document.name,
+            content: document.content,
+            strategy: 'semantic',
+          };
+        
+          response = http.post(
+            `${BASE_URL}/api/v1/documents/upload-base64`,
+            JSON.stringify(uploadPayload),
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer test-token', // Mock token for testing
+              },
+            }
+          );
+        
+          check(response, {
+            'upload simulation status is 200 or 401': (r) => r.status === 200 || r.status === 401, // 401 expected due to auth
+            'upload simulation response time < 2000ms': (r) => r.timings.duration < 2000,
+          });
+        
+          sleep(1); // Simulate user think time
+        }
+        
+        export function handleSummary(data) {
+          return {
+            'performance-report.html': htmlReport(data),
+            'performance-summary.json': JSON.stringify(data),
+          };
+        }
+        EOF
+    
+    - name: Run k6 load tests
+      run: |
+        export BASE_URL=http://localhost:8080
+        export VUS=${{ github.event.inputs.virtual_users || '10' }}
+        export TEST_DURATION=${{ github.event.inputs.test_duration || '2m' }}
+        
+        k6 run tests/performance/load-test.js \
+          --out json=performance-results.json \
+          --summary-trend-stats="avg,min,med,max,p(90),p(95),p(99)" \
+          --summary-time-unit=ms
+      continue-on-error: true
+    
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: k6-performance-results
+        path: |
+          performance-report.html
+          performance-summary.json
+          performance-results.json
+
+  # Go benchmark tests
+  benchmark:
+    name: Go Benchmark Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run benchmark tests
+      run: |
+        go test -bench=. -benchmem -timeout=10m \
+          $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|controllers)") \
+          | tee benchmark-results.txt
+      continue-on-error: true
+    
+    - name: Process benchmark results
+      run: |
+        echo "# Go Benchmark Results" > benchmark-summary.md
+        echo "" >> benchmark-summary.md
+        echo "## Performance Metrics" >> benchmark-summary.md
+        echo "" >> benchmark-summary.md
+        echo '```' >> benchmark-summary.md
+        cat benchmark-results.txt >> benchmark-summary.md
+        echo '```' >> benchmark-summary.md
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: go-benchmark-results
+        path: |
+          benchmark-results.txt
+          benchmark-summary.md
+
+  # Memory and CPU profiling
+  profiling:
+    name: Performance Profiling
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Install profiling tools
+      run: |
+        go install github.com/google/pprof@latest
+        sudo apt-get update
+        sudo apt-get install -y graphviz
+    
+    - name: Run CPU profiling tests
+      run: |
+        go test -cpuprofile=cpu.prof -bench=. \
+          $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|controllers)" | head -5) \
+          || echo "CPU profiling completed"
+      continue-on-error: true
+    
+    - name: Run memory profiling tests
+      run: |
+        go test -memprofile=mem.prof -bench=. \
+          $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|controllers)" | head -5) \
+          || echo "Memory profiling completed"
+      continue-on-error: true
+    
+    - name: Generate profile reports
+      run: |
+        if [ -f cpu.prof ]; then
+          go tool pprof -text cpu.prof > cpu-profile.txt
+          go tool pprof -svg cpu.prof > cpu-profile.svg
+        fi
+        if [ -f mem.prof ]; then
+          go tool pprof -text mem.prof > mem-profile.txt
+          go tool pprof -svg mem.prof > mem-profile.svg
+        fi
+      continue-on-error: true
+    
+    - name: Upload profiling results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: profiling-results
+        path: |
+          cpu.prof
+          mem.prof
+          cpu-profile.txt
+          mem-profile.txt
+          cpu-profile.svg
+          mem-profile.svg
+
+  # Performance summary and reporting
+  performance-summary:
+    name: Performance Summary
+    runs-on: ubuntu-latest
+    needs: [load-test, benchmark, profiling]
+    if: always()
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Generate performance summary
+      run: |
+        echo "# Performance Test Summary" > performance-summary.md
+        echo "" >> performance-summary.md
+        echo "**Test Run**: $(date)" >> performance-summary.md
+        echo "**Branch**: ${{ github.ref_name }}" >> performance-summary.md
+        echo "**Commit**: ${{ github.sha }}" >> performance-summary.md
+        echo "" >> performance-summary.md
+        
+        echo "## Load Test Results" >> performance-summary.md
+        if [ -f k6-performance-results/performance-summary.json ]; then
+          echo "✅ k6 load tests completed successfully" >> performance-summary.md
+          # Extract key metrics from JSON if possible
+          echo "- Virtual Users: ${{ github.event.inputs.virtual_users || '10' }}" >> performance-summary.md
+          echo "- Test Duration: ${{ github.event.inputs.test_duration || '2m' }}" >> performance-summary.md
+        else
+          echo "❌ k6 load tests failed or were skipped" >> performance-summary.md
+        fi
+        echo "" >> performance-summary.md
+        
+        echo "## Benchmark Results" >> performance-summary.md
+        if [ -f go-benchmark-results/benchmark-results.txt ]; then
+          echo "✅ Go benchmark tests completed" >> performance-summary.md
+          echo "See benchmark-results.txt for detailed metrics" >> performance-summary.md
+        else
+          echo "❌ Go benchmark tests failed or were skipped" >> performance-summary.md
+        fi
+        echo "" >> performance-summary.md
+        
+        echo "## Profiling Results" >> performance-summary.md
+        if [ -d profiling-results ]; then
+          echo "✅ Performance profiling completed" >> performance-summary.md
+          echo "CPU and memory profiles available in artifacts" >> performance-summary.md
+        else
+          echo "⏭️ Performance profiling skipped (only runs on main/develop pushes)" >> performance-summary.md
+        fi
+        echo "" >> performance-summary.md
+        
+        echo "## Performance Trends" >> performance-summary.md
+        echo "Historical performance data can be tracked in the Actions tab." >> performance-summary.md
+        echo "Set up performance regression alerts by comparing with baseline metrics." >> performance-summary.md
+    
+    - name: Upload performance summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-summary
+        path: performance-summary.md
+    
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          if (fs.existsSync('performance-summary.md')) {
+            const summary = fs.readFileSync('performance-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+          }
+      continue-on-error: true

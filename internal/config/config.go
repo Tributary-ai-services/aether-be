@@ -20,6 +20,11 @@ type Config struct {
 	Monitoring MonitoringConfig
 	Logger     LoggingConfig
 	AudiModal  AudiModalConfig
+	Embedding  EmbeddingConfig
+	DeepLake   DeepLakeConfig
+	OpenAI     OpenAIConfig
+	Compliance ComplianceConfig
+	Router     RouterConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -36,11 +41,12 @@ type ServerConfig struct {
 
 // DatabaseConfig holds Neo4j database configuration
 type DatabaseConfig struct {
-	URI      string
-	Username string
-	Password string
-	Database string
-	MaxConns int
+	URI         string
+	Username    string
+	Password    string
+	Database    string
+	MaxConns    int
+	TLSInsecure bool
 }
 
 // RedisConfig holds Redis configuration
@@ -91,9 +97,96 @@ type LoggingConfig struct {
 
 // AudiModalConfig holds AudiModal API configuration
 type AudiModalConfig struct {
-	BaseURL string
-	APIKey  string
-	Enabled bool
+	BaseURL              string
+	APIKey               string
+	Enabled              bool
+	DefaultStrategy      string
+	TenantManagement     bool
+	ProcessingTimeout    int
+	RetryAttempts        int
+	EnableWebhooks       bool
+	WebhookSecret        string
+	MaxConcurrentFiles   int
+	ChunkSizeLimit       int
+}
+
+// EmbeddingConfig holds embedding service configuration
+type EmbeddingConfig struct {
+	Provider           string
+	BatchSize          int
+	MaxRetries         int
+	ProcessingInterval int
+	Enabled            bool
+}
+
+// DeepLakeConfig holds DeepLake vector storage configuration
+type DeepLakeConfig struct {
+	BaseURL          string
+	APIKey           string
+	CollectionName   string
+	VectorDimensions int
+	TimeoutSeconds   int
+	Enabled          bool
+}
+
+// OpenAIConfig holds OpenAI API configuration
+type OpenAIConfig struct {
+	APIKey         string
+	Model          string
+	BaseURL        string
+	Dimensions     int
+	TimeoutSeconds int
+}
+
+// ComplianceConfig holds compliance scanning configuration
+type ComplianceConfig struct {
+	Enabled             bool
+	GDPREnabled         bool
+	HIPAAEnabled        bool
+	CCPAEnabled         bool
+	PIIDetectionEnabled bool
+	DataClassificationEnabled bool
+	BatchSize           int
+	ScanInterval        int
+	RetentionDays       int
+	MaskPII             bool
+	EncryptSensitive    bool
+}
+
+// RouterConfig holds LLM router proxy configuration
+type RouterConfig struct {
+	Enabled     bool                 `json:"enabled"`
+	Service     RouterServiceConfig  `json:"service"`
+	Endpoints   RouterEndpoints      `json:"endpoints"`
+	ProxyRoutes []ProxyRoute         `json:"proxy_routes"`
+}
+
+// RouterServiceConfig holds router service connection configuration
+type RouterServiceConfig struct {
+	BaseURL        string `json:"base_url"`
+	APIKey         string `json:"api_key"`
+	UseServiceAuth bool   `json:"use_service_auth"`
+	Timeout        string `json:"timeout"`
+	MaxRetries     int    `json:"max_retries"`
+	ConnectTimeout string `json:"connect_timeout"`
+}
+
+// RouterEndpoints holds router endpoint paths
+type RouterEndpoints struct {
+	Providers      string `json:"providers"`
+	ProviderDetail string `json:"provider_detail"`
+	Health         string `json:"health"`
+	Capabilities   string `json:"capabilities"`
+	ChatCompletions string `json:"chat_completions"`
+	Completions    string `json:"completions"`
+	Messages       string `json:"messages"`
+}
+
+// ProxyRoute defines a proxy route mapping
+type ProxyRoute struct {
+	Path    string   `json:"path"`
+	Target  string   `json:"target"`
+	Methods []string `json:"methods"`
 }
 
 // Load loads configuration from environment variables
@@ -113,11 +206,12 @@ func Load() (*Config, error) {
 			IdleTimeout:  getEnvInt("IDLE_TIMEOUT", 60),
 		},
 		Neo4j: DatabaseConfig{
-			URI:      getEnv("NEO4J_URI", "bolt://localhost:7687"),
-			Username: getEnv("NEO4J_USERNAME", "neo4j"),
-			Password: getEnv("NEO4J_PASSWORD", "password"),
-			Database: getEnv("NEO4J_DATABASE", "aether"),
-			MaxConns: getEnvInt("NEO4J_MAX_CONNS", 50),
+			URI:         getEnv("NEO4J_URI", "bolt://localhost:7687"),
+			Username:    getEnv("NEO4J_USERNAME", "neo4j"),
+			Password:    getEnv("NEO4J_PASSWORD", "password"),
+			Database:    getEnv("NEO4J_DATABASE", "aether"),
+			MaxConns:    getEnvInt("NEO4J_MAX_CONNS", 50),
+			TLSInsecure: getEnvBool("NEO4J_TLS_INSECURE", false),
 		},
 		Redis: RedisConfig{
 			Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
@@ -154,9 +248,73 @@ func Load() (*Config, error) {
 			Format: getEnv("LOG_FORMAT", "json"),
 		},
 		AudiModal: AudiModalConfig{
-			BaseURL: getEnv("AUDIMODAL_BASE_URL", "http://audimodal:8080"),
-			APIKey:  getEnv("AUDIMODAL_API_KEY", ""),
-			Enabled: getEnvBool("AUDIMODAL_ENABLED", true),
+			BaseURL:              getEnv("AUDIMODAL_BASE_URL", "http://audimodal:8080"),
+			APIKey:               getEnv("AUDIMODAL_API_KEY", ""),
+			Enabled:              getEnvBool("AUDIMODAL_ENABLED", true),
+			DefaultStrategy:      getEnv("AUDIMODAL_DEFAULT_STRATEGY", "semantic"),
+			TenantManagement:     getEnvBool("AUDIMODAL_TENANT_MANAGEMENT", true),
+			ProcessingTimeout:    getEnvInt("AUDIMODAL_PROCESSING_TIMEOUT", 300),
+			RetryAttempts:        getEnvInt("AUDIMODAL_RETRY_ATTEMPTS", 3),
+			EnableWebhooks:       getEnvBool("AUDIMODAL_ENABLE_WEBHOOKS", true),
+			WebhookSecret:        getEnv("AUDIMODAL_WEBHOOK_SECRET", ""),
+			MaxConcurrentFiles:   getEnvInt("AUDIMODAL_MAX_CONCURRENT_FILES", 5),
+			ChunkSizeLimit:       getEnvInt("AUDIMODAL_CHUNK_SIZE_LIMIT", 4096),
+		},
+		Embedding: EmbeddingConfig{
+			Provider:           getEnv("EMBEDDING_PROVIDER", "openai"),
+			BatchSize:          getEnvInt("EMBEDDING_BATCH_SIZE", 50),
+			MaxRetries:         getEnvInt("EMBEDDING_MAX_RETRIES", 3),
+			ProcessingInterval: getEnvInt("EMBEDDING_PROCESSING_INTERVAL", 30),
+			Enabled:            getEnvBool("EMBEDDING_ENABLED", true),
+		},
+		DeepLake: DeepLakeConfig{
+			BaseURL:          getEnv("DEEPLAKE_BASE_URL", "http://localhost:8000"),
+			APIKey:           getEnv("DEEPLAKE_API_KEY", ""),
+			CollectionName:   getEnv("DEEPLAKE_COLLECTION_NAME", "aether_embeddings"),
+			VectorDimensions: getEnvInt("DEEPLAKE_VECTOR_DIMENSIONS", 1536),
+			TimeoutSeconds:   getEnvInt("DEEPLAKE_TIMEOUT_SECONDS", 30),
+			Enabled:          getEnvBool("DEEPLAKE_ENABLED", true),
+		},
+		OpenAI: OpenAIConfig{
+			APIKey:         getEnv("OPENAI_API_KEY", ""),
+			Model:          getEnv("OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"),
+			BaseURL:        getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+			Dimensions:     getEnvInt("OPENAI_EMBEDDING_DIMENSIONS", 1536),
+			TimeoutSeconds: getEnvInt("OPENAI_TIMEOUT_SECONDS", 30),
+		},
+		Compliance: ComplianceConfig{
+			Enabled:                   getEnvBool("COMPLIANCE_ENABLED", true),
+			GDPREnabled:               getEnvBool("COMPLIANCE_GDPR_ENABLED", true),
+			HIPAAEnabled:              getEnvBool("COMPLIANCE_HIPAA_ENABLED", true),
+			CCPAEnabled:               getEnvBool("COMPLIANCE_CCPA_ENABLED", false),
+			PIIDetectionEnabled:       getEnvBool("COMPLIANCE_PII_DETECTION_ENABLED", true),
+			DataClassificationEnabled: getEnvBool("COMPLIANCE_DATA_CLASSIFICATION_ENABLED", true),
+			BatchSize:                 getEnvInt("COMPLIANCE_BATCH_SIZE", 20),
+			ScanInterval:              getEnvInt("COMPLIANCE_SCAN_INTERVAL", 60),
+			RetentionDays:             getEnvInt("COMPLIANCE_RETENTION_DAYS", 365),
+			MaskPII:                   getEnvBool("COMPLIANCE_MASK_PII", true),
+			EncryptSensitive:          getEnvBool("COMPLIANCE_ENCRYPT_SENSITIVE", true),
+		},
+		Router: RouterConfig{
+			Enabled: getEnvBool("ROUTER_ENABLED", true),
+			Service: RouterServiceConfig{
+				BaseURL:        getEnv("ROUTER_SERVICE_BASE_URL", "http://localhost:8086"),
+				APIKey:         getEnv("ROUTER_API_KEY", ""),
+				UseServiceAuth: getEnvBool("ROUTER_USE_SERVICE_AUTH", false),
+				Timeout:        getEnv("ROUTER_SERVICE_TIMEOUT", "30s"),
+				MaxRetries:     getEnvInt("ROUTER_SERVICE_MAX_RETRIES", 3),
+				ConnectTimeout: getEnv("ROUTER_SERVICE_CONNECT_TIMEOUT", "10s"),
+			},
+			Endpoints: RouterEndpoints{
+				Providers:       getEnv("ROUTER_ENDPOINT_PROVIDERS", "/v1/providers"),
+				ProviderDetail:  getEnv("ROUTER_ENDPOINT_PROVIDER_DETAIL", "/v1/providers/{name}"),
+				Health:          getEnv("ROUTER_ENDPOINT_HEALTH", "/v1/health"),
+				Capabilities:    getEnv("ROUTER_ENDPOINT_CAPABILITIES", "/v1/capabilities"),
+				ChatCompletions: getEnv("ROUTER_ENDPOINT_CHAT_COMPLETIONS", "/v1/chat/completions"),
+				Completions:     getEnv("ROUTER_ENDPOINT_COMPLETIONS", "/v1/completions"),
+				Messages:        getEnv("ROUTER_ENDPOINT_MESSAGES", "/v1/messages"),
+			},
+			ProxyRoutes: getDefaultProxyRoutes(),
 		},
 	}
 
@@ -184,6 +342,18 @@ func (c *Config) Validate() error {
 
 	if c.Kafka.Enabled && len(c.Kafka.Brokers) == 0 {
 		return fmt.Errorf("at least one Kafka broker is required when Kafka is enabled")
+	}
+
+	if c.Router.Enabled {
+		if c.Router.Service.BaseURL == "" {
+			return fmt.Errorf("ROUTER_SERVICE_BASE_URL is required when router is enabled")
+		}
+		if c.Router.Service.Timeout == "" {
+			return fmt.Errorf("ROUTER_SERVICE_TIMEOUT is required when router is enabled")
+		}
+		if c.Router.Service.ConnectTimeout == "" {
+			return fmt.Errorf("ROUTER_SERVICE_CONNECT_TIMEOUT is required when router is enabled")
+		}
 	}
 
 	return nil
@@ -231,4 +401,45 @@ func getEnvSlice(key string, defaultValue []string) []string {
 		return strings.Split(value, ",")
 	}
 	return defaultValue
+}
+
+// getDefaultProxyRoutes returns the default proxy route configuration
+func getDefaultProxyRoutes() []ProxyRoute {
+	return []ProxyRoute{
+		{
+			Path:    "/api/v1/router/providers",
+			Target:  "/v1/providers",
+			Methods: []string{"GET"},
+		},
+		{
+			Path:    "/api/v1/router/providers/{name}",
+			Target:  "/v1/providers/{name}",
+			Methods: []string{"GET"},
+		},
+		{
+			Path:    "/api/v1/router/health",
+			Target:  "/v1/health",
+			Methods: []string{"GET"},
+		},
+		{
+			Path:    "/api/v1/router/capabilities",
+			Target:  "/v1/capabilities",
+			Methods: []string{"GET"},
+		},
+		{
+			Path:    "/api/v1/router/chat/completions",
+			Target:  "/v1/chat/completions",
+			Methods: []string{"POST"},
+		},
+		{
+			Path:    "/api/v1/router/completions",
+			Target:  "/v1/completions",
+			Methods: []string{"POST"},
+		},
+		{
+			Path:    "/api/v1/router/messages",
+			Target:  "/v1/messages",
+			Methods: []string{"POST"},
+		},
+	}
 }

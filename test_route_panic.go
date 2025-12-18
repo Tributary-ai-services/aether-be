@@ -62,11 +62,12 @@ func main() {
 
 	fmt.Println("=== STEP 4: Creating API server ===")
 	apiServer := handlers.NewAPIServer(
+		cfg,
 		neo4jClient,
-		redisClient,
 		keycloakClient,
 		nil, // storage service
 		nil, // kafka service
+		nil, // audimodal service
 		metricsInstance,
 		appLogger,
 	)

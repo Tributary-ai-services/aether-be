@@ -280,12 +280,61 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 			return nil, errors.ServiceUnavailable("Document processing service is currently unavailable. Please try again later.")
 		} else {
 			document.ProcessingJobID = job.ID
-			document.Status = "processing"
-			if statusErr := s.updateDocumentStatus(ctx, document.ID, "processing", nil, ""); statusErr != nil {
-				s.logger.Error("Failed to update document status", zap.Error(statusErr))
+			
+			// Check if job completed immediately (AudiModal case)
+			if job.Status == "completed" && job.Result != nil {
+				// Apply results immediately
+				s.logger.Info("Processing job completed immediately, applying results",
+					zap.String("document_id", document.ID),
+					zap.String("job_id", job.ID))
+				
+				// Extract processing results
+				extractedText := ""
+				processingTime := int64(0)
+				confidenceScore := 0.0
+				
+				if result := job.Result; result != nil {
+					if text, ok := result["extracted_text"].(string); ok {
+						extractedText = text
+					}
+					if pt, ok := result["processing_time"].(int64); ok {
+						processingTime = pt
+					} else if pt, ok := result["processing_time"].(float64); ok {
+						processingTime = int64(pt)
+					}
+					if cs, ok := result["confidence_score"].(float64); ok {
+						confidenceScore = cs
+					}
+				}
+				
+				// Update document with AI processing results
+				if updateErr := s.updateDocumentWithProcessingResults(ctx, document.ID, extractedText, processingTime, confidenceScore); updateErr != nil {
+					s.logger.Error("Failed to update document with processing results", 
+						zap.String("document_id", document.ID),
+						zap.Error(updateErr))
+				}
+				
+				document.Status = "processed"
+			} else {
+				document.Status = "processing"
 			}
 			
-			// Document submitted for processing - status will be updated via processing service callback
+			// Store AudiModal file ID as processing_job_id for webhook integration
+			audiModalFileID := job.ID // default to job ID
+			if job.Config != nil {
+				if fileID, ok := job.Config["audimodal_file_id"].(string); ok && fileID != "" {
+					audiModalFileID = fileID
+					document.ProcessingJobID = fileID // Update in memory
+					s.logger.Info("Using AudiModal file ID as processing_job_id",
+						zap.String("document_id", document.ID),
+						zap.String("audimodal_file_id", fileID),
+						zap.String("job_id", job.ID))
+				}
+			}
+			
+			if statusErr := s.updateDocumentStatusWithJobID(ctx, document.ID, document.Status, job.Result, "", audiModalFileID); statusErr != nil {
+				s.logger.Error("Failed to update document status", zap.Error(statusErr))
+			}
 		}
 	} else {
 		// No processing service available - fail the upload
@@ -582,6 +631,7 @@ func (s *DocumentService) ListDocumentsByNotebook(ctx context.Context, notebookI
 		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
 		       d.mime_type, d.size_bytes, d.notebook_id, d.owner_id, 
 		       d.space_type, d.space_id, d.tenant_id, d.tags,
+		       d.extracted_text, d.processing_time, d.confidence_score,
 		       d.processed_at, d.created_at, d.updated_at,
 		       owner.username, owner.full_name, owner.avatar_url
 		ORDER BY d.created_at DESC
@@ -923,6 +973,96 @@ func (s *DocumentService) createDocumentRelationships(ctx context.Context, docum
 	return err
 }
 
+// updateDocumentStatusWithJobID updates a document's status, processing result, and processing_job_id
+func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, documentID, status string, result map[string]interface{}, errorMsg, processingJobID string) error {
+	// First get the document's tenant_id
+	tenantQuery := `
+		MATCH (d:Document {id: $document_id})
+		RETURN d.tenant_id as tenant_id
+	`
+	
+	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
+		"document_id": documentID,
+	})
+	if err != nil {
+		return err
+	}
+	
+	if len(tenantResult.Records) == 0 {
+		return errors.NotFound("Document not found")
+	}
+	
+	tenantID := ""
+	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
+		tenantID = val.(string)
+	}
+
+	// Build the SET clause based on what needs updating
+	setClauses := []string{
+		"d.status = $status",
+		"d.updated_at = datetime($updated_at)",
+	}
+	
+	params := map[string]interface{}{
+		"document_id": documentID,
+		"tenant_id":   tenantID,
+		"status":      status,
+		"updated_at":  time.Now().Format(time.RFC3339),
+	}
+	
+	// Add processing_job_id if provided
+	if processingJobID != "" {
+		setClauses = append(setClauses, "d.processing_job_id = $processing_job_id")
+		params["processing_job_id"] = processingJobID
+	}
+	
+	// Add processing result if provided
+	if result != nil && len(result) > 0 {
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			return fmt.Errorf("failed to marshal processing result: %w", err)
+		}
+		setClauses = append(setClauses, "d.processing_result = $processing_result")
+		params["processing_result"] = string(resultJSON)
+		
+		// Extract text if available in result
+		if extractedText, ok := result["extracted_text"].(string); ok {
+			setClauses = append(setClauses, "d.extracted_text = $extracted_text")
+			params["extracted_text"] = extractedText
+		}
+	}
+	
+	// Add error message if provided
+	if errorMsg != "" {
+		setClauses = append(setClauses, "d.error_message = $error_message")
+		params["error_message"] = errorMsg
+	}
+	
+	// Build and execute the update query
+	query := fmt.Sprintf(`
+		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
+		SET %s
+		RETURN d.id
+	`, strings.Join(setClauses, ", "))
+	
+	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to update document status",
+			zap.String("document_id", documentID),
+			zap.String("status", status),
+			zap.String("processing_job_id", processingJobID),
+			zap.Error(err))
+		return errors.Database("Failed to update document status", err)
+	}
+	
+	s.logger.Info("Document status updated successfully",
+		zap.String("document_id", documentID),
+		zap.String("status", status),
+		zap.String("processing_job_id", processingJobID))
+	
+	return nil
+}
+
 func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, status string, result map[string]interface{}, errorMsg string) error {
 	// First get the document's tenant_id
 	tenantQuery := `
@@ -995,6 +1135,138 @@ func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, 
 		SET %s
 		RETURN d
 	`, strings.Join(setClauses, ", "))
+
+	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	return err
+}
+
+// RefreshProcessingResults checks AudiModal for updated processing results and updates documents
+func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
+	// Query for documents that are in processing state OR have placeholder data
+	// Placeholder data is indicated by specific placeholder text or hardcoded processing time
+	query := `
+		MATCH (d:Document)
+		WHERE (d.status = "processing" OR 
+		       (d.status = "processed" AND 
+		        (d.extracted_text CONTAINS "File uploaded to AudiModal" OR 
+		         d.extracted_text CONTAINS "Status: discovered" OR 
+		         d.processing_time = 100)))
+		AND d.processing_job_id IS NOT NULL
+		RETURN d.id, d.processing_job_id
+		ORDER BY d.updated_at DESC
+		LIMIT 50
+	`
+	
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{})
+	if err != nil {
+		return err
+	}
+	
+	if len(result.Records) == 0 {
+		s.logger.Info("No processing documents found to refresh")
+		return nil
+	}
+	
+	s.logger.Info("Refreshing processing results for documents", zap.Int("count", len(result.Records)))
+	
+	for _, record := range result.Records {
+		documentID, _ := record.Get("d.id")
+		jobID, _ := record.Get("d.processing_job_id")
+		
+		if documentID != nil && jobID != nil {
+			docID := documentID.(string)
+			processingJobID := jobID.(string)
+			
+			// Get updated job status from AudiModal
+			if s.processingService != nil {
+				job, jobErr := s.processingService.GetProcessingJob(ctx, processingJobID)
+				if jobErr == nil && job != nil && job.Status == "completed" && job.Result != nil {
+					// Extract processing results
+					extractedText := ""
+					processingTime := int64(100)
+					confidenceScore := 0.95
+					
+					if result := job.Result; result != nil {
+						if text, ok := result["extracted_text"].(string); ok && text != "" {
+							extractedText = text
+						}
+						if pt, ok := result["processing_time"].(int64); ok {
+							processingTime = pt
+						} else if pt, ok := result["processing_time"].(float64); ok {
+							processingTime = int64(pt)
+						}
+						if cs, ok := result["confidence_score"].(float64); ok {
+							confidenceScore = cs
+						}
+					}
+					
+					// Update document with real AI processing results
+					if extractedText != "" && extractedText != "Processing in progress..." {
+						if updateErr := s.updateDocumentWithProcessingResults(ctx, docID, extractedText, processingTime, confidenceScore); updateErr != nil {
+							s.logger.Error("Failed to update document with processing results", 
+								zap.String("document_id", docID),
+								zap.Error(updateErr))
+						} else {
+							s.logger.Info("Updated document with real processing results",
+								zap.String("document_id", docID),
+								zap.String("job_id", processingJobID),
+								zap.Int("text_length", len(extractedText)))
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// updateDocumentWithProcessingResults updates a document with AI processing results
+func (s *DocumentService) updateDocumentWithProcessingResults(ctx context.Context, documentID, extractedText string, processingTime int64, confidenceScore float64) error {
+	// First get the document's tenant_id
+	tenantQuery := `
+		MATCH (d:Document {id: $document_id})
+		RETURN d.tenant_id as tenant_id
+	`
+	
+	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
+		"document_id": documentID,
+	})
+	if err != nil {
+		return err
+	}
+	
+	if len(tenantResult.Records) == 0 {
+		return errors.NotFound("Document not found")
+	}
+	
+	tenantID := ""
+	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
+		tenantID = val.(string)
+	}
+
+	// Update document with AI processing results
+	query := `
+		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
+		SET d.extracted_text = $extracted_text,
+		    d.processing_time = $processing_time,
+		    d.confidence_score = $confidence_score,
+		    d.status = "processed",
+		    d.processed_at = datetime($processed_at),
+		    d.updated_at = datetime($updated_at),
+		    d.search_text = d.name + ' ' + COALESCE(d.description, '') + ' ' + $extracted_text
+		RETURN d
+	`
+	
+	params := map[string]interface{}{
+		"document_id":      documentID,
+		"tenant_id":        tenantID,
+		"extracted_text":   extractedText,
+		"processing_time":  processingTime,
+		"confidence_score": confidenceScore,
+		"processed_at":     time.Now().Format(time.RFC3339),
+		"updated_at":       time.Now().Format(time.RFC3339),
+	}
 
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	return err
@@ -1436,6 +1708,23 @@ func (s *DocumentService) recordToDocumentResponse(record interface{}) (*models.
 		NotebookID:   getString("d.notebook_id"),
 		OwnerID:      getString("d.owner_id"),
 		Tags:         getStringArray("d.tags"),
+		ExtractedText: getString("d.extracted_text"),
+		ProcessingTime: func() *int64 {
+			if val, found := neo4jRecord.Get("d.processing_time"); found && val != nil {
+				if i, ok := val.(int64); ok {
+					return &i
+				}
+			}
+			return nil
+		}(),
+		ConfidenceScore: func() *float64 {
+			if val, found := neo4jRecord.Get("d.confidence_score"); found && val != nil {
+				if f, ok := val.(float64); ok {
+					return &f
+				}
+			}
+			return nil
+		}(),
 		ProcessedAt:  getTimePtr("d.processed_at"),
 		CreatedAt:    getTime("d.created_at"),
 		UpdatedAt:    getTime("d.updated_at"),

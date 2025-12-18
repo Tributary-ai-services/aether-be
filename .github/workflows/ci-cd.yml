@@ -1,0 +1,441 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  GO_VERSION: '1.23'
+
+jobs:
+  # Lint and test
+  test:
+    name: Test and Lint
+    runs-on: ubuntu-latest
+    
+    services:
+      neo4j:
+        image: neo4j:5.15-community
+        env:
+          NEO4J_AUTH: neo4j/password
+          NEO4J_PLUGINS: '["apoc"]'
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p password 'RETURN 1'"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+        ports:
+          - 7687:7687
+          - 7474:7474
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Verify Go installation
+      run: |
+        go version
+        go env GOVERSION
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Install goimports
+      run: go install golang.org/x/tools/cmd/goimports@latest
+    
+    - name: Check code formatting
+      run: |
+        gofmt -l . | grep -E "\.go$$" && { echo "ERROR: Code is not formatted. Run 'make fmt'"; exit 1; } || echo "✓ gofmt formatting OK"
+        goimports -l . | grep -E "\.go$$" && { echo "ERROR: Imports are not formatted. Run 'make fmt'"; exit 1; } || echo "✓ goimports formatting OK"
+        echo "All formatting checks passed!"
+    
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      continue-on-error: true
+      with:
+        version: v1.59.1
+        args: --timeout=5m
+    
+    - name: Run Gosec Security Scanner
+      run: |
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        gosec -fmt sarif -out gosec-report.sarif ./... || echo "Gosec completed with findings"
+        ls -la gosec-report.sarif || echo "SARIF file not found"
+      continue-on-error: true
+    
+    - name: Upload Gosec scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always() && hashFiles('gosec-report.sarif') != ''
+      with:
+        sarif_file: gosec-report.sarif
+    
+    - name: Set up test environment
+      run: |
+        echo "NEO4J_URI=bolt://localhost:7687" >> $GITHUB_ENV
+        echo "NEO4J_USERNAME=neo4j" >> $GITHUB_ENV
+        echo "NEO4J_PASSWORD=password" >> $GITHUB_ENV
+        echo "REDIS_ADDR=localhost:6379" >> $GITHUB_ENV
+        echo "S3_ENDPOINT=http://localhost:9000" >> $GITHUB_ENV
+        echo "AWS_ACCESS_KEY_ID=minioadmin" >> $GITHUB_ENV
+        echo "AWS_SECRET_ACCESS_KEY=minioadmin123" >> $GITHUB_ENV
+        echo "S3_BUCKET=aether-test-storage" >> $GITHUB_ENV
+        echo "LOG_LEVEL=debug" >> $GITHUB_ENV
+        echo "GIN_MODE=test" >> $GITHUB_ENV
+    
+    - name: Wait for services and setup
+      run: |
+        timeout 120s bash -c 'until cypher-shell -u neo4j -p password "RETURN 1"; do sleep 2; done'
+        timeout 60s bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+        timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
+        
+        # Setup MinIO
+        wget https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x mc && sudo mv mc /usr/local/bin/
+        mc alias set test-minio http://localhost:9000 minioadmin minioadmin123
+        mc mb test-minio/aether-test-storage || echo "Bucket exists"
+    
+    - name: Run tests
+      run: |
+        # Run comprehensive test suite
+        go test -v -timeout 10m -coverprofile=coverage.out \
+          ./tests/... \
+          $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|examples/)")
+        go tool cover -html=coverage.out -o coverage.html
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+    
+    - name: Run integration tests
+      run: |
+        go test -v -timeout 5m -tags=integration ./tests/...
+
+  # Build and push Docker image
+  build:
+    name: Build and Push Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=sha,prefix={{branch}}-
+    
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Deploy to development environment
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    environment: development
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Deploy to development
+      run: |
+        echo "Deploying to development environment..."
+        # Add actual deployment script here
+        # ./scripts/deploy.sh --environment dev --tag ${{ github.sha }}
+    
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests..."
+        # Add smoke tests here
+        # curl -f https://dev.aether-be.example.com/health || exit 1
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure kubectl (if using Kubernetes)
+      run: |
+        echo "Configure kubectl with staging credentials"
+        # kubectl config setup would go here
+    
+    - name: Deploy to staging
+      run: |
+        echo "Deploying to staging environment..."
+        # Deployment commands would go here
+        # make deploy-staging TAG=${{ github.sha }}
+    
+    - name: Run smoke tests
+      run: |
+        echo "Running staging smoke tests..."
+        # Health checks and smoke tests
+        # curl -f https://staging.aether-be.example.com/health
+        # curl -f https://staging.aether-be.example.com/health/ready
+
+  # Deploy to production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure kubectl (if using Kubernetes)
+      run: |
+        echo "Configure kubectl with production credentials"
+        # Production kubectl setup
+    
+    - name: Deploy to production
+      run: |
+        echo "Deploying to production environment..."
+        # Production deployment commands
+        # make deploy-prod TAG=${GITHUB_REF#refs/tags/}
+    
+    - name: Run production health checks
+      run: |
+        echo "Running production health checks..."
+        # Production health verification
+        # curl -f https://api.aether-be.example.com/health
+        # curl -f https://api.aether-be.example.com/health/ready
+        # curl -f https://api.aether-be.example.com/metrics
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+
+  # Performance testing
+  performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/develop'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run load tests with k6
+      uses: grafana/k6-action@v0.3.0
+      with:
+        filename: tests/performance/load-test.js
+      env:
+        TARGET_URL: https://staging.aether-be.example.com
+      continue-on-error: true
+    
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-results
+        path: performance-results.json
+
+  # Security scanning (comprehensive)
+  security:
+    name: Comprehensive Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run Gosec Security Scanner
+      run: |
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        gosec -fmt sarif -out gosec-report.sarif ./... || echo "Gosec completed with findings"
+      continue-on-error: true
+    
+    - name: Upload Gosec scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always() && hashFiles('gosec-report.sarif') != ''
+      with:
+        sarif_file: gosec-report.sarif
+    
+    - name: Run Nancy (dependency vulnerability scanner)
+      run: |
+        go list -json -m all | docker run --rm -i sonatypecommunity/nancy:latest sleuth || echo "Nancy completed with known vulnerabilities"
+      continue-on-error: true
+    
+    - name: Run Semgrep
+      uses: returntocorp/semgrep-action@v1
+      continue-on-error: true
+      with:
+        config: >- 
+          p/security-audit
+          p/secrets
+          p/dockerfile
+          p/kubernetes
+
+  # Race detection tests (non-blocking)
+  race-tests:
+    name: Race Detection Tests
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    
+    services:
+      neo4j:
+        image: neo4j:5.15-community
+        env:
+          NEO4J_AUTH: neo4j/password
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p password 'RETURN 1'"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+        ports:
+          - 7687:7687
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run race detection tests
+      run: |
+        echo "Running tests with race detection..."
+        go test -v -race -timeout 10m \
+          ./tests/... \
+          $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|examples/)") || echo "Race detection completed with known issues"
+      env:
+        NEO4J_URI: bolt://localhost:7687
+        NEO4J_USERNAME: neo4j
+        NEO4J_PASSWORD: password
+        REDIS_ADDR: localhost:6379

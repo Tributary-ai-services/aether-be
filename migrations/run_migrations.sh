@@ -53,6 +53,18 @@ if [ -f "001_migrate_to_space_model.go" ]; then
     fi
 fi
 
+# Migration 002: Add chunk relationships
+if [ -f "002_add_chunk_relationships.go" ]; then
+    echo "Running migration 002: Add chunk relationships"
+    go run 002_add_chunk_relationships.go
+    if [ $? -eq 0 ]; then
+        echo "✓ Migration 002 completed successfully"
+    else
+        echo "✗ Migration 002 failed"
+        exit 1
+    fi
+fi
+
 echo ""
 echo "All migrations completed successfully!"
 echo ""
@@ -75,6 +87,16 @@ UNION
 MATCH (d:Document) 
 WHERE d.tenant_id IS NULL OR d.space_id IS NULL
 RETURN "Documents without space info: " + count(d) as summary
+UNION
+MATCH (d:Document) 
+WHERE d.chunking_strategy IS NOT NULL
+RETURN "Documents with chunk metadata: " + count(d) as summary
+UNION
+MATCH (c:Chunk)
+RETURN "Total chunks: " + count(c) as summary
+UNION
+MATCH (d:Document)-[:CONTAINS]->(c:Chunk)
+RETURN "Documents with chunks: " + count(DISTINCT d) as summary
 UNION
 MATCH (u:User)
 WHERE u.personal_space_id IS NOT NULL

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -15,17 +16,24 @@ import (
 
 // UserHandler handles user-related HTTP requests
 type UserHandler struct {
-	userService     *services.UserService
-	spaceService    *services.SpaceContextService
-	logger          *logger.Logger
+	userService       *services.UserService
+	spaceService      *services.SpaceContextService
+	onboardingService *services.OnboardingService
+	logger            *logger.Logger
 }
 
 // NewUserHandler creates a new user handler
-func NewUserHandler(userService *services.UserService, spaceService *services.SpaceContextService, log *logger.Logger) *UserHandler {
+func NewUserHandler(
+	userService *services.UserService,
+	spaceService *services.SpaceContextService,
+	onboardingService *services.OnboardingService,
+	log *logger.Logger,
+) *UserHandler {
 	return &UserHandler{
-		userService:  userService,
-		spaceService: spaceService,
-		logger:       log.WithService("user_handler"),
+		userService:       userService,
+		spaceService:      spaceService,
+		onboardingService: onboardingService,
+		logger:            log.WithService("user_handler"),
 	}
 }
 
@@ -95,6 +103,26 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 				}
 			} else {
 				h.logger.Info("Successfully created user from JWT token", zap.String("keycloak_id", userID), zap.String("email", emailStr))
+
+				// Trigger automatic onboarding for new user (async)
+				go func(createdUser *models.User) {
+					onboardCtx := context.Background()
+					onboardingResult, err := h.onboardingService.OnboardNewUser(onboardCtx, createdUser)
+					if err != nil {
+						h.logger.Error("Failed to onboard new user",
+							zap.String("user_id", createdUser.ID),
+							zap.String("keycloak_id", userID),
+							zap.Error(err),
+						)
+					} else {
+						h.logger.Info("User onboarding completed",
+							zap.String("user_id", createdUser.ID),
+							zap.Bool("success", onboardingResult.Success),
+							zap.Int64("duration_ms", onboardingResult.DurationMs),
+							zap.Int("steps_completed", len(onboardingResult.Steps)),
+						)
+					}
+				}(user)
 			}
 		} else {
 			h.logger.Error("Failed to get current user", zap.String("user_id", userID), zap.Error(err))
@@ -400,6 +428,26 @@ func (h *UserHandler) GetUserSpaces(c *gin.Context) {
 				}
 			} else {
 				h.logger.Info("Successfully created user from JWT token", zap.String("keycloak_id", userID), zap.String("email", emailStr))
+
+				// Trigger automatic onboarding for new user (async)
+				go func(createdUser *models.User) {
+					onboardCtx := context.Background()
+					onboardingResult, err := h.onboardingService.OnboardNewUser(onboardCtx, createdUser)
+					if err != nil {
+						h.logger.Error("Failed to onboard new user",
+							zap.String("user_id", createdUser.ID),
+							zap.String("keycloak_id", userID),
+							zap.Error(err),
+						)
+					} else {
+						h.logger.Info("User onboarding completed",
+							zap.String("user_id", createdUser.ID),
+							zap.Bool("success", onboardingResult.Success),
+							zap.Int64("duration_ms", onboardingResult.DurationMs),
+							zap.Int("steps_completed", len(onboardingResult.Steps)),
+						)
+					}
+				}(user)
 			}
 		} else {
 			h.logger.Error("Failed to get user", zap.String("keycloak_id", userID), zap.Error(err))
@@ -416,4 +464,59 @@ func (h *UserHandler) GetUserSpaces(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, spaces)
+}
+
+// GetOnboardingStatus gets onboarding status for current user
+// @Summary Get onboarding status
+// @Description Check if user onboarding is complete and get default resources
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} models.OnboardingResult
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/onboarding [get]
+func (h *UserHandler) GetOnboardingStatus(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get internal user ID from Keycloak ID
+	user, err := h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user for onboarding status", zap.String("keycloak_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Get personal space context
+	spaceReq := models.SpaceContextRequest{
+		SpaceType: models.SpaceTypePersonal,
+		SpaceID:   user.PersonalSpaceID,
+	}
+	spaceCtx, err := h.spaceService.ResolveSpaceContext(c.Request.Context(), user.ID, spaceReq)
+	if err != nil {
+		h.logger.Error("Failed to resolve personal space for onboarding status",
+			zap.String("user_id", user.ID),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to resolve personal space"))
+		return
+	}
+
+	// Get onboarding status
+	status, err := h.onboardingService.GetOnboardingStatus(c.Request.Context(), user, spaceCtx)
+	if err != nil {
+		h.logger.Error("Failed to get onboarding status",
+			zap.String("user_id", user.ID),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to get onboarding status"))
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
 }

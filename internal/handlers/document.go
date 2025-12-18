@@ -425,6 +425,91 @@ func (h *DocumentHandler) GetDocument(c *gin.Context) {
 	c.JSON(http.StatusOK, document.ToResponse())
 }
 
+// GetDocumentStatus gets the processing status of a document
+// @Summary Get document processing status
+// @Description Get real-time processing status and progress for a document
+// @Tags documents
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Document ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/documents/{id}/status [get]
+func (h *DocumentHandler) GetDocumentStatus(c *gin.Context) {
+	documentID := c.Param("id")
+	if documentID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Document ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Get the document first to verify access
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get document for status check", zap.String("document_id", documentID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Create status response
+	status := map[string]interface{}{
+		"document_id":         document.ID,
+		"status":             document.Status,
+		"processing_job_id":  document.ProcessingJobID,
+		"processed_at":       document.ProcessedAt,
+		"chunk_count":        document.ChunkCount,
+		"processing_time":    document.ProcessingTime,
+		"confidence_score":   document.ConfidenceScore,
+		"chunking_strategy":  document.ChunkingStrategy,
+		"average_chunk_size": document.AverageChunkSize,
+		"chunk_quality_score": document.ChunkQualityScore,
+		"progress":           calculateProgress(document.Status),
+		"last_updated":       document.UpdatedAt,
+	}
+
+	// Add processing details if available
+	if document.ProcessingResult != nil {
+		status["processing_result"] = document.ProcessingResult
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// calculateProgress returns a progress percentage based on document status
+func calculateProgress(status string) float64 {
+	switch status {
+	case "uploading":
+		return 10.0
+	case "processing":
+		return 50.0
+	case "processed":
+		return 100.0
+	case "failed":
+		return 0.0
+	case "archived":
+		return 100.0
+	case "deleted":
+		return 100.0
+	default:
+		return 0.0
+	}
+}
+
 // UpdateDocument updates a document
 // @Summary Update document
 // @Description Update document metadata
@@ -832,5 +917,95 @@ func (h *DocumentHandler) GetDocumentURL(c *gin.Context) {
 		"message":     "Presigned URL generation not yet implemented",
 		"document_id": document.ID,
 		"expires":     expires,
+	})
+}
+
+// RefreshProcessingResults refreshes processing results from AudiModal
+// @Summary Refresh processing results
+// @Description Check AudiModal for updated processing results and update documents accordingly
+// @Tags documents
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/documents/refresh-processing [post]
+func (h *DocumentHandler) RefreshProcessingResults(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User ID is required"))
+		return
+	}
+
+	h.logger.Info("Refreshing processing results from AudiModal", zap.String("user_id", userID))
+
+	err := h.documentService.RefreshProcessingResults(c.Request.Context())
+	if err != nil {
+		h.logger.Error("Failed to refresh processing results", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Processing results refreshed successfully",
+	})
+}
+
+// AudiModalProcessingWebhook handles webhook notifications from AudiModal when processing completes
+// @Summary AudiModal processing webhook
+// @Description Webhook endpoint for AudiModal to notify when document processing is complete
+// @Tags webhooks
+// @Accept json
+// @Produce json
+// @Param payload body object true "Webhook payload from AudiModal"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /webhooks/audimodal/processing-complete [post]
+func (h *DocumentHandler) AudiModalProcessingWebhook(c *gin.Context) {
+	var payload struct {
+		FileID      string `json:"file_id" binding:"required"`
+		TenantID    string `json:"tenant_id" binding:"required"`
+		Status      string `json:"status" binding:"required"`
+		Event       string `json:"event" binding:"required"`
+		ProcessedAt string `json:"processed_at,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		h.logger.Error("Invalid webhook payload", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payload"})
+		return
+	}
+
+	h.logger.Info("Received AudiModal webhook", 
+		zap.String("file_id", payload.FileID),
+		zap.String("tenant_id", payload.TenantID),
+		zap.String("status", payload.Status),
+		zap.String("event", payload.Event))
+
+	// Only process completion events
+	if payload.Event != "processing_complete" || payload.Status != "processed" {
+		h.logger.Info("Ignoring non-completion webhook", 
+			zap.String("event", payload.Event),
+			zap.String("status", payload.Status))
+		c.JSON(http.StatusOK, gin.H{"message": "Webhook received but not processed"})
+		return
+	}
+
+	// Trigger refresh of processing results
+	err := h.documentService.RefreshProcessingResults(c.Request.Context())
+	if err != nil {
+		h.logger.Error("Failed to refresh processing results from webhook", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh processing results"})
+		return
+	}
+
+	h.logger.Info("Successfully processed AudiModal webhook", 
+		zap.String("file_id", payload.FileID))
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Webhook processed successfully",
+		"file_id": payload.FileID,
 	})
 }

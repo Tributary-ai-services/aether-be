@@ -809,6 +809,81 @@ func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targe
 	return nil
 }
 
+// GetUserTeamIDs retrieves team IDs for a user for access control purposes
+func (s *TeamService) GetUserTeamIDs(ctx context.Context, userID string) ([]string, error) {
+	query := `
+		MATCH (u:User {id: $user_id})-[:MEMBER_OF]->(t:Team)
+		RETURN t.id as team_id
+		ORDER BY t.name
+	`
+
+	params := map[string]interface{}{
+		"user_id": userID,
+	}
+
+	records, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		return nil, errors.Database("Failed to get user teams", err)
+	}
+
+	teamIDs := make([]string, 0, len(records.Records))
+	for _, record := range records.Records {
+		if teamID, ok := record.Get("team_id"); ok {
+			teamIDs = append(teamIDs, teamID.(string))
+		}
+	}
+
+	s.logger.Debug("Retrieved user team IDs", 
+		zap.String("user_id", userID),
+		zap.Int("team_count", len(teamIDs)),
+		zap.Strings("team_ids", teamIDs))
+
+	return teamIDs, nil
+}
+
+// IsUserTeamAdmin checks if a user is an admin of a specific team
+func (s *TeamService) IsUserTeamAdmin(ctx context.Context, userID, teamID string) (bool, error) {
+	query := `
+		MATCH (u:User {id: $user_id})-[r:MEMBER_OF]->(t:Team {id: $team_id})
+		RETURN r.role as role
+	`
+
+	params := map[string]interface{}{
+		"user_id": userID,
+		"team_id": teamID,
+	}
+
+	records, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		return false, errors.Database("Failed to check team admin status", err)
+	}
+
+	if len(records.Records) == 0 {
+		return false, nil // User is not a member of the team
+	}
+
+	role, ok := records.Records[0].Get("role")
+	if !ok {
+		return false, nil
+	}
+
+	roleStr, ok := role.(string)
+	if !ok {
+		return false, nil
+	}
+
+	// Check if role is admin or owner
+	isAdmin := roleStr == "admin" || roleStr == "owner"
+	
+	s.logger.Debug("Checked team admin status", 
+		zap.String("user_id", userID),
+		zap.String("team_id", teamID),
+		zap.String("role", roleStr),
+		zap.Bool("is_admin", isAdmin))
+
+	return isAdmin, nil
+}
+
 func (s *TeamService) recordToTeam(record *neo4j.Record) (*models.Team, error) {
 	node, ok := record.Get("t")
 	if !ok {

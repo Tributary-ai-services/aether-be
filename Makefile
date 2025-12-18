@@ -269,13 +269,70 @@ test-unit: ## Run only unit tests
 	@echo "Running unit tests..."
 	go test -short -v ./internal/validation ./pkg/errors
 
+test-integration: ## Run integration tests
+	@echo "Running integration tests..."
+	go test -tags=integration -v ./tests/integration/...
+
 test-integration-full: ## Run comprehensive integration tests with containers
 	@echo "Running full integration tests..."
 	@echo "Starting test dependencies..."
-	docker-compose -f docker-compose.test.yml up -d || echo "Test compose file not found, continuing..."
-	sleep 5
-	go test -tags=integration -v ./...
-	docker-compose -f docker-compose.test.yml down || true
+	docker-compose -f docker-compose.test.yml up -d
+	@echo "Waiting for services to be ready..."
+	sleep 30
+	@echo "Running integration tests..."
+	go test -tags=integration -v ./tests/integration/...
+	@echo "Stopping test services..."
+	docker-compose -f docker-compose.test.yml down
+
+test-document-processing: ## Run document processing pipeline tests
+	@echo "Running document processing tests..."
+	go test -v -run TestDocumentProcessingPipeline ./tests/integration/...
+
+test-chunking-strategies: ## Run chunking strategy tests
+	@echo "Running chunking strategy tests..."
+	go test -v -run TestChunkingStrategies ./tests/integration/...
+
+test-storage-integration: ## Run storage integration tests
+	@echo "Running storage integration tests..."
+	go test -v -run TestStorageIntegration ./tests/integration/...
+
+test-api-endpoints: ## Run API endpoint tests
+	@echo "Running API endpoint tests..."
+	go test -v -run TestAPIEndpoints ./tests/integration/...
+
+test-ml-pipeline: ## Run ML pipeline tests
+	@echo "Running ML pipeline tests..."
+	go test -v -run TestMLPipeline ./tests/integration/...
+
+test-performance: ## Run performance tests
+	@echo "Running performance tests..."
+	go test -v -run TestPerformance ./tests/integration/...
+	@echo "Running load tests with k6..."
+	@command -v k6 >/dev/null 2>&1 && k6 run tests/performance/load-test.js || echo "k6 not installed, skipping load tests"
+
+test-security: ## Run security tests
+	@echo "Running security tests..."
+	go test -v -run TestSecurity ./tests/integration/...
+
+test-progressive: ## Run progressive testing validation
+	@echo "Running progressive testing validation..."
+	go test -v -run TestABFramework ./tests/progressive/...
+
+test-canary-validation: ## Validate canary deployment configuration
+	@echo "Validating canary deployment configuration..."
+	@command -v kubectl >/dev/null 2>&1 && kubectl apply --dry-run=client -f tests/progressive/canary_config.yaml || echo "kubectl not available, skipping validation"
+
+test-blue-green-validation: ## Validate blue-green deployment configuration
+	@echo "Validating blue-green deployment configuration..."
+	@command -v kubectl >/dev/null 2>&1 && kubectl apply --dry-run=client -f tests/progressive/blue_green_config.yaml || echo "kubectl not available, skipping validation"
+
+test-progressive-workflows: ## Test progressive deployment workflows
+	@echo "Testing progressive deployment workflows..."
+	@echo "Validating progressive-testing.yml workflow..."
+	@command -v actionlint >/dev/null 2>&1 && actionlint .github/workflows/progressive-testing.yml || echo "actionlint not available, skipping validation"
+
+test-all-comprehensive: test-unit test-integration test-document-processing test-chunking-strategies test-storage-integration test-api-endpoints test-progressive ## Run all test suites
+	@echo "All comprehensive tests completed!"
 
 test-load: ## Run load tests
 	@echo "Running load tests..."

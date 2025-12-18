@@ -27,8 +27,8 @@ type Document struct {
 	// Content and processing
 	ExtractedText    string                 `json:"extracted_text,omitempty"`
 	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
-	ProcessingTime   *int64                 `json:"processing_time,omitempty"` // Processing duration in milliseconds
-	ConfidenceScore  *float64               `json:"confidence_score,omitempty"` // AI confidence score (0.0-1.0)
+	ProcessingTime   *int64                 `json:"processingTime,omitempty"` // Processing duration in milliseconds
+	ConfidenceScore  *float64               `json:"confidenceScore,omitempty"` // AI confidence score (0.0-1.0)
 	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
 
 	// Relationships
@@ -45,8 +45,12 @@ type Document struct {
 	Tags       []string `json:"tags,omitempty"`
 
 	// Processing information
-	ProcessingJobID string     `json:"processing_job_id,omitempty"`
-	ProcessedAt     *time.Time `json:"processed_at,omitempty"`
+	ProcessingJobID      string     `json:"processing_job_id,omitempty"`
+	ProcessedAt          *time.Time `json:"processed_at,omitempty"`
+	ChunkingStrategy     string     `json:"chunking_strategy,omitempty"`     // Strategy used for chunking
+	ChunkCount           int        `json:"chunk_count" validate:"min=0"`    // Number of chunks created
+	AverageChunkSize     int64      `json:"average_chunk_size,omitempty" validate:"min=0"` // Average chunk size in bytes
+	ChunkQualityScore    *float64   `json:"chunk_quality_score,omitempty" validate:"omitempty,min=0,max=1"` // Average quality across all chunks
 
 	// Timestamps
 	CreatedAt time.Time `json:"created_at"`
@@ -83,13 +87,19 @@ type DocumentResponse struct {
 	SizeBytes        int64                  `json:"size_bytes"`
 	ExtractedText    string                 `json:"extracted_text,omitempty"`
 	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
+	ProcessingTime   *int64                 `json:"processingTime,omitempty"` // Processing duration in milliseconds
+	ConfidenceScore  *float64               `json:"confidenceScore,omitempty"` // AI confidence score (0.0-1.0)
 	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
-	NotebookID       string                 `json:"notebook_id"`
-	OwnerID          string                 `json:"owner_id"`
-	Tags             []string               `json:"tags,omitempty"`
-	ProcessedAt      *time.Time             `json:"processed_at,omitempty"`
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
+	NotebookID           string                 `json:"notebook_id"`
+	OwnerID              string                 `json:"owner_id"`
+	Tags                 []string               `json:"tags,omitempty"`
+	ProcessedAt          *time.Time             `json:"processed_at,omitempty"`
+	ChunkingStrategy     string                 `json:"chunking_strategy,omitempty"`
+	ChunkCount           int                    `json:"chunk_count"`
+	AverageChunkSize     int64                  `json:"average_chunk_size,omitempty"`
+	ChunkQualityScore    *float64               `json:"chunk_quality_score,omitempty"`
+	CreatedAt            time.Time              `json:"created_at"`
+	UpdatedAt            time.Time              `json:"updated_at"`
 
 	// Optional fields for detailed responses
 	Owner    *PublicUserResponse `json:"owner,omitempty"`
@@ -132,28 +142,6 @@ type DocumentBase64UploadRequest struct {
 	MimeType    string `json:"mime_type" validate:"required"`           // MIME type of the file
 }
 
-// ProcessingJob represents a document processing job
-type ProcessingJob struct {
-	ID         string `json:"id"`
-	DocumentID string `json:"document_id"`
-	Status     string `json:"status" validate:"oneof=pending processing completed failed cancelled"`
-	Type       string `json:"type" validate:"required"`
-	Priority   int    `json:"priority"`
-	Progress   int    `json:"progress" validate:"min=0,max=100"`
-
-	// Job configuration
-	Config map[string]interface{} `json:"config,omitempty" validate:"omitempty,neo4j_compatible"`
-
-	// Results and errors
-	Result map[string]interface{} `json:"result,omitempty" validate:"omitempty,neo4j_compatible"`
-	Error  string                 `json:"error,omitempty"`
-
-	// Timestamps
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-}
 
 // DocumentStats represents document statistics
 type DocumentStats struct {
@@ -211,6 +199,8 @@ func (d *Document) ToResponse() *DocumentResponse {
 		SizeBytes:        d.SizeBytes,
 		ExtractedText:    d.ExtractedText,
 		ProcessingResult: d.ProcessingResult,
+		ProcessingTime:   d.ProcessingTime,
+		ConfidenceScore:  d.ConfidenceScore,
 		Metadata:         d.Metadata,
 		NotebookID:       d.NotebookID,
 		OwnerID:          d.OwnerID,

@@ -122,6 +122,7 @@ For detailed schema information, see [docs/BACKEND-DESIGN.md](docs/BACKEND-DESIG
 - **Keycloak**: Authentication and user management
 - **AudiModal API**: Document processing and AI analysis
 - **DeepLake**: Vector storage for semantic search
+- **LLM Router**: AI model routing and load balancing (via proxy)
 - **Kafka**: Event streaming and service communication
 - **AWS S3**: File storage with multipart upload support
 
@@ -131,6 +132,68 @@ The platform integrates with existing production infrastructure:
 - Kafka cluster for event streaming
 - Redis for caching and session management
 - PostgreSQL for specific use cases
+
+## 🤖 LLM Router Integration
+
+The Aether Backend provides a comprehensive proxy integration with the LLM Router service, enabling AI model access through a unified API interface.
+
+### Features
+
+- **Dual Authentication Modes**: Supports both user authentication and service-to-service authentication
+- **Public Endpoints**: No authentication required for informational endpoints (providers, health, capabilities)
+- **Authenticated Endpoints**: User token required for operational endpoints (chat completions, etc.)
+- **Automatic Retry Logic**: Built-in retry mechanism with exponential backoff
+- **Configurable Timeouts**: Customizable request and connection timeouts
+- **Error Handling**: Standardized error responses with proper HTTP status codes
+
+### Configuration
+
+Configure the LLM Router proxy using environment variables:
+
+```bash
+# Basic Configuration
+ROUTER_ENABLED=true                                    # Enable/disable router proxy
+ROUTER_SERVICE_BASE_URL=http://llm-router:8080        # LLM Router service URL
+
+# Authentication Configuration
+ROUTER_USE_SERVICE_AUTH=false                          # Enable service-to-service auth
+ROUTER_API_KEY=your-service-api-key                   # API key for service auth
+
+# Connection Configuration
+ROUTER_SERVICE_TIMEOUT=30s                            # Request timeout
+ROUTER_SERVICE_MAX_RETRIES=3                          # Maximum retry attempts
+ROUTER_SERVICE_CONNECT_TIMEOUT=10s                    # Connection timeout
+```
+
+### Endpoints
+
+**Public Endpoints (No Authentication):**
+- `GET /api/v1/router/providers` - List available AI providers
+- `GET /api/v1/router/health` - LLM Router health status  
+- `GET /api/v1/router/capabilities` - Supported features
+
+**Authenticated Endpoints (Bearer Token Required):**
+- `POST /api/v1/router/chat/completions` - Chat completions
+- `POST /api/v1/router/completions` - Text completions
+- `POST /api/v1/router/messages` - Message handling
+- `GET /api/v1/router/providers/{name}` - Provider details
+
+### Authentication Modes
+
+**User Authentication (Default):**
+```bash
+# Default configuration - forwards user tokens
+ROUTER_USE_SERVICE_AUTH=false
+```
+
+**Service-to-Service Authentication:**
+```bash
+# Service authentication - uses API keys
+ROUTER_USE_SERVICE_AUTH=true
+ROUTER_API_KEY=your-api-key
+```
+
+For detailed API documentation, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md#llm-router-proxy).
 
 ## 📈 Current Status
 

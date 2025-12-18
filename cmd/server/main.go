@@ -94,7 +94,7 @@ func main() {
 
 	var audiModalService *services.AudiModalService
 	if cfg.AudiModal.Enabled {
-		audiModalService = services.NewAudiModalService(cfg.AudiModal.BaseURL, cfg.AudiModal.APIKey, appLogger)
+		audiModalService = services.NewAudiModalService(cfg.AudiModal.BaseURL, cfg.AudiModal.APIKey, &cfg.AudiModal, appLogger)
 		appLogger.Info("AudiModal service initialized successfully")
 	}
 
@@ -112,6 +112,7 @@ func main() {
 	// Initialize API server
 	appLogger.Info("Initializing API server")
 	apiServer := handlers.NewAPIServer(
+		cfg,
 		neo4jClient,
 		keycloakClient,
 		storageService,
