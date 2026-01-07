@@ -14,15 +14,19 @@ data:
   # Neo4j Configuration (application-specific, running in same namespace)
   NEO4J_URI: "bolt+ssc://neo4j.aether-be.svc.cluster.local:7687"
   NEO4J_DATABASE: "neo4j"
+  NEO4J_TLS_INSECURE: "true"
 
   # Shared Services (cross-namespace references)
   REDIS_ADDR: "redis-shared.tas-shared:6379"
   REDIS_DB: "0"
 
   # Keycloak Configuration
+  # Use internal service for OIDC provider discovery
+  # With KC_HOSTNAME_STRICT=false and KC_HOSTNAME=keycloak.tas.scharber.com,
+  # Keycloak returns http://keycloak.tas.scharber.com for HTTP requests
   KEYCLOAK_URL: "http://keycloak-shared.tas-shared:8080"
-  KEYCLOAK_ALLOWED_ISSUERS: "http://keycloak-shared.tas-shared:8080/realms/master,https://keycloak.tas.scharber.com/realms/master"
-  KEYCLOAK_REALM: "master"
+  KEYCLOAK_ALLOWED_ISSUERS: "http://keycloak-shared.tas-shared:8080/realms/aether,https://keycloak.tas.scharber.com/realms/aether,http://keycloak.tas.scharber.com/realms/aether"
+  KEYCLOAK_REALM: "aether"
   KEYCLOAK_CLIENT_ID: "aether-backend"
 
   # Storage Configuration
@@ -46,6 +50,10 @@ data:
   # Agent Builder
   AGENT_BUILDER_URL: "http://agent-builder.tas-agent-builder:8087/api/v1"
 
+  # AudiModal Configuration
+  AUDIMODAL_ENABLED: "true"
+  AUDIMODAL_BASE_URL: "http://audimodal.aether-be:8080"
+
   # Logging
-  LOG_LEVEL: "info"
+  LOG_LEVEL: "debug"
   LOG_FORMAT: "json"

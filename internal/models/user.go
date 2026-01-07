@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,15 @@ type User struct {
 	PersonalTenantID string `json:"personal_tenant_id,omitempty"`
 	PersonalSpaceID  string `json:"personal_space_id,omitempty"`
 	PersonalAPIKey   string `json:"-"` // Not serialized in JSON responses
+
+	// Onboarding/Tutorial tracking
+	TutorialCompleted   bool       `json:"tutorial_completed"`
+	TutorialCompletedAt *time.Time `json:"tutorial_completed_at,omitempty"`
+
+	// Onboarding status tracking
+	OnboardingStatus    string     `json:"onboarding_status"` // "pending", "in_progress", "completed", "failed"
+	OnboardingError     string     `json:"onboarding_error,omitempty"`
+	OnboardingFailedAt  *time.Time `json:"onboarding_failed_at,omitempty"`
 
 	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`
@@ -247,5 +257,52 @@ func (u *User) GetPersonalTenantInfo() (tenantID, apiKey string, exists bool) {
 func (u *User) SetPersonalTenantInfo(tenantID, apiKey string) {
 	u.PersonalTenantID = tenantID
 	u.PersonalAPIKey = apiKey
+	// Derive space ID from tenant ID
+	// For UUIDs: use the same ID with "space_" prefix
+	// For legacy "tenant_X" format: convert to "space_X"
+	if tenantID != "" {
+		if strings.HasPrefix(tenantID, "tenant_") {
+			u.PersonalSpaceID = "space_" + tenantID[len("tenant_"):]
+		} else {
+			// UUID format - use as-is with space_ prefix
+			u.PersonalSpaceID = "space_" + tenantID
+		}
+	}
 	u.UpdatedAt = time.Now()
+}
+
+// MarkTutorialComplete marks the tutorial as completed
+func (u *User) MarkTutorialComplete() {
+	u.TutorialCompleted = true
+	now := time.Now()
+	u.TutorialCompletedAt = &now
+	u.UpdatedAt = now
+}
+
+// ResetTutorial resets the tutorial completion status (for testing/re-onboarding)
+func (u *User) ResetTutorial() {
+	u.TutorialCompleted = false
+	u.TutorialCompletedAt = nil
+	u.UpdatedAt = time.Now()
+}
+
+// HasCompletedTutorial returns true if the user has completed the tutorial
+func (u *User) HasCompletedTutorial() bool {
+	return u.TutorialCompleted
+}
+
+// OnboardingStatusResponse represents the user's onboarding status
+type OnboardingStatusResponse struct {
+	TutorialCompleted   bool       `json:"tutorial_completed"`
+	TutorialCompletedAt *time.Time `json:"tutorial_completed_at,omitempty"`
+	ShouldAutoTrigger   bool       `json:"should_auto_trigger"`
+}
+
+// ToOnboardingStatusResponse converts user data to onboarding status response
+func (u *User) ToOnboardingStatusResponse() *OnboardingStatusResponse {
+	return &OnboardingStatusResponse{
+		TutorialCompleted:   u.TutorialCompleted,
+		TutorialCompletedAt: u.TutorialCompletedAt,
+		ShouldAutoTrigger:   !u.TutorialCompleted,
+	}
 }

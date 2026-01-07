@@ -221,7 +221,7 @@ func Load() (*Config, error) {
 		},
 		Keycloak: KeycloakConfig{
 			URL:          getEnv("KEYCLOAK_URL", "http://localhost:8081"),
-			Realm:        getEnv("KEYCLOAK_REALM", "master"),
+			Realm:        getEnv("KEYCLOAK_REALM", "aether"),
 			ClientID:     getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
 			ClientSecret: getEnv("KEYCLOAK_CLIENT_SECRET", ""),
 		},

@@ -42,7 +42,7 @@ func NewOnboardingService(
 }
 
 // OnboardNewUser performs complete user onboarding with default resources
-// This runs asynchronously after user creation from JWT token
+// This runs synchronously during user creation to ensure resources are ready before login completes
 func (s *OnboardingService) OnboardNewUser(ctx context.Context, user *models.User) (*models.OnboardingResult, error) {
 	s.logger.Info("Starting user onboarding",
 		zap.String("user_id", user.ID),
@@ -73,7 +73,8 @@ func (s *OnboardingService) OnboardNewUser(ctx context.Context, user *models.Use
 		SpaceType: models.SpaceTypePersonal,
 		SpaceID:   user.PersonalSpaceID,
 	}
-	spaceCtx, err := s.spaceService.ResolveSpaceContext(ctx, user.ID, spaceReq)
+	// Pass Keycloak ID for space resolution (consistent with space_context.go fix)
+	spaceCtx, err := s.spaceService.ResolveSpaceContext(ctx, user.KeycloakID, spaceReq)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to resolve personal space: %v", err)
 		s.logger.Error(errMsg, zap.String("user_id", user.ID), zap.Error(err))
@@ -188,20 +189,238 @@ func (s *OnboardingService) uploadSampleDocuments(
 	spaceCtx *models.SpaceContext,
 	notebook *models.Notebook,
 ) (int, error) {
-	// TODO: Implement sample document upload
-	// This would:
-	// 1. Load sample PDF files from embedded resources or ConfigMap
-	// 2. Upload to MinIO via storage service
-	// 3. Create Document records in Neo4j
-	// 4. Trigger AudiModal processing
-	//
-	// For now, return 0 as placeholder
-	s.logger.Warn("Sample document upload not yet implemented",
+	s.logger.Info("Starting sample document upload",
 		zap.String("user_id", user.ID),
 		zap.String("notebook_id", notebook.ID),
+		zap.String("space_id", spaceCtx.SpaceID),
 	)
 
-	return 0, nil
+	// Define sample documents with embedded content
+	sampleDocs := []struct {
+		Name        string
+		Description string
+		Content     string
+		Tags        []string
+	}{
+		{
+			Name:        "Welcome to Aether.txt",
+			Description: "Introduction to the Aether AI Platform",
+			Content: `Welcome to Aether - AI-Powered Document Intelligence Platform
+
+Aether is your comprehensive platform for intelligent document processing and AI-powered knowledge extraction.
+
+KEY FEATURES:
+1. Multi-Modal Document Processing
+   - Upload PDFs, images, audio, and video files
+   - Automatic text extraction and OCR
+   - Metadata extraction and indexing
+
+2. Intelligent Search
+   - Semantic search across all your documents
+   - Vector-based similarity matching
+   - Entity recognition and relationship mapping
+
+3. AI Agents
+   - Create custom AI assistants for your notebooks
+   - Ask questions about your documents
+   - Get intelligent summaries and insights
+
+4. Collaborative Workspaces
+   - Organize documents in notebooks
+   - Share with team members
+   - Role-based access control
+
+GETTING STARTED:
+1. Upload your first document using the "Upload" button
+2. Wait for processing to complete
+3. Use the search bar to find content
+4. Create an AI agent to interact with your documents
+
+For more information, visit our documentation or contact support.
+`,
+			Tags: []string{"welcome", "introduction", "getting-started"},
+		},
+		{
+			Name:        "Quick Start Guide.txt",
+			Description: "Step-by-step guide to using Aether",
+			Content: `Aether Quick Start Guide
+
+STEP 1: UPLOAD DOCUMENTS
+- Click the "Upload" button in your notebook
+- Select one or more files (PDF, DOCX, images, audio, video)
+- Add a description and tags
+- Click "Upload" to start processing
+
+STEP 2: WAIT FOR PROCESSING
+- Documents are automatically processed by our AI engine
+- Text is extracted and indexed
+- Metadata and entities are identified
+- Processing typically takes 30-60 seconds per document
+
+STEP 3: SEARCH YOUR DOCUMENTS
+- Use the search bar to find content across all documents
+- Search supports natural language queries
+- Results are ranked by relevance
+- Click any result to view the full document
+
+STEP 4: CREATE AN AI AGENT
+- Go to the "Agents" tab
+- Click "Create Agent"
+- Configure the agent with your preferences
+- The agent will have access to all documents in selected notebooks
+
+STEP 5: ASK QUESTIONS
+- Chat with your AI agent
+- Ask questions about your documents
+- Get summaries and insights
+- The agent will cite sources from your documents
+
+ADVANCED FEATURES:
+- Create hierarchical notebook structures
+- Share notebooks with team members
+- Export search results and insights
+- Set up automated workflows
+
+Need help? Check the FAQ or contact our support team.
+`,
+			Tags: []string{"guide", "tutorial", "quick-start"},
+		},
+		{
+			Name:        "Sample FAQ.txt",
+			Description: "Frequently Asked Questions about Aether",
+			Content: `Aether Platform - Frequently Asked Questions
+
+Q: What file types does Aether support?
+A: Aether supports a wide range of file types including:
+   - Documents: PDF, DOCX, TXT, MD
+   - Images: JPG, PNG, GIF, TIFF
+   - Audio: MP3, WAV, M4A
+   - Video: MP4, MOV, AVI
+   - Archives: ZIP (auto-extracted)
+
+Q: How long does document processing take?
+A: Processing time varies by document size and complexity:
+   - Text documents (< 10 pages): 10-30 seconds
+   - Large PDFs (100+ pages): 1-3 minutes
+   - Images with OCR: 20-60 seconds
+   - Audio/video transcription: ~30% of file duration
+
+Q: Is my data secure?
+A: Yes, Aether implements enterprise-grade security:
+   - All data encrypted at rest and in transit
+   - Role-based access control (RBAC)
+   - Audit logging of all activities
+   - SOC 2 and GDPR compliant
+   - Regular security audits
+
+Q: Can I share notebooks with my team?
+A: Yes! Create an Organization space to:
+   - Invite team members
+   - Assign roles (owner, admin, member, viewer)
+   - Share notebooks and documents
+   - Collaborate on AI agents
+   - Track team activity
+
+Q: How does the AI agent work?
+A: AI agents use advanced language models to:
+   - Understand natural language questions
+   - Search relevant documents in your notebooks
+   - Synthesize information from multiple sources
+   - Provide cited answers with source references
+   - Learn from your feedback
+
+Q: What are the storage limits?
+A: Storage limits depend on your plan:
+   - Personal Free: 5GB, 1,000 files
+   - Professional: 100GB, 10,000 files
+   - Enterprise: Unlimited storage
+
+Q: Can I export my data?
+A: Yes, you can export:
+   - Individual documents (original format)
+   - Search results (CSV, JSON)
+   - Notebook metadata
+   - Chat transcripts with AI agents
+   - Full data export for migration
+
+Q: How accurate is the text extraction?
+A: Our AI-powered extraction achieves:
+   - 99%+ accuracy on digital PDFs
+   - 95%+ accuracy on scanned documents (OCR)
+   - 90%+ accuracy on handwritten text
+   - 95%+ accuracy on audio transcription
+
+Q: Can I integrate Aether with other tools?
+A: Yes, Aether provides:
+   - REST API for programmatic access
+   - Webhooks for event notifications
+   - Zapier and Make integrations
+   - Direct integrations with Slack, Teams, Google Drive
+
+For more questions, contact support@aether.ai
+`,
+			Tags: []string{"faq", "help", "support"},
+		},
+	}
+
+	successCount := 0
+
+	for i, doc := range sampleDocs {
+		// Create upload request
+		fileData := []byte(doc.Content)
+		uploadReq := models.DocumentUploadRequest{
+			DocumentCreateRequest: models.DocumentCreateRequest{
+				Name:        doc.Name,
+				Description: doc.Description,
+				NotebookID:  notebook.ID,
+				Tags:        doc.Tags,
+				Metadata: map[string]interface{}{
+					"source":     "onboarding",
+					"is_sample":  true,
+					"order":      i + 1,
+					"mime_type":  "text/plain",
+					"size_bytes": len(fileData),
+				},
+			},
+			FileData: fileData,
+		}
+
+		fileInfo := models.FileInfo{
+			OriginalName: doc.Name,
+			MimeType:     "text/plain",
+			SizeBytes:    int64(len(fileData)),
+			Checksum:     "",
+		}
+
+		// Upload the document
+		_, err := s.documentService.UploadDocument(ctx, uploadReq, user.KeycloakID, spaceCtx, fileInfo)
+		if err != nil {
+			s.logger.Error("Failed to upload sample document",
+				zap.String("user_id", user.ID),
+				zap.String("notebook_id", notebook.ID),
+				zap.String("document_name", doc.Name),
+				zap.Error(err),
+			)
+			// Continue with other documents even if one fails
+			continue
+		}
+
+		successCount++
+		s.logger.Info("Successfully uploaded sample document",
+			zap.String("user_id", user.ID),
+			zap.String("document_name", doc.Name),
+			zap.Int("bytes", len(fileData)),
+		)
+	}
+
+	s.logger.Info("Sample document upload completed",
+		zap.String("user_id", user.ID),
+		zap.String("notebook_id", notebook.ID),
+		zap.Int("success_count", successCount),
+		zap.Int("total_count", len(sampleDocs)),
+	)
+
+	return successCount, nil
 }
 
 // createDefaultAgent creates a "Personal Assistant" agent for new users

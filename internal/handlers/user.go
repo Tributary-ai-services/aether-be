@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -104,25 +103,23 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 			} else {
 				h.logger.Info("Successfully created user from JWT token", zap.String("keycloak_id", userID), zap.String("email", emailStr))
 
-				// Trigger automatic onboarding for new user (async)
-				go func(createdUser *models.User) {
-					onboardCtx := context.Background()
-					onboardingResult, err := h.onboardingService.OnboardNewUser(onboardCtx, createdUser)
-					if err != nil {
-						h.logger.Error("Failed to onboard new user",
-							zap.String("user_id", createdUser.ID),
-							zap.String("keycloak_id", userID),
-							zap.Error(err),
-						)
-					} else {
-						h.logger.Info("User onboarding completed",
-							zap.String("user_id", createdUser.ID),
-							zap.Bool("success", onboardingResult.Success),
-							zap.Int64("duration_ms", onboardingResult.DurationMs),
-							zap.Int("steps_completed", len(onboardingResult.Steps)),
-						)
-					}
-				}(user)
+				// Trigger automatic onboarding for new user (synchronous to avoid race conditions)
+				onboardingResult, err := h.onboardingService.OnboardNewUser(c.Request.Context(), user)
+				if err != nil {
+					h.logger.Error("Failed to onboard new user",
+						zap.String("user_id", user.ID),
+						zap.String("keycloak_id", userID),
+						zap.Error(err),
+					)
+					// Don't fail the login - user profile was created successfully, onboarding can be retried
+				} else {
+					h.logger.Info("User onboarding completed",
+						zap.String("user_id", user.ID),
+						zap.Bool("success", onboardingResult.Success),
+						zap.Int64("duration_ms", onboardingResult.DurationMs),
+						zap.Int("steps_completed", len(onboardingResult.Steps)),
+					)
+				}
 			}
 		} else {
 			h.logger.Error("Failed to get current user", zap.String("user_id", userID), zap.Error(err))
@@ -429,25 +426,23 @@ func (h *UserHandler) GetUserSpaces(c *gin.Context) {
 			} else {
 				h.logger.Info("Successfully created user from JWT token", zap.String("keycloak_id", userID), zap.String("email", emailStr))
 
-				// Trigger automatic onboarding for new user (async)
-				go func(createdUser *models.User) {
-					onboardCtx := context.Background()
-					onboardingResult, err := h.onboardingService.OnboardNewUser(onboardCtx, createdUser)
-					if err != nil {
-						h.logger.Error("Failed to onboard new user",
-							zap.String("user_id", createdUser.ID),
-							zap.String("keycloak_id", userID),
-							zap.Error(err),
-						)
-					} else {
-						h.logger.Info("User onboarding completed",
-							zap.String("user_id", createdUser.ID),
-							zap.Bool("success", onboardingResult.Success),
-							zap.Int64("duration_ms", onboardingResult.DurationMs),
-							zap.Int("steps_completed", len(onboardingResult.Steps)),
-						)
-					}
-				}(user)
+				// Trigger automatic onboarding for new user (synchronous to avoid race conditions)
+				onboardingResult, err := h.onboardingService.OnboardNewUser(c.Request.Context(), user)
+				if err != nil {
+					h.logger.Error("Failed to onboard new user",
+						zap.String("user_id", user.ID),
+						zap.String("keycloak_id", userID),
+						zap.Error(err),
+					)
+					// Don't fail the login - user profile was created successfully, onboarding can be retried
+				} else {
+					h.logger.Info("User onboarding completed",
+						zap.String("user_id", user.ID),
+						zap.Bool("success", onboardingResult.Success),
+						zap.Int64("duration_ms", onboardingResult.DurationMs),
+						zap.Int("steps_completed", len(onboardingResult.Steps)),
+					)
+				}
 			}
 		} else {
 			h.logger.Error("Failed to get user", zap.String("keycloak_id", userID), zap.Error(err))
@@ -456,9 +451,10 @@ func (h *UserHandler) GetUserSpaces(c *gin.Context) {
 		}
 	}
 
-	spaces, err := h.spaceService.GetUserSpaces(c.Request.Context(), user.ID)
+	// Pass Keycloak ID to GetUserSpaces, not internal user ID
+	spaces, err := h.spaceService.GetUserSpaces(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Error("Failed to get user spaces", zap.String("user_id", user.ID), zap.Error(err))
+		h.logger.Error("Failed to get user spaces", zap.String("keycloak_id", userID), zap.Error(err))
 		handleServiceError(c, err)
 		return
 	}
@@ -492,31 +488,102 @@ func (h *UserHandler) GetOnboardingStatus(c *gin.Context) {
 		return
 	}
 
-	// Get personal space context
-	spaceReq := models.SpaceContextRequest{
-		SpaceType: models.SpaceTypePersonal,
-		SpaceID:   user.PersonalSpaceID,
-	}
-	spaceCtx, err := h.spaceService.ResolveSpaceContext(c.Request.Context(), user.ID, spaceReq)
-	if err != nil {
-		h.logger.Error("Failed to resolve personal space for onboarding status",
-			zap.String("user_id", user.ID),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to resolve personal space"))
-		return
-	}
-
-	// Get onboarding status
-	status, err := h.onboardingService.GetOnboardingStatus(c.Request.Context(), user, spaceCtx)
+	// Get onboarding status from user service
+	status, err := h.userService.GetOnboardingStatus(c.Request.Context(), user.ID)
 	if err != nil {
 		h.logger.Error("Failed to get onboarding status",
 			zap.String("user_id", user.ID),
 			zap.Error(err),
 		)
-		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to get onboarding status"))
+		handleServiceError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+// MarkTutorialComplete marks the onboarding tutorial as completed
+// @Summary Mark tutorial complete
+// @Description Mark the onboarding tutorial as completed for the current user
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} map[string]string
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/onboarding [post]
+func (h *UserHandler) MarkTutorialComplete(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get internal user ID from Keycloak ID
+	user, err := h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user for tutorial completion", zap.String("keycloak_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Mark tutorial complete
+	err = h.userService.MarkTutorialComplete(c.Request.Context(), user.ID)
+	if err != nil {
+		h.logger.Error("Failed to mark tutorial complete",
+			zap.String("user_id", user.ID),
+			zap.Error(err),
+		)
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Tutorial marked as completed",
+	})
+}
+
+// ResetTutorial resets the onboarding tutorial status
+// @Summary Reset tutorial
+// @Description Reset the onboarding tutorial status for the current user (for testing/re-onboarding)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} map[string]string
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/onboarding [delete]
+func (h *UserHandler) ResetTutorial(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get internal user ID from Keycloak ID
+	user, err := h.userService.GetUserByKeycloakID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user for tutorial reset", zap.String("keycloak_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Reset tutorial
+	err = h.userService.ResetTutorial(c.Request.Context(), user.ID)
+	if err != nil {
+		h.logger.Error("Failed to reset tutorial",
+			zap.String("user_id", user.ID),
+			zap.Error(err),
+		)
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Tutorial reset successfully",
+	})
 }

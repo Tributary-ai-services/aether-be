@@ -175,6 +175,8 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		users.GET("/me/stats", s.UserHandler.GetUserStats)
 		users.GET("/me/spaces", s.UserHandler.GetUserSpaces)
 		users.GET("/me/onboarding", s.UserHandler.GetOnboardingStatus)
+		users.POST("/me/onboarding", s.UserHandler.MarkTutorialComplete)
+		users.DELETE("/me/onboarding", s.UserHandler.ResetTutorial)
 		users.GET("/search", s.UserHandler.SearchUsers)
 		users.GET("/:id", s.UserHandler.GetUserByID)
 	}

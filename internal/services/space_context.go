@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -64,7 +63,8 @@ func (s *SpaceContextService) ResolveSpaceContext(ctx context.Context, userID st
 // resolvePersonalSpace resolves a personal space context
 func (s *SpaceContextService) resolvePersonalSpace(ctx context.Context, userID, spaceID string) (*models.SpaceContext, error) {
 	// Get user details first
-	user, err := s.userService.GetUserByID(ctx, userID)
+	// userID here is the Keycloak ID from JWT, not the internal User ID
+	user, err := s.userService.GetUserByKeycloakID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -77,13 +77,12 @@ func (s *SpaceContextService) resolvePersonalSpace(ctx context.Context, userID, 
 	}
 
 	// Verify the user is accessing their own personal space
-	// Personal space ID is derived from tenant ID: tenant_X -> space_X
-	expectedSpaceID := strings.Replace(user.PersonalTenantID, "tenant_", "space_", 1)
-	if spaceID != expectedSpaceID {
+	// Use the pre-computed PersonalSpaceID from the user model (supports both tenant_X and UUID formats)
+	if spaceID != user.PersonalSpaceID {
 		return nil, errors.ForbiddenWithDetails("Cannot access another user's personal space", map[string]interface{}{
 			"user_id":          userID,
 			"space_id":         spaceID,
-			"expected_space_id": expectedSpaceID,
+			"expected_space_id": user.PersonalSpaceID,
 		})
 	}
 
@@ -164,7 +163,8 @@ func (s *SpaceContextService) resolveOrganizationSpace(ctx context.Context, user
 // GetUserSpaces returns all available spaces for a user
 func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) (*models.SpaceListResponse, error) {
 	// Get user for personal space
-	user, err := s.userService.GetUserByID(ctx, userID)
+	// userID here is the Keycloak ID from JWT, not the internal User ID
+	user, err := s.userService.GetUserByKeycloakID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +175,10 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 
 	// Add personal space if configured, or create one if missing
 	if user.HasPersonalTenant() {
-		// Force use the fallback for now to test
-		spaceID := strings.Replace(user.PersonalTenantID, "tenant_", "space_", 1)
+		// Use the pre-computed PersonalSpaceID from the user model (supports both tenant_X and UUID formats)
 		response.PersonalSpace = &models.SpaceInfo{
 			SpaceType:   models.SpaceTypePersonal,
-			SpaceID:     spaceID,
+			SpaceID:     user.PersonalSpaceID,
 			SpaceName:   fmt.Sprintf("%s's Personal Space", user.FullName),
 			TenantID:    user.PersonalTenantID,
 			UserRole:    "owner",
@@ -229,18 +228,17 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 				s.logger.Error("Failed to update user with tenant info", zap.Error(err))
 				// Don't fail the request - just log the error
 			} else {
-				// Update the user object
+				// Update the user object (this also sets PersonalSpaceID)
 				user.SetPersonalTenantInfo(tenant.TenantID, tenant.APIKey)
 				s.logger.Info("Successfully created personal tenant for existing user",
 					zap.String("user_id", user.ID),
 					zap.String("tenant_id", tenant.TenantID),
 				)
-				
-				// Add the personal space to the response
-				spaceID := strings.Replace(tenant.TenantID, "tenant_", "space_", 1)
+
+				// Add the personal space to the response using the pre-computed PersonalSpaceID
 				response.PersonalSpace = &models.SpaceInfo{
 					SpaceType:   models.SpaceTypePersonal,
-					SpaceID:     spaceID,
+					SpaceID:     user.PersonalSpaceID,
 					SpaceName:   fmt.Sprintf("%s's Personal Space", user.FullName),
 					TenantID:    tenant.TenantID,
 					UserRole:    "owner",

@@ -196,6 +196,12 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 	// Set personal tenant info on user
 	user.SetPersonalTenantInfo(tenant.TenantID, tenant.APIKey)
 
+	// Create personal space node in Neo4j (must exist before user node for onboarding)
+	if err := s.createPersonalSpace(ctx, user); err != nil {
+		s.logger.Error("Failed to create personal space", zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to create personal space", err)
+	}
+
 	// Create user in Neo4j
 	query := `
 		CREATE (u:User {
@@ -208,7 +214,9 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 			preferences: $preferences,
 			status: $status,
 			personal_tenant_id: $personal_tenant_id,
+			personal_space_id: $personal_space_id,
 			personal_api_key: $personal_api_key,
+			tutorial_completed: false,
 			created_at: datetime($created_at),
 			updated_at: datetime($updated_at)
 		})
@@ -238,6 +246,7 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		"preferences":        preferencesJSON,
 		"status":             user.Status,
 		"personal_tenant_id": user.PersonalTenantID,
+		"personal_space_id":  user.PersonalSpaceID,
 		"personal_api_key":   user.PersonalAPIKey,
 		"created_at":         user.CreatedAt.Format(time.RFC3339),
 		"updated_at":         user.UpdatedAt.Format(time.RFC3339),
@@ -258,6 +267,63 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 	return user, nil
 }
 
+// createPersonalSpace creates a personal Space node in Neo4j for the user
+// This must be called BEFORE creating the User node to ensure the space exists for onboarding
+func (s *UserService) createPersonalSpace(ctx context.Context, user *models.User) error {
+	s.logger.Info("Creating personal space for user",
+		zap.String("user_id", user.ID),
+		zap.String("space_id", user.PersonalSpaceID),
+		zap.String("tenant_id", user.PersonalTenantID),
+	)
+
+	// Create Space node with OWNED_BY relationship to be created User
+	query := `
+		CREATE (s:Space {
+			id: $space_id,
+			name: $space_name,
+			description: $description,
+			space_type: "personal",
+			tenant_id: $tenant_id,
+			visibility: "private",
+			owner_id: $owner_id,
+			created_at: datetime($created_at),
+			updated_at: datetime($updated_at)
+		})
+		RETURN s.id as space_id
+	`
+
+	params := map[string]interface{}{
+		"space_id":    user.PersonalSpaceID,
+		"space_name":  fmt.Sprintf("%s's Personal Space", user.FullName),
+		"description": "Your private workspace for documents, notebooks, and AI agents",
+		"tenant_id":   user.PersonalTenantID,
+		"owner_id":    user.ID,
+		"created_at":  user.CreatedAt.Format(time.RFC3339),
+		"updated_at":  user.UpdatedAt.Format(time.RFC3339),
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to create personal space",
+			zap.String("user_id", user.ID),
+			zap.String("space_id", user.PersonalSpaceID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to create personal space", err)
+	}
+
+	if len(result.Records) == 0 {
+		return errors.Internal("Space creation returned no records")
+	}
+
+	s.logger.Info("Personal space created successfully",
+		zap.String("user_id", user.ID),
+		zap.String("space_id", user.PersonalSpaceID),
+	)
+
+	return nil
+}
+
 // GetUserByID retrieves a user by ID
 func (s *UserService) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
 	query := `
@@ -265,7 +331,8 @@ func (s *UserService) GetUserByID(ctx context.Context, userID string) (*models.U
 		RETURN u.id, u.keycloak_id, u.email, u.username, u.full_name, u.avatar_url,
 		       u.keycloak_roles, u.keycloak_groups, u.keycloak_attributes,
 		       u.preferences, u.status, u.created_at, u.updated_at,
-		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key
+		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key,
+		       COALESCE(u.tutorial_completed, false) AS tutorial_completed, u.tutorial_completed_at
 	`
 
 	params := map[string]interface{}{
@@ -299,7 +366,8 @@ func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*models
 		RETURN u.id, u.keycloak_id, u.email, u.username, u.full_name, u.avatar_url,
 		       u.keycloak_roles, u.keycloak_groups, u.keycloak_attributes,
 		       u.preferences, u.status, u.created_at, u.updated_at,
-		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key
+		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key,
+		       COALESCE(u.tutorial_completed, false) AS tutorial_completed, u.tutorial_completed_at
 	`
 
 	params := map[string]interface{}{
@@ -328,7 +396,8 @@ func (s *UserService) GetUserByKeycloakID(ctx context.Context, keycloakID string
 		RETURN u.id, u.keycloak_id, u.email, u.username, u.full_name, u.avatar_url,
 		       u.keycloak_roles, u.keycloak_groups, u.keycloak_attributes,
 		       u.preferences, u.status, u.created_at, u.updated_at,
-		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key
+		       u.last_login_at, u.last_sync_at, u.personal_tenant_id, u.personal_space_id, u.personal_api_key,
+		       COALESCE(u.tutorial_completed, false) AS tutorial_completed, u.tutorial_completed_at
 	`
 
 	params := map[string]interface{}{
@@ -750,6 +819,18 @@ func (s *UserService) recordToUser(record interface{}) (*models.User, error) {
 		}
 	}
 
+	// Parse tutorial fields
+	if val, ok := r.Get("tutorial_completed"); ok && val != nil {
+		if completed, ok := val.(bool); ok {
+			user.TutorialCompleted = completed
+		}
+	}
+	if val, ok := r.Get("u.tutorial_completed_at"); ok && val != nil {
+		if t, ok := val.(time.Time); ok {
+			user.TutorialCompletedAt = &t
+		}
+	}
+
 	return user, nil
 }
 
@@ -817,6 +898,106 @@ func (s *UserService) UpdatePersonalTenantInfo(ctx context.Context, userID, tena
 		zap.String("user_id", userID),
 		zap.String("tenant_id", tenantID),
 	)
-	
+
+	return nil
+}
+
+// GetOnboardingStatus returns the user's onboarding status
+func (s *UserService) GetOnboardingStatus(ctx context.Context, userID string) (*models.OnboardingStatusResponse, error) {
+	s.logger.Debug("Getting onboarding status",
+		zap.String("user_id", userID),
+	)
+
+	user, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		s.logger.Error("Failed to get user for onboarding status",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return nil, err
+	}
+
+	return user.ToOnboardingStatusResponse(), nil
+}
+
+// MarkTutorialComplete marks the tutorial as completed for a user
+func (s *UserService) MarkTutorialComplete(ctx context.Context, userID string) error {
+	s.logger.Info("Marking tutorial complete",
+		zap.String("user_id", userID),
+	)
+
+	query := `
+		MATCH (u:User {id: $user_id})
+		SET u.tutorial_completed = true,
+		    u.tutorial_completed_at = datetime($completed_at),
+		    u.updated_at = datetime($updated_at)
+		RETURN u
+	`
+
+	now := time.Now()
+	params := map[string]interface{}{
+		"user_id":      userID,
+		"completed_at": now.Format(time.RFC3339),
+		"updated_at":   now.Format(time.RFC3339),
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to mark tutorial complete",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return errors.Database("Failed to mark tutorial complete", err)
+	}
+
+	if len(result.Records) == 0 {
+		s.logger.Warn("User not found for tutorial completion",
+			zap.String("user_id", userID))
+		return errors.NotFound("User not found")
+	}
+
+	s.logger.Info("Tutorial marked complete",
+		zap.String("user_id", userID),
+	)
+
+	return nil
+}
+
+// ResetTutorial resets the tutorial status for a user (testing/re-onboarding)
+func (s *UserService) ResetTutorial(ctx context.Context, userID string) error {
+	s.logger.Info("Resetting tutorial",
+		zap.String("user_id", userID),
+	)
+
+	query := `
+		MATCH (u:User {id: $user_id})
+		SET u.tutorial_completed = false,
+		    u.tutorial_completed_at = null,
+		    u.updated_at = datetime($updated_at)
+		RETURN u
+	`
+
+	now := time.Now()
+	params := map[string]interface{}{
+		"user_id":    userID,
+		"updated_at": now.Format(time.RFC3339),
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to reset tutorial",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return errors.Database("Failed to reset tutorial", err)
+	}
+
+	if len(result.Records) == 0 {
+		s.logger.Warn("User not found for tutorial reset",
+			zap.String("user_id", userID))
+		return errors.NotFound("User not found")
+	}
+
+	s.logger.Info("Tutorial reset",
+		zap.String("user_id", userID),
+	)
+
 	return nil
 }

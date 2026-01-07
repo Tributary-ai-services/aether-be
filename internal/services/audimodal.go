@@ -65,17 +65,24 @@ func NewAudiModalService(baseURL, apiKey string, config *config.AudiModalConfig,
 
 // CreateTenant creates a new tenant in AudiModal
 func (s *AudiModalService) CreateTenant(ctx context.Context, req CreateTenantRequest) (*CreateTenantResponse, error) {
-	// For now, return mock data since AudiModal might not be fully configured
-	s.logger.Warn("AudiModal integration not fully configured, returning mock tenant data",
-		zap.String("tenant_name", req.Name))
-	
-	// Generate mock tenant ID and API key
-	mockTenantID := fmt.Sprintf("tenant_%d", time.Now().Unix())
-	mockAPIKey := fmt.Sprintf("apikey_%d", time.Now().UnixNano())
-	
+	// TEMPORARY: Generate unique tenant_<id> for each user while using shared AudiModal backend
+	// TODO: Implement real tenant creation API when AudiModal multi-tenancy is ready
+
+	// Generate unique tenant ID in tenant_<timestamp> format for proper user isolation
+	tenantID := fmt.Sprintf("tenant_%d", time.Now().Unix())
+
+	// The actual AudiModal UUID is stored as audimodal_tenant_id for API calls
+	// This allows each user to have their own tenant_<id>/space_<id> while sharing the backend
+	sharedAudiModalTenant := "9855e094-36a6-4d3a-a4f5-d77da4614439"
+
+	s.logger.Info("Created unique tenant ID for user",
+		zap.String("tenant_name", req.Name),
+		zap.String("tenant_id", tenantID),
+		zap.String("audimodal_tenant_id", sharedAudiModalTenant))
+
 	return &CreateTenantResponse{
-		TenantID: mockTenantID,
-		APIKey:   mockAPIKey,
+		TenantID: tenantID,  // Return unique tenant_<timestamp> for space isolation
+		APIKey:   s.apiKey,  // Use the service account API key
 		Status:   "active",
 	}, nil
 }

@@ -92,32 +92,40 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 		providerURL, // Primary provider URL (from config)
 	}
 
+	log.Debug("Setting up allowed issuers", zap.String("keycloak_url", cfg.URL), zap.String("realm", cfg.Realm))
+
 	// Add localhost issuer for development (when configured Keycloak is internal)
 	if cfg.URL == "http://tas-keycloak-shared:8080" {
+		log.Debug("Adding issuers for tas-keycloak-shared configuration")
 		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
 		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
 	}
-	
+
 	// Add localhost issuer when Keycloak is at http://keycloak:8080 (docker service name)
 	if cfg.URL == "http://keycloak:8080" {
+		log.Debug("Adding issuers for keycloak:8080 configuration")
 		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
 		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
 	}
-	
+
 	// Add internal issuer for production (when configured Keycloak is external)
 	if cfg.URL == "http://localhost:8081" {
+		log.Debug("Adding issuers for localhost:8081 configuration")
 		allowedIssuers = append(allowedIssuers, "http://tas-keycloak-shared:8080/realms/"+cfg.Realm)
 		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
 	}
 
 	// Add external issuer for K8s deployment (when configured Keycloak is internal but advertises external)
 	if cfg.URL == "http://keycloak-shared.tas-shared:8080" {
+		log.Debug("Adding issuers for K8s keycloak-shared.tas-shared configuration")
 		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
 		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+		log.Debug("Added K8s issuers", zap.Int("total_issuers", len(allowedIssuers)))
 	}
 
 	// Add external issuer for K8s deployment with full service DNS
 	if cfg.URL == "http://keycloak-shared.tas-shared.svc.cluster.local:8080" {
+		log.Debug("Adding issuers for full K8s DNS configuration")
 		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
 		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
 	}

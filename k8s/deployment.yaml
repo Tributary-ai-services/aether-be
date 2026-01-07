@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
       - name: aether-backend
-        image: aether-be:latest
-        imagePullPolicy: IfNotPresent
+        image: registry-api.tas.scharber.com/aether-backend:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           name: http
