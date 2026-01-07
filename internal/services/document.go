@@ -43,7 +43,7 @@ type StorageService interface {
 
 // ProcessingService interface for document processing operations
 type ProcessingService interface {
-	SubmitProcessingJob(ctx context.Context, documentID string, jobType string, config map[string]interface{}) (*models.ProcessingJob, error)
+	SubmitProcessingJob(ctx context.Context, tenantID string, documentID string, jobType string, config map[string]interface{}) (*models.ProcessingJob, error)
 	GetProcessingJob(ctx context.Context, jobID string) (*models.ProcessingJob, error)
 	CancelProcessingJob(ctx context.Context, jobID string) error
 }
@@ -257,7 +257,7 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 			"mime_type":        document.MimeType,
 		}
 
-		job, err := s.processingService.SubmitProcessingJob(ctx, document.ID, "extract", processingConfig)
+		job, err := s.processingService.SubmitProcessingJob(ctx, spaceCtx.TenantID, document.ID, "extract", processingConfig)
 		if err != nil {
 			s.logger.Error("Failed to submit processing job - cleaning up document",
 				zap.String("document_id", document.ID),
@@ -1873,7 +1873,7 @@ func (s *DocumentService) ReprocessDocument(ctx context.Context, document *model
 
 	// Submit processing job
 	if s.processingService != nil {
-		submittedJob, err := s.processingService.SubmitProcessingJob(ctx, document.ID, "reprocess_document", job.Config)
+		submittedJob, err := s.processingService.SubmitProcessingJob(ctx, spaceContext.TenantID, document.ID, "reprocess_document", job.Config)
 		if err != nil {
 			s.logger.Error("Failed to submit reprocessing job to processing service",
 				zap.String("document_id", document.ID),

@@ -153,12 +153,12 @@ func (s *AudiModalService) makeRequest(ctx context.Context, method, path string,
 }
 
 // SubmitProcessingJob submits a document processing job to AudiModal
-func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, documentID string, jobType string, config map[string]interface{}) (*models.ProcessingJob, error) {
+func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID string, documentID string, jobType string, config map[string]interface{}) (*models.ProcessingJob, error) {
 	// Extract file data from config if provided
 	fileData, hasFileData := config["file_data"].([]byte)
 	filename, _ := config["filename"].(string)
 	mimeType, _ := config["mime_type"].(string)
-	
+
 	// Create a processing job
 	job := &models.ProcessingJob{
 		ID:         uuid.New().String(),
@@ -171,19 +171,20 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, documentID s
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	
+
 	now := time.Now()
 	job.StartedAt = &now
-	
+
 	// Submit real processing job to AudiModal API
 	s.logger.Info("Submitting document processing job to AudiModal",
 		zap.String("document_id", documentID),
 		zap.String("job_id", job.ID),
-		zap.String("job_type", jobType))
-	
+		zap.String("job_type", jobType),
+		zap.String("tenant_id", tenantID))
+
 	// If we have file data, use the new ProcessFile method
 	if hasFileData && len(fileData) > 0 {
-		result, err := s.ProcessFile(ctx, fileData, filename, mimeType, documentID)
+		result, err := s.ProcessFile(ctx, tenantID, fileData, filename, mimeType, documentID)
 		if err != nil {
 			s.logger.Error("Failed to process file with AudiModal", 
 				zap.String("document_id", documentID),
@@ -273,15 +274,24 @@ func (s *AudiModalService) GetProcessingJob(ctx context.Context, jobID string) (
 			"confidence_score": 0.95,
 		},
 	}
-	
+
 	// Try to update with real processed content from AudiModal
-	if err := s.UpdateJobWithProcessedContent(ctx, job); err != nil {
-		s.logger.Error("Failed to update job with processed content", 
-			zap.String("job_id", jobID), 
-			zap.Error(err))
-		// Return the basic job even if we can't get processed content
+	// Extract tenantID from job config if available
+	tenantID := ""
+	if tid, ok := job.Config["audimodal_tenant_id"].(string); ok {
+		tenantID = tid
 	}
-	
+
+	if tenantID != "" {
+		if err := s.UpdateJobWithProcessedContent(ctx, tenantID, job); err != nil {
+			s.logger.Error("Failed to update job with processed content",
+				zap.String("job_id", jobID),
+				zap.String("tenant_id", tenantID),
+				zap.Error(err))
+			// Return the basic job even if we can't get processed content
+		}
+	}
+
 	return job, nil
 }
 
@@ -674,27 +684,28 @@ func (s *AudiModalService) GetFileContent(ctx context.Context, tenantID string, 
 }
 
 // UpdateJobWithProcessedContent updates a processing job with real processed content from AudiModal
-func (s *AudiModalService) UpdateJobWithProcessedContent(ctx context.Context, job *models.ProcessingJob) error {
+func (s *AudiModalService) UpdateJobWithProcessedContent(ctx context.Context, tenantID string, job *models.ProcessingJob) error {
 	// Get the AudiModal file ID from the job config, or use job ID directly if not found
 	fileID, ok := job.Config["audimodal_file_id"].(string)
 	if !ok || fileID == "" {
 		// With the new fix, the job ID itself is the AudiModal file ID
 		fileID = job.ID
-		s.logger.Info("Using job ID as AudiModal file ID", 
+		s.logger.Info("Using job ID as AudiModal file ID",
 			zap.String("job_id", job.ID),
-			zap.String("file_id", fileID))
+			zap.String("file_id", fileID),
+			zap.String("tenant_id", tenantID))
 	}
-	
+
 	// Fetch current file status from AudiModal
-	fileStatus, err := s.GetFileProcessingStatus(ctx, fileID)
+	fileStatus, err := s.GetFileProcessingStatus(ctx, tenantID, fileID)
 	if err != nil {
 		s.logger.Error("Failed to get file processing status", zap.String("file_id", fileID), zap.Error(err))
 		return err
 	}
-	
+
 	// If file is processed, get the extracted content
 	if fileStatus.Data.Status == "processed" {
-		extractedText, err := s.GetFileContent(ctx, fileID)
+		extractedText, err := s.GetFileContent(ctx, tenantID, fileID)
 		if err != nil {
 			s.logger.Error("Failed to get file content", zap.String("file_id", fileID), zap.Error(err))
 			// Don't fail the job, just use limited data
