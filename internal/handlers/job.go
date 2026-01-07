@@ -78,9 +78,9 @@ func (h *JobHandler) GetJobStatus(c *gin.Context) {
 // getAudiModalJobStatus gets job status from AudiModal service
 func (h *JobHandler) getAudiModalJobStatus(ctx context.Context, jobID string, tenantID string) (map[string]interface{}, error) {
 	// Use the AudiModal service to get file status (since most jobs are processing jobs)
-	
+
 	// First try to get file chunks to see if this is a completed processing job
-	chunks, err := h.audiModalService.GetFileChunks(ctx, jobID, 10, 0) // Get first 10 chunks
+	chunks, err := h.audiModalService.GetFileChunks(ctx, tenantID, jobID, 10, 0) // Get first 10 chunks
 	if err == nil && chunks != nil && len(chunks.Data) > 0 {
 		// Job completed successfully - we have chunks
 		return map[string]interface{}{

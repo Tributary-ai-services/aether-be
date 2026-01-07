@@ -211,7 +211,7 @@ func (h *WebSocketHandler) sendJobStatusUpdate(ctx context.Context, wsConn *WebS
 // getJobStatus gets job status (reusing logic from JobHandler)
 func (h *WebSocketHandler) getJobStatus(ctx context.Context, jobID string, tenantID string) (map[string]interface{}, error) {
 	// Try to get file chunks to see if this is a completed processing job
-	chunks, err := h.audiModalService.GetFileChunks(ctx, jobID, 10, 0)
+	chunks, err := h.audiModalService.GetFileChunks(ctx, tenantID, jobID, 10, 0)
 	if err == nil && chunks != nil && len(chunks.Data) > 0 {
 		// Job completed successfully
 		return map[string]interface{}{

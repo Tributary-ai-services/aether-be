@@ -43,7 +43,7 @@ func (h *ChunkHandler) GetFileChunks(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Space context required"})
 		return
 	}
-	_ = spaceCtx.(*models.SpaceContext) // spaceContext unused in this function
+	spaceContext := spaceCtx.(*models.SpaceContext)
 
 	// Get file ID from path
 	fileID := c.Param("file_id")
@@ -78,11 +78,12 @@ func (h *ChunkHandler) GetFileChunks(c *gin.Context) {
 	h.logger.Info("Fetching chunks for file",
 		zap.String("file_id", fileID),
 		zap.String("user_id", userID.(string)),
+		zap.String("tenant_id", spaceContext.TenantID),
 		zap.Int("limit", limit),
 		zap.Int("offset", offset))
 
 	// Get chunks from AudiModal service
-	chunks, err := h.audiModalService.GetFileChunks(c.Request.Context(), fileID, limit, offset)
+	chunks, err := h.audiModalService.GetFileChunks(c.Request.Context(), spaceContext.TenantID, fileID, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to fetch chunks from AudiModal",
 			zap.String("file_id", fileID),
@@ -131,16 +132,17 @@ func (h *ChunkHandler) GetFileChunks(c *gin.Context) {
 // GET /api/v1/tenants/:tenant_id/files/:file_id/chunks/:chunk_id
 func (h *ChunkHandler) GetChunk(c *gin.Context) {
 	// Get space context
-	_, exists := c.Get("space_context")
+	spaceCtx, exists := c.Get("space_context")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Space context required"})
 		return
 	}
+	spaceContext := spaceCtx.(*models.SpaceContext)
 
 	// Get parameters from path
 	fileID := c.Param("file_id")
 	chunkID := c.Param("chunk_id")
-	
+
 	if fileID == "" || chunkID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "File ID and chunk ID are required"})
 		return
@@ -156,10 +158,11 @@ func (h *ChunkHandler) GetChunk(c *gin.Context) {
 	h.logger.Info("Fetching specific chunk",
 		zap.String("file_id", fileID),
 		zap.String("chunk_id", chunkID),
-		zap.String("user_id", userID.(string)))
+		zap.String("user_id", userID.(string)),
+		zap.String("tenant_id", spaceContext.TenantID))
 
 	// Get chunk from AudiModal service
-	chunk, err := h.audiModalService.GetChunk(c.Request.Context(), fileID, chunkID)
+	chunk, err := h.audiModalService.GetChunk(c.Request.Context(), spaceContext.TenantID, fileID, chunkID)
 	if err != nil {
 		h.logger.Error("Failed to fetch chunk from AudiModal",
 			zap.String("file_id", fileID),
@@ -370,11 +373,12 @@ func (h *ChunkHandler) GetOptimalStrategy(c *gin.Context) {
 // POST /api/v1/tenants/:tenant_id/files/:file_id/reprocess
 func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 	// Get space context
-	_, exists := c.Get("space_context")
+	spaceCtx, exists := c.Get("space_context")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Space context required"})
 		return
 	}
+	spaceContext := spaceCtx.(*models.SpaceContext)
 
 	// Get file ID from path
 	fileID := c.Param("file_id")
@@ -404,11 +408,13 @@ func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 	h.logger.Info("Reprocessing file with new strategy",
 		zap.String("file_id", fileID),
 		zap.String("strategy", request.Strategy),
-		zap.String("user_id", userID.(string)))
+		zap.String("user_id", userID.(string)),
+		zap.String("tenant_id", spaceContext.TenantID))
 
 	// Submit reprocessing request to AudiModal
 	err := h.audiModalService.ReprocessFileWithStrategy(
 		c.Request.Context(),
+		spaceContext.TenantID,
 		fileID,
 		request.Strategy,
 		request.StrategyConfig,
