@@ -6,6 +6,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the backend for the Aether AI Platform, a Go-based API service designed to support AI-powered document processing and analysis. The project is currently in early development phase with a comprehensive design document (`BACKEND-DESIGN.md`) outlining the full architecture.
 
+## Data Models & Schema Reference
+
+### Service-Specific Data Models
+This service's data models are comprehensively documented in the centralized data models repository:
+
+**Location**: `../aether-shared/data-models/aether-be/`
+
+#### Key Node Models:
+- **User Node** (`user.md`) - User profiles synced with Keycloak, including preferences and metadata
+- **Notebook Node** (`notebook.md`) - Hierarchical document collections with permissions
+- **Document Node** (`document.md`) - Individual files with extracted content and metadata
+- **Space Node** (`space.md`) - Top-level isolation boundaries for multi-tenancy
+
+#### Key Relationship Models:
+- **OWNED_BY** (`owned-by.md`) - Ownership relationships between users and resources
+- **MEMBER_OF** (`member-of.md`) - User membership in spaces and teams
+- **BELONGS_TO** (`belongs-to.md`) - Resource containment relationships
+
+#### Cross-Service Integration:
+- **User Onboarding Flow** (`../aether-shared/data-models/cross-service/flows/user-onboarding.md`) - Complete user registration and space setup
+- **Document Upload Flow** (`../aether-shared/data-models/cross-service/flows/document-upload.md`) - Multi-service document processing pipeline
+- **Platform ERD** (`../aether-shared/data-models/cross-service/diagrams/platform-erd.md`) - Complete entity relationship diagram
+
+#### When to Reference Data Models:
+1. Before making schema changes to Neo4j nodes or relationships
+2. When implementing new API endpoints that interact with graph data
+3. When debugging data-related issues or unexpected query behavior
+4. When onboarding new developers to understand the graph structure
+5. Before modifying any properties on existing nodes or relationships
+
+**Main Documentation Hub**: `../aether-shared/data-models/README.md` - Complete navigation for all 38 data model files
+
 ## Architecture
 
 ### Current State
