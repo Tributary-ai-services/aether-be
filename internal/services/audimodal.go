@@ -65,23 +65,56 @@ func NewAudiModalService(baseURL, apiKey string, config *config.AudiModalConfig,
 
 // CreateTenant creates a new tenant in AudiModal
 func (s *AudiModalService) CreateTenant(ctx context.Context, req CreateTenantRequest) (*CreateTenantResponse, error) {
-	// TEMPORARY: Generate unique tenant_<id> for each user while using shared AudiModal backend
-	// TODO: Implement real tenant creation API when AudiModal multi-tenancy is ready
+	// Generate unique UUID for tenant (used across all services for multi-tenancy)
+	// Format: tenant_<UUID> for better readability and identification
+	tenantUUID := uuid.New().String()
+	tenantID := fmt.Sprintf("tenant_%s", tenantUUID)
 
-	// Generate unique tenant ID in tenant_<timestamp> format for proper user isolation
-	tenantID := fmt.Sprintf("tenant_%d", time.Now().Unix())
+	// Prepare request body for AudiModal API (uses the UUID part only)
+	requestBody := map[string]interface{}{
+		"id":           tenantUUID,  // AudiModal expects plain UUID
+		"name":         req.Name,
+		"display_name": req.DisplayName,
+		"billing_plan": req.BillingPlan,
+		"billing_email": req.ContactEmail,
+		"quotas":       req.Quotas,
+		"compliance":   req.Compliance,
+		"contact_info": map[string]string{
+			"admin_email":     req.ContactEmail,
+			"billing_email":   req.ContactEmail,
+			"technical_email": req.ContactEmail,
+			"support_email":   req.ContactEmail,
+		},
+		"status": "active",
+	}
 
-	// The actual AudiModal UUID is stored as audimodal_tenant_id for API calls
-	// This allows each user to have their own tenant_<id>/space_<id> while sharing the backend
-	sharedAudiModalTenant := "9855e094-36a6-4d3a-a4f5-d77da4614439"
+	// Call AudiModal API to create tenant
+	resp, err := s.makeRequest(ctx, http.MethodPost, "/api/v1/tenants", requestBody)
+	if err != nil {
+		s.logger.Error("Failed to create tenant in AudiModal",
+			zap.String("tenant_id", tenantID),
+			zap.String("tenant_uuid", tenantUUID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to create tenant in AudiModal: %w", err)
+	}
+	defer resp.Body.Close()
 
-	s.logger.Info("Created unique tenant ID for user",
+	// Check response status
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		s.logger.Error("AudiModal API returned error",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(bodyBytes)))
+		return nil, fmt.Errorf("AudiModal API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	s.logger.Info("Successfully created tenant in AudiModal",
 		zap.String("tenant_name", req.Name),
 		zap.String("tenant_id", tenantID),
-		zap.String("audimodal_tenant_id", sharedAudiModalTenant))
+		zap.String("tenant_uuid", tenantUUID))
 
 	return &CreateTenantResponse{
-		TenantID: tenantID,  // Return unique tenant_<timestamp> for space isolation
+		TenantID: tenantID,
 		APIKey:   s.apiKey,  // Use the service account API key
 		Status:   "active",
 	}, nil
@@ -363,7 +396,7 @@ type ProcessingOptions struct {
 }
 
 // ProcessFile submits a file to AudiModal for processing
-func (s *AudiModalService) ProcessFile(ctx context.Context, fileData []byte, filename string, mimeType string, documentID string) (*ProcessFileResponse, error) {
+func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fileData []byte, filename string, mimeType string, documentID string) (*ProcessFileResponse, error) {
 	// Create multipart form data
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
