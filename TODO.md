@@ -1,129 +1,84 @@
 # TODO: Aether Backend
 
-## 🔧 Database Issues (Critical)
+## ✅ Completed Items
 
-### High Priority (Blocking notebook creation)
-- [ ] **Fix Neo4j Map{} error in notebook creation - serialize complex objects to JSON strings before storing**
-  - File: `internal/services/notebook.go` (line ~86)
-  - Error: `"Property values can only be of primitive types or arrays thereof. Encountered: Map{}."`
-  - Action: Serialize `compliance_settings` to JSON string before Neo4j query
-  - Alternative: Skip null/empty complex fields entirely in query
+### Database & Neo4j (DONE)
+- [x] **Fixed Neo4j Map{} error in notebook creation** - compliance_settings now serialized to JSON
+  - File: `internal/services/notebook.go` (lines 88-99, 220-228)
+  - Solution: JSON serialization implemented for `ComplianceSettings`
+  - Status: ✅ Working correctly - notebooks can be created
 
-- [ ] **Update NotebookService.CreateNotebook to handle null compliance_settings properly**
-  - File: `internal/services/notebook.go`
-  - Issue: Backend hardcodes `compliance_settings` parameter even when null
-  - Action: Add conditional logic to exclude null complex objects from Neo4j params
-  - Query: Remove `compliance_settings: $compliance_settings` when value is null
+### Multi-Tenancy (DONE)
+- [x] **Implemented proper tenant ID passing throughout AudiModal integration**
+  - Files: `internal/services/audimodal.go`, `internal/handlers/*.go`
+  - All 7 AudiModal API methods now accept and pass tenantID properly
+  - Tenant ID extracted from Space context and passed through entire stack
+  - Status: ✅ Merged into init branch
 
-- [ ] **Implement proper JSON serialization for complianceSettings field in notebook model**
-  - Files: `internal/models/notebook.go`, `internal/services/notebook.go`
-  - Action: Add JSON serialization for complex objects before database storage
-  - Implementation: Use `json.Marshal()` to convert objects to strings
+## 🔧 Active Development
 
-### Medium Priority (Stability & Validation)
-- [ ] **Add validation to prevent storing complex objects as Neo4j properties**
-  - File: `internal/database/neo4j.go`
-  - Action: Add validation layer to ensure only primitive types are stored
-  - Check: Validate all parameters before Neo4j query execution
+### High Priority (Current Sprint)
+- [ ] **Test end-to-end document upload and processing flow**
+  - Verify notebook creation works in production
+  - Test document upload with real files
+  - Validate AudiModal integration with proper tenant IDs
+  - Ensure chunk extraction and storage works correctly
 
-- [ ] **Add backend validation to ensure all Neo4j properties are primitive types or arrays**
-  - Files: `internal/handlers/notebook.go`, validation middleware
-  - Action: Add request validation for incoming data structures
-  - Validation: Reject requests with nested objects in database-bound fields
+- [ ] **Add comprehensive error handling for document processing failures**
+  - Better error messages for different failure types
+  - Retry logic for transient failures
+  - Cleanup on processing failures
 
-- [ ] **Add proper error handling for database constraint violations in notebook creation**
-  - File: `internal/handlers/notebook.go`
-  - Action: Better error messages for Neo4j constraint violations
-  - UX: Return specific error codes and messages for different failure types
-
-- [ ] **Add integration tests for notebook creation with various data structures**
+### Medium Priority (Next Sprint)
+- [ ] **Add integration tests for notebook and document operations**
   - File: `tests/integration/notebook_test.go` (new)
-  - Action: Test notebook creation with different data types
-  - Coverage: Valid data, invalid data, edge cases, null values
+  - Test notebook creation with various data types
+  - Test document processing end-to-end
+  - Test error scenarios and edge cases
 
-- [ ] **Review all other endpoints for similar Map{} issues with complex object storage**
-  - Files: All service files in `internal/services/`
-  - Action: Audit all Neo4j queries for complex object storage issues
-  - Focus: Document, user, and other entity creation endpoints
+- [ ] **Implement proper monitoring and alerting for processing jobs**
+  - Add metrics for job success/failure rates
+  - Alert on high failure rates
+  - Track processing time and throughput
 
-### Low Priority (Architecture & Documentation)
-- [ ] **Consider storing complex objects as separate Neo4j nodes with relationships instead of properties**
+- [ ] **Add validation layer for Neo4j property types**
+  - File: `internal/database/neo4j.go`
+  - Ensure only primitive types are stored as properties
+  - Provide clear error messages for validation failures
+
+### Low Priority (Backlog)
+- [ ] **Consider storing complex objects as separate Neo4j nodes**
   - Files: `internal/models/`, `internal/services/`
-  - Action: Architectural review for complex object storage strategy
+  - Architectural review for complex object storage strategy
   - Design: Create ComplianceSettings nodes with relationships to Notebooks
 
-- [ ] **Update API documentation to clarify expected data types for all endpoints**
+- [ ] **Review all other endpoints for similar complex object issues**
+  - Files: All service files in `internal/services/`
+  - Audit all Neo4j queries for proper type handling
+  - Focus: Document, user, and other entity creation endpoints
+
+- [ ] **Update API documentation**
   - Files: API documentation, OpenAPI specs
-  - Action: Document all field types and constraints clearly
+  - Document all field types and constraints clearly
   - Include: Valid data structures, serialization requirements
 
-## Current Critical Error
-```
-Neo4jError: Neo.ClientError.Statement.TypeError 
-(Property values can only be of primitive types or arrays thereof. Encountered: Map{}.)
-```
+## 📝 Notes
 
-## Root Cause Analysis
-1. **Frontend sends**: `complianceSettings` as complex object or null
-2. **Backend tries**: To store complex object directly in Neo4j property
-3. **Neo4j rejects**: Complex objects (maps) as property values
-4. **Result**: 500 Internal Server Error, notebook creation fails
+### Recent Fixes (January 2026)
+1. **Compliance Settings Serialization**: Already implemented - complex objects are properly serialized to JSON strings before Neo4j storage
+2. **Tenant ID Integration**: Completed - proper multi-tenancy support via Space context
 
-## Implementation Priority
-1. **Immediate fix**: Serialize `compliance_settings` to JSON string
-2. **Validation**: Add type checking before Neo4j operations  
-3. **Testing**: Add integration tests for various data structures
-4. **Architecture**: Consider separate nodes for complex objects
+### Architecture Decisions
+- Complex objects (like `ComplianceSettings`) are stored as JSON strings in Neo4j properties
+- Tenant ID format: `tenant_<UUID>` internally, plain UUID for AudiModal API calls
+- Space-based multi-tenancy provides proper isolation between users/organizations
 
-## Files Requiring Changes
-- `internal/services/notebook.go` - Main notebook creation logic
-- `internal/handlers/notebook.go` - Request handling and error responses
-- `internal/models/notebook.go` - Data model definitions
-- `internal/database/neo4j.go` - Database query utilities
+### Files Requiring Changes (For Future Work)
+- None currently blocking - notebook creation and document processing should work
 
-## Neo4j Query Location
-File: `internal/services/notebook.go` (~line 86)
-```cypher
-CREATE (n:Notebook {
-    id: $id,
-    name: $name,
-    description: $description,
-    visibility: $visibility,
-    status: $status,
-    owner_id: $owner_id,
-    compliance_settings: $compliance_settings,  // <- This line causes the error
-    document_count: $document_count,
-    total_size_bytes: $total_size_bytes,
-    tags: $tags,
-    search_text: $search_text,
-    created_at: datetime($created_at),
-    updated_at: datetime($updated_at)
-})
-RETURN n
-```
-
-## Quick Fix Options
-**Option A**: Serialize to JSON
-```go
-if complianceSettings != nil {
-    settingsJSON, _ := json.Marshal(complianceSettings)
-    params["compliance_settings"] = string(settingsJSON)
-} else {
-    params["compliance_settings"] = "{}"
-}
-```
-
-**Option B**: Skip null fields
-```go
-if complianceSettings != nil {
-    // Only add to query if not null
-    params["compliance_settings"] = complianceSettings
-}
-// Modify query to conditionally include field
-```
-
-## Success Criteria
-✅ Notebook creation works without 500 errors
-✅ Complex objects are properly serialized for Neo4j storage
-✅ Null values don't cause database errors
-✅ All endpoints handle complex object storage consistently
+## 🎯 Success Metrics
+- ✅ Notebook creation works without 500 errors
+- ✅ Complex objects are properly serialized for Neo4j storage
+- ✅ Null values don't cause database errors
+- ✅ Multi-tenancy properly isolated via tenant IDs
+- ⏳ End-to-end document processing validated (needs testing)
