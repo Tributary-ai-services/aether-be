@@ -434,9 +434,9 @@ func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fil
 	}
 	
 	// Create the request - using proper API endpoint with tenant ID
-	// For now, use a default tenant ID that exists in AudiModal
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := s.baseURL + "/api/v1/tenants/" + tenantID + "/files"
+	// Extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := s.baseURL + "/api/v1/tenants/" + tenantUUID + "/files"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -555,9 +555,10 @@ func (s *AudiModalService) submitToAudiModal(ctx context.Context, documentID, jo
 }
 
 // GetFileProcessingStatus fetches real processing status and content from AudiModal
-func (s *AudiModalService) GetFileProcessingStatus(ctx context.Context, fileID string) (*ProcessFileResponse, error) {
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s", s.baseURL, tenantID, fileID)
+func (s *AudiModalService) GetFileProcessingStatus(ctx context.Context, tenantID string, fileID string) (*ProcessFileResponse, error) {
+	// Extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s", s.baseURL, tenantUUID, fileID)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -605,9 +606,10 @@ func (s *AudiModalService) GetFileProcessingStatus(ctx context.Context, fileID s
 }
 
 // GetFileContent fetches the extracted text content from processed files
-func (s *AudiModalService) GetFileContent(ctx context.Context, fileID string) (string, error) {
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks", s.baseURL, tenantID, fileID)
+func (s *AudiModalService) GetFileContent(ctx context.Context, tenantID string, fileID string) (string, error) {
+	// Extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks", s.baseURL, tenantUUID, fileID)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -762,9 +764,10 @@ func (s *AudiModalService) UpdateJobWithProcessedContent(ctx context.Context, jo
 }
 
 // GetFileChunks retrieves all chunks for a processed file
-func (s *AudiModalService) GetFileChunks(ctx context.Context, fileID string, limit, offset int) (*ChunksResponse, error) {
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks", s.baseURL, tenantID, fileID)
+func (s *AudiModalService) GetFileChunks(ctx context.Context, tenantID string, fileID string, limit, offset int) (*ChunksResponse, error) {
+	// Extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks", s.baseURL, tenantUUID, fileID)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -829,9 +832,10 @@ func (s *AudiModalService) GetFileChunks(ctx context.Context, fileID string, lim
 }
 
 // GetChunk retrieves a specific chunk by ID
-func (s *AudiModalService) GetChunk(ctx context.Context, fileID, chunkID string) (*ChunkData, error) {
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks/%s", s.baseURL, tenantID, fileID, chunkID)
+func (s *AudiModalService) GetChunk(ctx context.Context, tenantID string, fileID, chunkID string) (*ChunkData, error) {
+	// Extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks/%s", s.baseURL, tenantUUID, fileID, chunkID)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -934,7 +938,7 @@ func (s *AudiModalService) GetAvailableStrategies(ctx context.Context) (*Strateg
 }
 
 // ProcessFileWithStrategy processes a file using a specific chunking strategy
-func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, fileData []byte, filename string, mimeType string, documentID string, options *ProcessingOptions) (*ProcessFileResponse, error) {
+func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID string, fileData []byte, filename string, mimeType string, documentID string, options *ProcessingOptions) (*ProcessFileResponse, error) {
 	// Create multipart form data
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -1013,9 +1017,9 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, fileData
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 	
-	// Create the request
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := s.baseURL + "/api/v1/tenants/" + tenantID + "/files"
+	// Create the request - extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := s.baseURL + "/api/v1/tenants/" + tenantUUID + "/files"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -1083,9 +1087,10 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, fileData
 }
 
 // ReprocessFileWithStrategy reprocesses an existing file with a different strategy
-func (s *AudiModalService) ReprocessFileWithStrategy(ctx context.Context, fileID string, strategy string, strategyConfig map[string]interface{}) error {
-	tenantID := "9855e094-36a6-4d3a-a4f5-d77da4614439"
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/reprocess", s.baseURL, tenantID, fileID)
+func (s *AudiModalService) ReprocessFileWithStrategy(ctx context.Context, tenantID string, fileID string, strategy string, strategyConfig map[string]interface{}) error {
+	// Extract UUID part from tenant_<UUID> format for AudiModal API
+	tenantUUID := strings.TrimPrefix(tenantID, "tenant_")
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/reprocess", s.baseURL, tenantUUID, fileID)
 	
 	requestBody := map[string]interface{}{
 		"strategy": strategy,
