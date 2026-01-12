@@ -128,7 +128,8 @@ get_user_token() {
         -d "username=$USERNAME" \
         -d "password=$PASSWORD" \
         -d "grant_type=password" \
-        -d "client_id=$CLIENT_ID" 2>&1)
+        -d "client_id=$CLIENT_ID" \
+        -d "scope=openid email profile" 2>&1)
 
     if [ $? -ne 0 ]; then
         log_error "Failed to obtain token"
@@ -142,10 +143,12 @@ get_user_token() {
         exit 1
     fi
 
-    # Check if response contains access_token
-    if ! echo "$response" | grep -q '"access_token"'; then
-        log_error "Response does not contain access_token"
+    # Check if response contains id_token
+    if ! echo "$response" | grep -q '"id_token"'; then
+        log_error "Response does not contain id_token"
         log_error "Response: $response"
+        log_error ""
+        log_error "Note: Make sure the client has 'openid' scope enabled"
         exit 1
     fi
 
@@ -154,7 +157,7 @@ get_user_token() {
 
     # Output based on format
     if [ "$OUTPUT_FORMAT" = "token-only" ]; then
-        echo "$response" | grep -o '"access_token":"[^"]*' | sed 's/"access_token":"//'
+        echo "$response" | grep -o '"id_token":"[^"]*' | sed 's/"id_token":"//'
     else
         echo "$response" | jq -r '.' 2>/dev/null || echo "$response"
     fi

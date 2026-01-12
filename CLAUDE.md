@@ -108,6 +108,90 @@ golangci-lint run
 go mod tidy
 ```
 
+## Logging Implementation
+
+### Structured JSON Logging
+The Aether backend uses structured JSON logging with the zap library, automatically collected by Loki/Alloy for centralized observability.
+
+**Logger Package**: `internal/logger`
+
+```go
+import "github.com/Tributary-ai-services/aether-be/internal/logger"
+
+// Initialize logger
+log := logger.NewLogger(os.Getenv("LOG_LEVEL")) // INFO, DEBUG, WARN, ERROR
+
+// Structured logging with fields
+log.Info("Notebook created",
+  zap.String("user_id", userID),
+  zap.String("notebook_id", notebookID),
+  zap.String("space_id", spaceID),
+)
+
+// Context logger for multiple related log entries
+contextLogger := log.WithContext(
+  zap.String("service", "notebook-service"),
+  zap.String("request_id", requestID),
+)
+contextLogger.Info("Processing started")
+contextLogger.Info("Processing completed")
+```
+
+### Frontend Logging Endpoint
+The backend provides an endpoint to receive logs from the React frontend:
+
+**Handler**: `internal/handlers/logging.go`
+**Route**: `POST /api/v1/logs`
+
+```go
+// Request format
+type LogBatchRequest struct {
+  Logs []FrontendLogEntry `json:"logs"`
+}
+
+type FrontendLogEntry struct {
+  Level      string                 `json:"level"`       // error, warn, info, debug
+  Message    string                 `json:"message"`
+  Timestamp  *time.Time             `json:"timestamp"`
+  URL        string                 `json:"url"`
+  UserAgent  string                 `json:"user_agent"`
+  SessionID  string                 `json:"session_id"`
+  StackTrace string                 `json:"stack_trace,omitempty"`
+  Extra      map[string]interface{} `json:"extra,omitempty"`
+}
+```
+
+Frontend logs are enriched with user context (user_id, tenant_id, space_id from JWT) and logged to stdout with `source="frontend"` label for Loki collection.
+
+### Key Logging Fields
+Include these fields for effective log filtering and analysis:
+- `user_id` - User performing the action
+- `tenant_id` - Tenant identifier for multi-tenant isolation
+- `space_id` - Space identifier for space-based operations
+- `request_id` - Unique request identifier for distributed tracing
+- `trace_id` - OpenTelemetry trace ID (if using distributed tracing)
+- `notebook_id`, `document_id` - Resource identifiers
+
+### Viewing Logs
+```bash
+# Port-forward to Loki
+kubectl port-forward -n tas-shared svc/loki-shared 3100:3100
+
+# Query recent backend logs
+curl 'http://localhost:3100/loki/api/v1/query?query={namespace="aether-be",container="aether-backend"}&limit=20'
+
+# Query frontend logs
+curl 'http://localhost:3100/loki/api/v1/query?query={namespace="aether-be",source="frontend"}&limit=20'
+```
+
+**Grafana Dashboard**: "TAS Applications Logs" - Pre-configured dashboard with log streams, error rates, and filtering by service
+
+### Log Levels
+- `ERROR` - Critical errors requiring immediate attention (e.g., database connection failures, panic recovery)
+- `WARN` - Warning conditions that should be investigated (e.g., deprecated API usage, slow queries)
+- `INFO` - General informational messages (default level, e.g., service started, user actions)
+- `DEBUG` - Detailed debugging information (e.g., request/response payloads, detailed state changes)
+
 ## Key Integration Points
 
 - **Keycloak**: Authentication and user management via go-oidc and gocloak admin client

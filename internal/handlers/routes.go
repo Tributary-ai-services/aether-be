@@ -32,6 +32,7 @@ type APIServer struct {
 	HealthHandler       *HealthHandler
 	StreamHandler       *StreamHandler
 	RouterHandler       *RouterHandler
+	LoggingHandler      *LoggingHandler
 	SpaceService        *services.SpaceContextService
 	Metrics             *metrics.Metrics
 	logger              *logger.Logger
@@ -99,6 +100,7 @@ func NewAPIServer(
 	agentHandler := NewAgentHandler(agentService, userService, teamService, log)
 	streamHandler := NewStreamHandler(streamService, log)
 	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
+	loggingHandler := NewLoggingHandler(log)
 
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
@@ -139,6 +141,7 @@ func NewAPIServer(
 		HealthHandler:       healthHandler,
 		StreamHandler:       streamHandler,
 		RouterHandler:       routerHandler,
+		LoggingHandler:      loggingHandler,
 		SpaceService:        spaceService,
 		Metrics:             metricsInstance,
 		logger:              log.WithService("api_server"),
@@ -163,6 +166,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 	// API routes with authentication
 	api := s.Router.Group("/api/v1")
 	api.Use(middleware.AuthMiddleware(keycloakClient, s.logger))
+
+	// Logging routes - frontend logs sent to backend
+	api.POST("/logs", s.LoggingHandler.SubmitFrontendLogs)
 
 	// User routes
 	users := api.Group("/users")

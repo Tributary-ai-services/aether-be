@@ -951,15 +951,17 @@ func (s *DocumentService) verifyNotebookAccess(ctx context.Context, notebookID, 
 }
 
 func (s *DocumentService) createDocumentRelationships(ctx context.Context, documentID, notebookID, ownerID string, tenantID string, sizeBytes int64) error {
+	// Note: ownerID is the Keycloak ID from JWT, so we match on keycloak_id not id
 	query := `
-		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id}), 
-		      (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}), 
-		      (u:User {id: $owner_id})
+		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id}),
+		      (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}),
+		      (u:User {keycloak_id: $owner_id})
 		CREATE (d)-[:BELONGS_TO]->(n), (d)-[:OWNED_BY]->(u)
-		WITH n, d
+		WITH n, d, u
 		SET n.document_count = COALESCE(n.document_count, 0) + 1,
 		    n.total_size_bytes = COALESCE(n.total_size_bytes, 0) + d.size_bytes,
-		    n.updated_at = datetime()
+		    n.updated_at = datetime(),
+		    d.owner_id = u.id
 	`
 
 	params := map[string]interface{}{
@@ -2275,25 +2277,35 @@ func (s *DocumentService) getDocumentForRetry(ctx context.Context, documentID, t
 	return s.recordToDocument(record)
 }
 
-// deleteDocumentRecord removes a document record from the database (used for cleanup)
+// deleteDocumentRecord removes a document record from the database and decrements notebook counts (used for cleanup)
 func (s *DocumentService) deleteDocumentRecord(ctx context.Context, documentID string) error {
+	// Delete document and decrement notebook counts in a single query
+	// This handles the case where a document is cleaned up after a failed upload
 	query := `
 		MATCH (d:Document {id: $document_id})
+		OPTIONAL MATCH (d)-[:BELONGS_TO]->(n:Notebook)
+		WITH d, n, d.size_bytes as doc_size
+		FOREACH (notebook IN CASE WHEN n IS NOT NULL THEN [n] ELSE [] END |
+			SET notebook.document_count = COALESCE(notebook.document_count, 0) - 1,
+			    notebook.total_size_bytes = COALESCE(notebook.total_size_bytes, 0) - COALESCE(doc_size, 0),
+			    notebook.updated_at = datetime()
+		)
+		WITH d
 		DETACH DELETE d
 	`
-	
+
 	params := map[string]interface{}{
 		"document_id": documentID,
 	}
-	
+
 	_, err := s.neo4j.ExecuteQuery(ctx, query, params)
 	if err != nil {
 		return fmt.Errorf("failed to delete document record: %w", err)
 	}
-	
-	s.logger.Info("Document record deleted from database",
+
+	s.logger.Info("Document record deleted and notebook counts decremented",
 		zap.String("document_id", documentID))
-	
+
 	return nil
 }
 

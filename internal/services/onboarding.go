@@ -73,6 +73,14 @@ func (s *OnboardingService) OnboardNewUser(ctx context.Context, user *models.Use
 		SpaceType: models.SpaceTypePersonal,
 		SpaceID:   user.PersonalSpaceID,
 	}
+
+	s.logger.Info("Resolving personal space for onboarding",
+		zap.String("user_id", user.ID),
+		zap.String("keycloak_id", user.KeycloakID),
+		zap.String("personal_space_id", user.PersonalSpaceID),
+		zap.String("personal_tenant_id", user.PersonalTenantID),
+	)
+
 	// Pass Keycloak ID for space resolution (consistent with space_context.go fix)
 	spaceCtx, err := s.spaceService.ResolveSpaceContext(ctx, user.KeycloakID, spaceReq)
 	if err != nil {

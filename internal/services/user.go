@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -195,6 +196,12 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 
 	// Set personal tenant info on user
 	user.SetPersonalTenantInfo(tenant.TenantID, tenant.APIKey)
+
+	s.logger.Info("Personal tenant info set on user",
+		zap.String("user_id", user.ID),
+		zap.String("personal_tenant_id", user.PersonalTenantID),
+		zap.String("personal_space_id", user.PersonalSpaceID),
+	)
 
 	// Create personal space node in Neo4j (must exist before user node for onboarding)
 	if err := s.createPersonalSpace(ctx, user); err != nil {
@@ -786,6 +793,21 @@ func (s *UserService) recordToUser(record interface{}) (*models.User, error) {
 	}
 	if val, ok := r.Get("u.personal_api_key"); ok && val != nil {
 		user.PersonalAPIKey = val.(string)
+	}
+
+	// Fallback: If personal_space_id is missing but personal_tenant_id exists, derive it
+	// This handles cases where older users don't have personal_space_id populated
+	if user.PersonalSpaceID == "" && user.PersonalTenantID != "" {
+		if strings.HasPrefix(user.PersonalTenantID, "tenant_") {
+			user.PersonalSpaceID = "space_" + user.PersonalTenantID[len("tenant_"):]
+		} else {
+			user.PersonalSpaceID = "space_" + user.PersonalTenantID
+		}
+		s.logger.Info("Derived PersonalSpaceID from PersonalTenantID for user",
+			zap.String("user_id", user.ID),
+			zap.String("personal_tenant_id", user.PersonalTenantID),
+			zap.String("derived_personal_space_id", user.PersonalSpaceID),
+		)
 	}
 
 	// Parse arrays

@@ -79,9 +79,16 @@ func (s *SpaceContextService) resolvePersonalSpace(ctx context.Context, userID, 
 	// Verify the user is accessing their own personal space
 	// Use the pre-computed PersonalSpaceID from the user model (supports both tenant_X and UUID formats)
 	if spaceID != user.PersonalSpaceID {
+		s.logger.Error("Personal space ID mismatch",
+			zap.String("keycloak_id", userID),
+			zap.String("internal_user_id", user.ID),
+			zap.String("requested_space_id", spaceID),
+			zap.String("user_personal_space_id", user.PersonalSpaceID),
+			zap.String("user_personal_tenant_id", user.PersonalTenantID),
+		)
 		return nil, errors.ForbiddenWithDetails("Cannot access another user's personal space", map[string]interface{}{
-			"user_id":          userID,
-			"space_id":         spaceID,
+			"user_id":           userID,
+			"space_id":          spaceID,
 			"expected_space_id": user.PersonalSpaceID,
 		})
 	}
