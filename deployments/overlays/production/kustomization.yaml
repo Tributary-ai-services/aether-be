@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: aether-backend-production
+
+namespace: aether-production
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - network-policy.yaml
+
+patchesStrategicMerge:
+  - config-patch.yaml
+  - secret-patch.yaml
+  - deployment-patch.yaml
+
+commonLabels:
+  environment: production
+
+images:
+  - name: aether-backend
+    newTag: latest

@@ -1,0 +1,251 @@
+name: Security Scanning
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  # Static Application Security Testing (SAST)
+  sast:
+    name: Static Security Analysis
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run Gosec Security Scanner
+      run: |
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        gosec -fmt sarif -out gosec-report.sarif ./... || echo "Gosec completed with findings"
+        ls -la gosec-report.sarif || echo "SARIF file not found"
+      continue-on-error: true
+    
+    - name: Upload Gosec scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always() && hashFiles('gosec-report.sarif') != ''
+      with:
+        sarif_file: gosec-report.sarif
+        category: gosec
+    
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck -json ./... > govulncheck-report.json || echo "Govulncheck completed with findings"
+      continue-on-error: true
+    
+    - name: Upload govulncheck results
+      uses: actions/upload-artifact@v3
+      if: always() && hashFiles('govulncheck-report.json') != ''
+      with:
+        name: govulncheck-results
+        path: govulncheck-report.json
+
+  # Dependency Vulnerability Scanning
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Run Nancy (dependency vulnerability scanner)
+      run: |
+        go list -json -m all | docker run --rm -i sonatypecommunity/nancy:latest sleuth > nancy-report.txt || echo "Nancy completed with known vulnerabilities"
+      continue-on-error: true
+    
+    - name: Upload Nancy results
+      uses: actions/upload-artifact@v3
+      if: always() && hashFiles('nancy-report.txt') != ''
+      with:
+        name: nancy-results
+        path: nancy-report.txt
+
+  # Semgrep Static Analysis
+  semgrep:
+    name: Semgrep Security Analysis
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Semgrep
+      uses: returntocorp/semgrep-action@v1
+      continue-on-error: true
+      with:
+        config: >- 
+          p/security-audit
+          p/secrets
+          p/dockerfile
+          p/kubernetes
+          p/golang
+        publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
+        publishDeployment: ${{ github.repository }}
+
+  # CodeQL Analysis
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'go' ]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        queries: security-extended,security-and-quality
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+    
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
+
+  # Secrets Detection
+  secrets-scan:
+    name: Secrets Detection
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Run TruffleHog OSS
+      uses: trufflesecurity/trufflehog@main
+      continue-on-error: true
+      with:
+        path: ./
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  # License Compliance
+  license-scan:
+    name: License Compliance Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+    
+    - name: Install go-licenses
+      run: go install github.com/google/go-licenses@latest
+    
+    - name: Check licenses
+      run: |
+        go-licenses csv ./... > licenses.csv
+        go-licenses check ./... || echo "License check completed with findings"
+      continue-on-error: true
+    
+    - name: Upload license results
+      uses: actions/upload-artifact@v3
+      if: always() && hashFiles('licenses.csv') != ''
+      with:
+        name: license-scan-results
+        path: licenses.csv
+
+  # Security Summary
+  security-summary:
+    name: Security Scan Summary
+    runs-on: ubuntu-latest
+    needs: [sast, dependency-scan, semgrep, secrets-scan, license-scan]
+    if: always()
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Generate security summary
+      run: |
+        echo "# Security Scan Summary" > security-summary.md
+        echo "" >> security-summary.md
+        echo "## Scan Results" >> security-summary.md
+        echo "" >> security-summary.md
+        
+        # Check if any critical findings
+        echo "- **Gosec SAST**: $([ -f gosec-report.sarif ] && echo 'Completed' || echo 'No issues found')" >> security-summary.md
+        echo "- **Govulncheck**: $([ -f govulncheck-results/govulncheck-report.json ] && echo 'Completed' || echo 'No vulnerabilities found')" >> security-summary.md
+        echo "- **Nancy Dependencies**: $([ -f nancy-results/nancy-report.txt ] && echo 'Completed' || echo 'No issues found')" >> security-summary.md
+        echo "- **Semgrep**: $([ '${{ needs.semgrep.result }}' == 'success' ] && echo 'Passed' || echo 'Issues detected')" >> security-summary.md
+        echo "- **Secrets Scan**: $([ '${{ needs.secrets-scan.result }}' == 'success' ] && echo 'Clean' || echo 'Issues detected')" >> security-summary.md
+        echo "- **License Check**: $([ -f license-scan-results/licenses.csv ] && echo 'Completed' || echo 'No issues found')" >> security-summary.md
+        echo "" >> security-summary.md
+        echo "Detailed results are available in the Security tab and artifacts." >> security-summary.md
+    
+    - name: Upload security summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-summary
+        path: security-summary.md

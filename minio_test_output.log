@@ -1,0 +1,28 @@
+=== MinIO Standalone Tests ===
+
+1. Creating bucket: aether-1234567890
+   ✓ Bucket already exists: aether-1234567890
+
+2. Uploading file with path: spaces/personal/notebooks/notebook_123/documents/doc_456/test-file.pdf
+   ✓ File uploaded successfully
+
+3. Listing files in notebook folder
+   - spaces/personal/notebooks/notebook_123/documents/doc_456/test-file.pdf (size: 55 bytes)
+   ✓ Found 1 files
+
+4. Updating file content
+   ✓ File updated successfully
+
+5. Downloading file to verify update
+   ✓ File content verified - update successful
+
+6. Deleting file
+   ✓ File deleted successfully
+
+7. Verifying file deletion
+   ✓ File confirmed deleted
+
+8. Cleanup (keeping bucket for future tests)
+   ℹ Bucket aether-1234567890 retained for future testing
+
+=== All MinIO tests completed successfully! ===

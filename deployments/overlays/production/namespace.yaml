@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aether-production
+  labels:
+    name: aether-production
+    environment: production

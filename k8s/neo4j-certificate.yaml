@@ -1,0 +1,16 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: neo4j-bolt-tls
+  namespace: aether-be
+spec:
+  secretName: neo4j-bolt-tls
+  issuerRef:
+    name: tas-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+  - neo4j.tas.scharber.com
+  - neo4j.aether-be.svc.cluster.local
+  - 192.168.68.240
+  ipAddresses:
+  - 192.168.68.240

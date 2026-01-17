@@ -1,0 +1,116 @@
+apiVersion: skaffold/v4beta7
+kind: Config
+metadata:
+  name: aether-backend
+
+build:
+  artifacts:
+    - image: aether-backend
+      docker:
+        dockerfile: Dockerfile
+        buildArgs:
+          GO_VERSION: "1.21"
+  tagPolicy:
+    sha256: {}
+
+manifests:
+  kustomize:
+    paths:
+      - deployments/overlays/dev
+
+deploy:
+  kubectl: {}
+
+profiles:
+  # Local development profile
+  - name: local
+    activation:
+      - command: dev
+    build:
+      artifacts:
+        - image: aether-backend
+          docker:
+            dockerfile: Dockerfile
+          sync:
+            manual:
+              - src: "**/*.go"
+                dest: "/app"
+    manifests:
+      kustomize:
+        paths:
+          - deployments/overlays/dev
+    deploy:
+      kubectl:
+        defaultNamespace: aether-dev
+
+  # Docker Compose profile for local development
+  - name: docker-compose
+    activation:
+      - command: run
+        env: SKAFFOLD_PROFILE=docker-compose
+    deploy:
+      docker:
+        compose:
+          file: docker-compose.yml
+
+  # Development profile for k3s
+  - name: dev
+    manifests:
+      kustomize:
+        paths:
+          - deployments/overlays/dev
+    deploy:
+      kubectl:
+        defaultNamespace: aether-dev
+
+  # Staging profile
+  - name: staging
+    manifests:
+      kustomize:
+        paths:
+          - deployments/overlays/staging
+    deploy:
+      kubectl:
+        defaultNamespace: aether-staging
+
+  # Testing profile
+  - name: testing
+    manifests:
+      kustomize:
+        paths:
+          - deployments/overlays/testing
+    deploy:
+      kubectl:
+        defaultNamespace: aether-testing
+
+  # Production profile
+  - name: production
+    manifests:
+      kustomize:
+        paths:
+          - deployments/overlays/production
+    deploy:
+      kubectl:
+        defaultNamespace: aether-production
+
+portForward:
+  - resourceType: service
+    resourceName: aether-backend
+    port: 8080
+    localPort: 8080
+  - resourceType: service
+    resourceName: neo4j
+    port: 7474
+    localPort: 7474
+  - resourceType: service
+    resourceName: neo4j
+    port: 7687
+    localPort: 7687
+  - resourceType: service
+    resourceName: redis
+    port: 6379
+    localPort: 6379
+  - resourceType: service
+    resourceName: keycloak
+    port: 8080
+    localPort: 8081

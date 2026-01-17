@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: aether-backend-dev
+
+namespace: aether-dev
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - ingress.yaml
+
+patchesStrategicMerge:
+  - config-patch.yaml
+  - secret-patch.yaml
+  - deployment-patch.yaml
+
+commonLabels:
+  environment: dev
+
+images:
+  - name: aether-backend
+    newTag: dev

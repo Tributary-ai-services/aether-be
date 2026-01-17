@@ -1,0 +1,173 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deeplake-api
+  namespace: aether-be
+  labels:
+    app: deeplake-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deeplake-api
+  template:
+    metadata:
+      labels:
+        app: deeplake-api
+    spec:
+      containers:
+      - name: deeplake-api
+        image: registry-api.tas.scharber.com/deeplake-api:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: grpc
+          containerPort: 50051
+          protocol: TCP
+        - name: metrics
+          containerPort: 9091
+          protocol: TCP
+        env:
+        # Deep Lake Configuration
+        - name: DEEPLAKE_STORAGE_LOCATION
+          value: "/app/data/vectors"
+
+        # HTTP Server Configuration
+        - name: HTTP_HOST
+          value: "0.0.0.0"
+        - name: HTTP_PORT
+          value: "8000"
+        - name: HTTP_WORKERS
+          value: "1"
+
+        # gRPC Server Configuration
+        - name: GRPC_HOST
+          value: "0.0.0.0"
+        - name: GRPC_PORT
+          value: "50051"
+        - name: GRPC_MAX_WORKERS
+          value: "10"
+
+        # Authentication (using same secret as backend)
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aether-backend-secret
+              key: jwt-secret
+        - name: JWT_ALGORITHM
+          value: "HS256"
+        - name: JWT_EXPIRATION_HOURS
+          value: "24"
+
+        # Redis Configuration (shared service)
+        - name: REDIS_URL
+          value: "redis://redis-shared.tas-shared:6379/0"
+        - name: REDIS_TTL_SECONDS
+          value: "3600"
+
+        # Monitoring
+        - name: MONITORING_ENABLE_METRICS
+          value: "true"
+        - name: MONITORING_METRICS_PORT
+          value: "9091"
+        - name: MONITORING_LOG_LEVEL
+          value: "INFO"
+        - name: MONITORING_LOG_FORMAT
+          value: "json"
+
+        # Performance
+        - name: PERFORMANCE_MAX_VECTOR_BATCH_SIZE
+          value: "1000"
+        - name: PERFORMANCE_DEFAULT_SEARCH_TIMEOUT
+          value: "30"
+        - name: PERFORMANCE_MAX_CONCURRENT_SEARCHES
+          value: "50"
+
+        # Development
+        - name: DEV_DEBUG
+          value: "false"
+        - name: DEV_RELOAD
+          value: "false"
+
+        # Embedding Configuration - Use OpenAI for text-to-vector conversion
+        - name: EMBEDDING_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openai-secret
+              key: OPENAI_API_KEY
+        - name: EMBEDDING_OPENAI_MODEL
+          value: "text-embedding-ada-002"
+
+        volumeMounts:
+        - name: deeplake-data
+          mountPath: /app/data
+        - name: deeplake-logs
+          mountPath: /app/logs
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+      volumes:
+      - name: deeplake-data
+        persistentVolumeClaim:
+          claimName: deeplake-data-pvc
+      - name: deeplake-logs
+        emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: deeplake-data-pvc
+  namespace: aether-be
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deeplake-api
+  namespace: aether-be
+  labels:
+    app: deeplake-api
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  - port: 50051
+    targetPort: 50051
+    protocol: TCP
+    name: grpc
+  - port: 9091
+    targetPort: 9091
+    protocol: TCP
+    name: metrics
+  selector:
+    app: deeplake-api
+  type: ClusterIP
