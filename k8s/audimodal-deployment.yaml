@@ -51,6 +51,9 @@ spec:
           value: "audimodal"
         - name: DB_AUTO_MIGRATE
           value: "true"
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data/storage
         resources:
           requests:
             memory: "256Mi"
@@ -70,6 +73,25 @@ spec:
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: audimodal-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audimodal-storage
+  namespace: aether-be
+  labels:
+    app: audimodal
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-path
 ---
 apiVersion: v1
 kind: Service

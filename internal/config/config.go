@@ -121,12 +121,13 @@ type EmbeddingConfig struct {
 
 // DeepLakeConfig holds DeepLake vector storage configuration
 type DeepLakeConfig struct {
-	BaseURL          string
-	APIKey           string
-	CollectionName   string
-	VectorDimensions int
-	TimeoutSeconds   int
-	Enabled          bool
+	BaseURL           string
+	APIKey            string
+	CollectionName    string
+	VectorDimensions  int
+	TimeoutSeconds    int
+	Enabled           bool
+	UseDefaultDataset bool // Feature flag: use "default" dataset instead of notebook-specific datasets
 }
 
 // OpenAIConfig holds OpenAI API configuration
@@ -268,12 +269,13 @@ func Load() (*Config, error) {
 			Enabled:            getEnvBool("EMBEDDING_ENABLED", true),
 		},
 		DeepLake: DeepLakeConfig{
-			BaseURL:          getEnv("DEEPLAKE_BASE_URL", "http://localhost:8000"),
-			APIKey:           getEnv("DEEPLAKE_API_KEY", ""),
-			CollectionName:   getEnv("DEEPLAKE_COLLECTION_NAME", "aether_embeddings"),
-			VectorDimensions: getEnvInt("DEEPLAKE_VECTOR_DIMENSIONS", 1536),
-			TimeoutSeconds:   getEnvInt("DEEPLAKE_TIMEOUT_SECONDS", 30),
-			Enabled:          getEnvBool("DEEPLAKE_ENABLED", true),
+			BaseURL:           getEnv("DEEPLAKE_BASE_URL", "http://localhost:8000"),
+			APIKey:            getEnv("DEEPLAKE_API_KEY", ""),
+			CollectionName:    getEnv("DEEPLAKE_COLLECTION_NAME", "aether_embeddings"),
+			VectorDimensions:  getEnvInt("DEEPLAKE_VECTOR_DIMENSIONS", 1536),
+			TimeoutSeconds:    getEnvInt("DEEPLAKE_TIMEOUT_SECONDS", 30),
+			Enabled:           getEnvBool("DEEPLAKE_ENABLED", true),
+			UseDefaultDataset: getEnvBool("DEEPLAKE_USE_DEFAULT_DATASET", true),
 		},
 		OpenAI: OpenAIConfig{
 			APIKey:         getEnv("OPENAI_API_KEY", ""),

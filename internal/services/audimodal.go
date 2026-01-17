@@ -1703,3 +1703,79 @@ func getContentCategory(contentType string) string {
 		return "document"
 	}
 }
+
+// MLAnalysisSummary represents the ML analysis summary from AudiModal
+type MLAnalysisSummary struct {
+	DocumentID        string   `json:"document_id"`
+	TotalChunks       int      `json:"total_chunks"`
+	AvgConfidence     float64  `json:"avg_confidence"`
+	DominantSentiment string   `json:"dominant_sentiment"`
+	MainTopics        []string `json:"main_topics"`
+	KeyEntities       []string `json:"key_entities"`
+	ProcessingTimeMs  int64    `json:"processing_time_ms"`
+	Timestamp         string   `json:"timestamp"`
+}
+
+// GetMLAnalysisSummary fetches the ML analysis summary for a document from AudiModal
+func (s *AudiModalService) GetMLAnalysisSummary(ctx context.Context, tenantID string, documentID string) (*MLAnalysisSummary, error) {
+	// Resolve the Aether tenant ID to an AudiModal UUID
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/ml-analysis/documents/%s/summary", s.baseURL, tenantUUID, documentID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	apiKey := s.apiKey
+	if apiKey == "" {
+		apiKey = "default-api-key"
+	}
+	req.Header.Set("X-API-Key", apiKey)
+
+	s.logger.Info("Fetching ML analysis summary from AudiModal",
+		zap.String("tenant_uuid", tenantUUID),
+		zap.String("document_id", documentID))
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ML analysis summary from AudiModal: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Warn("AudiModal ML analysis summary fetch failed",
+			zap.String("document_id", documentID),
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(body)))
+		return nil, fmt.Errorf("AudiModal ML analysis summary fetch failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var response struct {
+		Success bool             `json:"success"`
+		Data    MLAnalysisSummary `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse AudiModal ML analysis response: %w", err)
+	}
+
+	s.logger.Info("Retrieved ML analysis summary from AudiModal",
+		zap.String("document_id", documentID),
+		zap.Int("total_chunks", response.Data.TotalChunks),
+		zap.Float64("avg_confidence", response.Data.AvgConfidence))
+
+	return &response.Data, nil
+}

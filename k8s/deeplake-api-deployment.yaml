@@ -91,6 +91,15 @@ spec:
         - name: DEV_RELOAD
           value: "false"
 
+        # Embedding Configuration - Use OpenAI for text-to-vector conversion
+        - name: EMBEDDING_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openai-secret
+              key: OPENAI_API_KEY
+        - name: EMBEDDING_OPENAI_MODEL
+          value: "text-embedding-ada-002"
+
         volumeMounts:
         - name: deeplake-data
           mountPath: /app/data

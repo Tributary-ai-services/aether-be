@@ -20,15 +20,17 @@ import (
 
 // DocumentHandler handles document-related HTTP requests
 type DocumentHandler struct {
-	documentService *services.DocumentService
-	logger          *logger.Logger
+	documentService   *services.DocumentService
+	audiModalService  *services.AudiModalService
+	logger            *logger.Logger
 }
 
 // NewDocumentHandler creates a new document handler
-func NewDocumentHandler(documentService *services.DocumentService, log *logger.Logger) *DocumentHandler {
+func NewDocumentHandler(documentService *services.DocumentService, audiModalService *services.AudiModalService, log *logger.Logger) *DocumentHandler {
 	return &DocumentHandler{
-		documentService: documentService,
-		logger:          log.WithService("document_handler"),
+		documentService:  documentService,
+		audiModalService: audiModalService,
+		logger:           log.WithService("document_handler"),
 	}
 }
 
@@ -273,19 +275,11 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/documents/upload-base64 [post]
 func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
-	h.logger.Info("=== BASE64 UPLOAD HANDLER START ===", 
-		zap.String("method", c.Request.Method),
-		zap.String("path", c.Request.URL.Path),
-		zap.String("content_type", c.Request.Header.Get("Content-Type")))
-	
 	userID := getUserID(c)
 	if userID == "" {
-		h.logger.Error("Upload failed: User not authenticated")
 		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
 		return
 	}
-	
-	h.logger.Info("Processing base64 upload for user", zap.String("user_id", userID))
 
 	var req models.DocumentBase64UploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -293,8 +287,9 @@ func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request format", err))
 		return
 	}
-	
-	h.logger.Info("Base64 request parsed", 
+
+	h.logger.Info("Base64 upload request received",
+		zap.String("user_id", userID),
 		zap.String("notebook_id", req.NotebookID),
 		zap.String("file_name", req.FileName),
 		zap.String("mime_type", req.MimeType),
@@ -307,8 +302,6 @@ func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.Validation("Invalid base64 content", err))
 		return
 	}
-	
-	h.logger.Info("Base64 content decoded", zap.Int("file_size_bytes", len(fileData)))
 
 	// Check file size (100MB limit)
 	const maxFileSize = 100 << 20 // 100MB
@@ -333,7 +326,7 @@ func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
 		},
 		FileData: fileData,
 	}
-	
+
 	// Create file info with proper MIME type from frontend
 	fileInfo := models.FileInfo{
 		OriginalName: req.FileName,
@@ -343,43 +336,31 @@ func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
 	}
 
 	// Validate request
-	h.logger.Info("About to validate request struct")
 	if err := validateStruct(&uploadReq.DocumentCreateRequest); err != nil {
-		h.logger.Error("Struct validation failed", zap.Error(err))
+		h.logger.Error("Validation failed", zap.Error(err))
 		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
 		return
 	}
-	h.logger.Info("Request struct validation passed")
 
 	// Get space context
-	h.logger.Info("Getting space context...")
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		h.logger.Error("Failed to get space context", zap.Error(err))
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
 		return
 	}
-	h.logger.Info("Space context retrieved", 
-		zap.String("space_type", string(spaceContext.SpaceType)),
-		zap.String("space_id", spaceContext.SpaceID),
-		zap.String("tenant_id", spaceContext.TenantID))
 
-	h.logger.Info("Starting document upload", 
-		zap.String("user_id", userID),
-		zap.String("notebook_id", uploadReq.NotebookID),
-		zap.String("filename", uploadReq.Name))
-	
-	h.logger.Info("About to call documentService.UploadDocument")
 	document, err := h.documentService.UploadDocument(c.Request.Context(), uploadReq, userID, spaceContext, fileInfo)
-	h.logger.Info("documentService.UploadDocument call completed", zap.Bool("has_error", err != nil))
 	if err != nil {
 		h.logger.Error("Failed to upload document", zap.Error(err))
 		handleServiceError(c, err)
 		return
 	}
-	
-	h.logger.Info("Document upload completed successfully", 
-		zap.String("document_id", document.ID))
+
+	h.logger.Info("Document uploaded successfully",
+		zap.String("document_id", document.ID),
+		zap.String("file_name", req.FileName),
+		zap.Int64("size_bytes", int64(len(fileData))))
 
 	c.JSON(http.StatusCreated, document.ToResponse())
 }
@@ -1001,11 +982,215 @@ func (h *DocumentHandler) AudiModalProcessingWebhook(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Successfully processed AudiModal webhook", 
+	h.logger.Info("Successfully processed AudiModal webhook",
 		zap.String("file_id", payload.FileID))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Webhook processed successfully",
 		"file_id": payload.FileID,
+	})
+}
+
+// GetDocumentAnalysis retrieves ML analysis summary for a document from AudiModal
+// @Summary Get document ML analysis
+// @Description Get ML analysis summary (entities, sentiment, topics) for a document
+// @Tags documents
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Document ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/documents/{id}/analysis [get]
+func (h *DocumentHandler) GetDocumentAnalysis(c *gin.Context) {
+	documentID := c.Param("id")
+	if documentID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Document ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Verify document exists and user has access
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get document for analysis", zap.String("document_id", documentID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Check if audiModal service is available
+	if h.audiModalService == nil {
+		h.logger.Warn("AudiModal service not available for ML analysis")
+		c.JSON(http.StatusServiceUnavailable, errors.ExternalService("ML analysis service not available", nil))
+		return
+	}
+
+	// Get audimodal file ID - try multiple sources in order of preference:
+	// 1. processing_result["audimodal_file_id"] (synced via Kafka after processing)
+	// 2. processing_job_id (set during initial upload to audimodal)
+	// 3. document ID (fallback - won't work but gives clear error)
+	fileID := documentID
+
+	// Debug: log what we have from the document
+	h.logger.Debug("Document processing info",
+		zap.String("document_id", documentID),
+		zap.String("processing_job_id", document.ProcessingJobID),
+		zap.Bool("has_processing_result", document.ProcessingResult != nil),
+		zap.Int("processing_result_len", len(document.ProcessingResult)))
+
+	if document.ProcessingResult != nil {
+		if audimodalFileID, ok := document.ProcessingResult["audimodal_file_id"].(string); ok && audimodalFileID != "" {
+			fileID = audimodalFileID
+			h.logger.Debug("Using audimodal_file_id from processing result",
+				zap.String("document_id", documentID),
+				zap.String("audimodal_file_id", fileID))
+		} else {
+			h.logger.Debug("audimodal_file_id not found in processing_result",
+				zap.String("document_id", documentID),
+				zap.Any("processing_result_keys", getMapKeys(document.ProcessingResult)))
+		}
+	}
+	// If not found in processing_result, try processing_job_id (set during upload)
+	if fileID == documentID && document.ProcessingJobID != "" {
+		fileID = document.ProcessingJobID
+		h.logger.Debug("Using processing_job_id as audimodal file ID",
+			zap.String("document_id", documentID),
+			zap.String("audimodal_file_id", fileID))
+	}
+
+	h.logger.Info("Fetching ML analysis for document",
+		zap.String("document_id", documentID),
+		zap.String("file_id", fileID),
+		zap.String("tenant_id", spaceContext.TenantID))
+
+	// Fetch ML analysis summary from AudiModal
+	analysis, err := h.audiModalService.GetMLAnalysisSummary(c.Request.Context(), spaceContext.TenantID, fileID)
+	if err != nil {
+		h.logger.Error("Failed to get ML analysis from AudiModal",
+			zap.String("document_id", documentID),
+			zap.String("file_id", fileID),
+			zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve ML analysis"))
+		return
+	}
+
+	h.logger.Info("Successfully retrieved ML analysis",
+		zap.String("document_id", documentID),
+		zap.Int("total_chunks", analysis.TotalChunks),
+		zap.Float64("avg_confidence", analysis.AvgConfidence))
+
+	c.JSON(http.StatusOK, gin.H{
+		"document_id": documentID,
+		"analysis":    analysis,
+	})
+}
+
+// getMapKeys returns the keys of a map for debugging purposes
+func getMapKeys(m map[string]interface{}) []string {
+	if m == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// GetDocumentExtractedText fetches the extracted text content from audimodal
+// @Summary Get extracted text for a document
+// @Description Fetches the extracted text content from audimodal's processed chunks
+// @Tags documents
+// @Accept json
+// @Produce json
+// @Param id path string true "Document ID"
+// @Success 200 {object} map[string]interface{} "Extracted text"
+// @Failure 404 {object} errors.Error "Document not found"
+// @Failure 500 {object} errors.Error "Internal server error"
+// @Router /documents/{id}/text [get]
+func (h *DocumentHandler) GetDocumentExtractedText(c *gin.Context) {
+	documentID := c.Param("id")
+
+	// Get space context
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		h.logger.Error("Failed to get space context", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	// Get document to verify access and get audimodal file ID
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID.(string), spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get document",
+			zap.String("document_id", documentID),
+			zap.Error(err))
+		c.JSON(http.StatusNotFound, errors.NotFound("Document not found"))
+		return
+	}
+
+	// Check if audimodal service is available
+	if h.audiModalService == nil {
+		h.logger.Warn("AudiModal service not configured")
+		c.JSON(http.StatusServiceUnavailable, errors.ExternalService("Text extraction service not available", nil))
+		return
+	}
+
+	// Get audimodal file ID from processing_result or processing_job_id
+	fileID := documentID
+	if document.ProcessingResult != nil {
+		if audimodalFileID, ok := document.ProcessingResult["audimodal_file_id"].(string); ok && audimodalFileID != "" {
+			fileID = audimodalFileID
+		}
+	}
+	if fileID == documentID && document.ProcessingJobID != "" {
+		fileID = document.ProcessingJobID
+	}
+
+	h.logger.Info("Fetching extracted text for document",
+		zap.String("document_id", documentID),
+		zap.String("file_id", fileID),
+		zap.String("tenant_id", spaceContext.TenantID))
+
+	// Fetch extracted text from AudiModal
+	extractedText, err := h.audiModalService.GetFileContent(c.Request.Context(), spaceContext.TenantID, fileID)
+	if err != nil {
+		h.logger.Error("Failed to get extracted text from AudiModal",
+			zap.String("document_id", documentID),
+			zap.String("file_id", fileID),
+			zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to retrieve extracted text"))
+		return
+	}
+
+	h.logger.Info("Successfully retrieved extracted text",
+		zap.String("document_id", documentID),
+		zap.Int("text_length", len(extractedText)))
+
+	c.JSON(http.StatusOK, gin.H{
+		"document_id":    documentID,
+		"extracted_text": extractedText,
+		"text_length":    len(extractedText),
 	})
 }

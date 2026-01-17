@@ -18,7 +18,21 @@ import (
 
 // ValidationMiddleware creates a middleware that validates and sanitizes request bodies
 func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
+	// Endpoints that should skip sanitization (e.g., file uploads with base64 content)
+	skipSanitizationPaths := []string{
+		"/api/v1/documents/upload-base64",
+		"/api/v1/documents/upload",
+	}
+
 	return func(c *gin.Context) {
+		// Skip sanitization for file upload endpoints
+		for _, path := range skipSanitizationPaths {
+			if strings.HasPrefix(c.Request.URL.Path, path) {
+				c.Next()
+				return
+			}
+		}
+
 		// Only process JSON requests
 		if !strings.Contains(c.GetHeader("Content-Type"), "application/json") {
 			c.Next()

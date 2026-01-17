@@ -483,9 +483,20 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string,
 		return err
 	}
 
-	// Check if user can delete document (must be owner)
-	if document.OwnerID != userID {
-		return errors.Forbidden("Only document owner can delete document")
+	// Check if user can delete document
+	// User can delete if:
+	// 1. They are the document owner, OR
+	// 2. They have space-level delete permission (owner/admin role or explicit "delete" permission)
+	canDelete := document.OwnerID == userID || spaceCtx.CanDelete()
+	if !canDelete {
+		s.logger.Warn("Delete permission denied",
+			zap.String("document_id", documentID),
+			zap.String("document_owner_id", document.OwnerID),
+			zap.String("requesting_user_id", userID),
+			zap.String("user_role", spaceCtx.UserRole),
+			zap.Strings("permissions", spaceCtx.Permissions),
+		)
+		return errors.Forbidden("You don't have permission to delete this document")
 	}
 
 	// Soft delete: update status to deleted and update notebook counts
@@ -888,11 +899,19 @@ func (s *DocumentService) updateProcessingResultWithTenant(ctx context.Context, 
 		}
 	}
 
+	// Serialize result map to JSON string for Neo4j storage
+	resultJSON := ""
+	if result != nil {
+		if jsonBytes, err := json.Marshal(result); err == nil {
+			resultJSON = string(jsonBytes)
+		}
+	}
+
 	params := map[string]interface{}{
 		"document_id":    documentID,
 		"tenant_id":      tenantID,
 		"status":         status,
-		"result":         result,
+		"result":         resultJSON,
 		"extracted_text": extractedText,
 		"search_text":    searchText,
 		"processed_at":   time.Now().Format(time.RFC3339),
@@ -1479,6 +1498,30 @@ func (s *DocumentService) recordToDocument(record interface{}) (*models.Document
 	if val, ok := r.Get("d.processed_at"); ok && val != nil {
 		if t, ok := val.(time.Time); ok {
 			document.ProcessedAt = &t
+		}
+	}
+
+	// Extract processing_job_id
+	if val, ok := r.Get("d.processing_job_id"); ok && val != nil {
+		if jobID, ok := val.(string); ok {
+			document.ProcessingJobID = jobID
+		}
+	}
+
+	// Extract processing_result - stored as JSON string in Neo4j
+	if val, ok := r.Get("d.processing_result"); ok && val != nil {
+		switch v := val.(type) {
+		case string:
+			// Processing result is stored as a JSON string - unmarshal it
+			if v != "" {
+				var result map[string]interface{}
+				if err := json.Unmarshal([]byte(v), &result); err == nil {
+					document.ProcessingResult = result
+				}
+			}
+		case map[string]interface{}:
+			// Already a map (Neo4j might return it this way in some cases)
+			document.ProcessingResult = v
 		}
 	}
 
@@ -2315,4 +2358,171 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// FindDocumentByURL finds a document by its URL within a tenant
+// This is used by event handlers that receive processing events from external services
+func (s *DocumentService) FindDocumentByURL(ctx context.Context, url, tenantID string) (*models.Document, error) {
+	// First try exact match by URL/path within the tenant
+	query := `
+		MATCH (d:Document {tenant_id: $tenant_id})
+		WHERE d.url = $url OR d.storage_path = $url OR d.file_path = $url
+		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
+		       d.mime_type, d.size_bytes, d.checksum, d.storage_path, d.storage_bucket,
+		       d.extracted_text, d.processing_result, d.processing_time, d.confidence_score, d.metadata, d.notebook_id, d.owner_id,
+		       d.space_type, d.space_id, d.tenant_id,
+		       d.tags, d.processed_at, d.created_at, d.updated_at
+		LIMIT 1
+	`
+
+	params := map[string]interface{}{
+		"tenant_id": tenantID,
+		"url":       url,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to find document by URL",
+			zap.String("url", url),
+			zap.String("tenant_id", tenantID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to find document: %w", err)
+	}
+
+	if len(result.Records) > 0 {
+		document, err := s.recordToDocument(result.Records[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse document: %w", err)
+		}
+		return document, nil
+	}
+
+	// Fallback: try to find by filename across all tenants (for cross-tenant sync scenarios)
+	// Extract filename from URL or path
+	filename := extractFilenameFromPath(url)
+	if filename == "" {
+		return nil, nil
+	}
+
+	s.logger.Debug("Trying fallback filename lookup",
+		zap.String("filename", filename),
+		zap.String("original_url", url))
+
+	fallbackQuery := `
+		MATCH (d:Document)
+		WHERE d.name = $filename
+		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
+		       d.mime_type, d.size_bytes, d.checksum, d.storage_path, d.storage_bucket,
+		       d.extracted_text, d.processing_result, d.processing_time, d.confidence_score, d.metadata, d.notebook_id, d.owner_id,
+		       d.space_type, d.space_id, d.tenant_id,
+		       d.tags, d.processed_at, d.created_at, d.updated_at
+		ORDER BY d.updated_at DESC
+		LIMIT 1
+	`
+
+	fallbackParams := map[string]interface{}{
+		"filename": filename,
+	}
+
+	result, err = s.neo4j.ExecuteQueryWithLogging(ctx, fallbackQuery, fallbackParams)
+	if err != nil {
+		s.logger.Error("Failed to find document by filename fallback",
+			zap.String("filename", filename),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to find document: %w", err)
+	}
+
+	if len(result.Records) == 0 {
+		return nil, nil
+	}
+
+	document, err := s.recordToDocument(result.Records[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse document: %w", err)
+	}
+
+	return document, nil
+}
+
+// FindDocumentByAudiModalFileID finds a document by its audimodal file ID (processing_job_id)
+// This provides reliable matching for Kafka events that contain the audimodal file UUID
+func (s *DocumentService) FindDocumentByAudiModalFileID(ctx context.Context, audimodalFileID, tenantID string) (*models.Document, error) {
+	if audimodalFileID == "" {
+		return nil, nil
+	}
+
+	s.logger.Debug("Looking up document by audimodal file ID",
+		zap.String("audimodal_file_id", audimodalFileID),
+		zap.String("tenant_id", tenantID))
+
+	// Query by processing_job_id which stores the audimodal file ID
+	query := `
+		MATCH (d:Document)
+		WHERE d.processing_job_id = $audimodal_file_id
+		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
+		       d.mime_type, d.size_bytes, d.checksum, d.storage_path, d.storage_bucket,
+		       d.extracted_text, d.processing_result, d.processing_time, d.confidence_score, d.metadata, d.notebook_id, d.owner_id,
+		       d.space_type, d.space_id, d.tenant_id,
+		       d.tags, d.processed_at, d.created_at, d.updated_at
+		LIMIT 1
+	`
+
+	params := map[string]interface{}{
+		"audimodal_file_id": audimodalFileID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to find document by audimodal file ID",
+			zap.String("audimodal_file_id", audimodalFileID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to find document: %w", err)
+	}
+
+	if len(result.Records) == 0 {
+		s.logger.Debug("No document found with audimodal file ID",
+			zap.String("audimodal_file_id", audimodalFileID))
+		return nil, nil
+	}
+
+	document, err := s.recordToDocument(result.Records[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse document: %w", err)
+	}
+
+	s.logger.Debug("Found document by audimodal file ID",
+		zap.String("audimodal_file_id", audimodalFileID),
+		zap.String("document_id", document.ID))
+
+	return document, nil
+}
+
+// extractFilenameFromPath extracts the filename from a URL or file path
+func extractFilenameFromPath(path string) string {
+	// Remove URL scheme if present
+	if strings.HasPrefix(path, "file://") {
+		path = strings.TrimPrefix(path, "file://")
+	}
+	if strings.HasPrefix(path, "s3://") {
+		path = strings.TrimPrefix(path, "s3://")
+	}
+
+	// Get the last component of the path
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+
+	filename := parts[len(parts)-1]
+
+	// Remove any UUID prefix (format: uuid_filename)
+	if idx := strings.Index(filename, "_"); idx != -1 && len(filename) > 36 && idx == 36 {
+		// Check if the prefix looks like a UUID (36 chars with hyphens)
+		prefix := filename[:idx]
+		if len(prefix) == 36 && strings.Count(prefix, "-") == 4 {
+			filename = filename[idx+1:]
+		}
+	}
+
+	return filename
 }

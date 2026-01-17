@@ -16,26 +16,27 @@ import (
 
 // APIServer represents the API server with all dependencies
 type APIServer struct {
-	Router              *gin.Engine
-	UserHandler         *UserHandler
-	NotebookHandler     *NotebookHandler
-	DocumentHandler     *DocumentHandler
-	ChunkHandler        *ChunkHandler
-	JobHandler          *JobHandler
-	WebSocketHandler    *WebSocketHandler
-	MLHandler           *MLHandler
-	WorkflowHandler     *WorkflowHandler
-	TeamHandler         *TeamHandler
-	OrganizationHandler *OrganizationHandler
-	SpaceHandler        *SpaceHandler
-	AgentHandler        *AgentHandler
-	HealthHandler       *HealthHandler
-	StreamHandler       *StreamHandler
-	RouterHandler       *RouterHandler
-	LoggingHandler      *LoggingHandler
-	SpaceService        *services.SpaceContextService
-	Metrics             *metrics.Metrics
-	logger              *logger.Logger
+	Router               *gin.Engine
+	UserHandler          *UserHandler
+	NotebookHandler      *NotebookHandler
+	DocumentHandler      *DocumentHandler
+	ChunkHandler         *ChunkHandler
+	JobHandler           *JobHandler
+	WebSocketHandler     *WebSocketHandler
+	MLHandler            *MLHandler
+	WorkflowHandler      *WorkflowHandler
+	TeamHandler          *TeamHandler
+	OrganizationHandler  *OrganizationHandler
+	SpaceHandler         *SpaceHandler
+	AgentHandler         *AgentHandler
+	HealthHandler        *HealthHandler
+	StreamHandler        *StreamHandler
+	RouterHandler        *RouterHandler
+	LoggingHandler       *LoggingHandler
+	VectorSearchHandler  *VectorSearchHandler
+	SpaceService         *services.SpaceContextService
+	Metrics              *metrics.Metrics
+	logger               *logger.Logger
 }
 
 // NewAPIServer creates a new API server with all routes configured
@@ -85,10 +86,20 @@ func NewAPIServer(
 	documentService.SetStorageService(storageService)
 	documentService.SetProcessingService(audiModalClient)
 
+	// Initialize processing event handler for Kafka events from audimodal
+	if kafkaService != nil {
+		processingEventHandler := services.NewProcessingEventHandler(documentService, kafkaService, log)
+		if err := processingEventHandler.Start(); err != nil {
+			log.WithError(err).Error("Failed to start processing event handler - document sync from audimodal will not work")
+		} else {
+			log.Info("Processing event handler started - listening for processing.complete events")
+		}
+	}
+
 	// Initialize handlers
 	userHandler := NewUserHandler(userService, spaceService, onboardingService, log)
 	notebookHandler := NewNotebookHandler(notebookService, userService, log)
-	documentHandler := NewDocumentHandler(documentService, log)
+	documentHandler := NewDocumentHandler(documentService, audiModalClient, log)
 	chunkHandler := NewChunkHandler(neo4j, chunkService, audiModalClient, log)
 	jobHandler := NewJobHandler(documentService, audiModalClient, log)
 	webSocketHandler := NewWebSocketHandler(documentService, audiModalClient, log)
@@ -101,6 +112,7 @@ func NewAPIServer(
 	streamHandler := NewStreamHandler(streamService, log)
 	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
 	loggingHandler := NewLoggingHandler(log)
+	vectorSearchHandler := NewVectorSearchHandler(notebookService, documentService, userService, &cfg.DeepLake, log)
 
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
@@ -125,26 +137,27 @@ func NewAPIServer(
 	router.Use(metrics.HTTPMetricsMiddleware(metricsInstance, log))
 
 	server := &APIServer{
-		Router:              router,
-		UserHandler:         userHandler,
-		NotebookHandler:     notebookHandler,
-		DocumentHandler:     documentHandler,
-		ChunkHandler:        chunkHandler,
-		JobHandler:          jobHandler,
-		WebSocketHandler:    webSocketHandler,
-		MLHandler:           mlHandler,
-		WorkflowHandler:     workflowHandler,
-		TeamHandler:         teamHandler,
-		OrganizationHandler: organizationHandler,
-		SpaceHandler:        spaceHandler,
-		AgentHandler:        agentHandler,
-		HealthHandler:       healthHandler,
-		StreamHandler:       streamHandler,
-		RouterHandler:       routerHandler,
-		LoggingHandler:      loggingHandler,
-		SpaceService:        spaceService,
-		Metrics:             metricsInstance,
-		logger:              log.WithService("api_server"),
+		Router:               router,
+		UserHandler:          userHandler,
+		NotebookHandler:      notebookHandler,
+		DocumentHandler:      documentHandler,
+		ChunkHandler:         chunkHandler,
+		JobHandler:           jobHandler,
+		WebSocketHandler:     webSocketHandler,
+		MLHandler:            mlHandler,
+		WorkflowHandler:      workflowHandler,
+		TeamHandler:          teamHandler,
+		OrganizationHandler:  organizationHandler,
+		SpaceHandler:         spaceHandler,
+		AgentHandler:         agentHandler,
+		HealthHandler:        healthHandler,
+		StreamHandler:        streamHandler,
+		RouterHandler:        routerHandler,
+		LoggingHandler:       loggingHandler,
+		VectorSearchHandler:  vectorSearchHandler,
+		SpaceService:         spaceService,
+		Metrics:              metricsInstance,
+		logger:               log.WithService("api_server"),
 	}
 
 	// Setup routes
@@ -202,6 +215,11 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 
 		// Documents within notebooks - use same parameter name to avoid conflict
 		notebooks.GET("/:id/documents", s.DocumentHandler.ListDocumentsByNotebook)
+
+		// Vector search routes for RAG-only lookup
+		notebooks.POST("/:id/vector-search/text", s.VectorSearchHandler.TextSearch)
+		notebooks.POST("/:id/vector-search/hybrid", s.VectorSearchHandler.HybridSearch)
+		notebooks.GET("/:id/vector-search/info", s.VectorSearchHandler.GetVectorSearchInfo)
 	}
 
 	// Document routes
@@ -222,6 +240,8 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		documents.POST("/refresh-processing", s.DocumentHandler.RefreshProcessingResults)
 		documents.GET("/:id/download", s.DocumentHandler.DownloadDocument)
 		documents.GET("/:id/url", s.DocumentHandler.GetDocumentURL)
+		documents.GET("/:id/analysis", s.DocumentHandler.GetDocumentAnalysis)
+		documents.GET("/:id/text", s.DocumentHandler.GetDocumentExtractedText)
 	}
 
 	// Chunk routes - file-specific chunks

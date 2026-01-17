@@ -54,6 +54,13 @@ data:
   AUDIMODAL_ENABLED: "true"
   AUDIMODAL_BASE_URL: "http://audimodal.aether-be:8080"
 
+  # DeepLake Vector Storage Configuration
+  DEEPLAKE_ENABLED: "true"
+  DEEPLAKE_BASE_URL: "http://deeplake-api.aether-be:8000"
+  DEEPLAKE_COLLECTION_NAME: "aether_embeddings"
+  DEEPLAKE_VECTOR_DIMENSIONS: "1536"
+  DEEPLAKE_TIMEOUT_SECONDS: "30"
+
   # Logging
   LOG_LEVEL: "debug"
   LOG_FORMAT: "json"
