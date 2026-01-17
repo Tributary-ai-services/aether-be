@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: aether-backend-base
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+  - secret.yaml
+  - neo4j.yaml
+  - redis.yaml
+  - keycloak.yaml
+  - kafka.yaml
+  - monitoring/prometheus.yaml
+  - monitoring/grafana.yaml
+
+commonLabels:
+  app: aether-backend
+  version: v1
+
+images:
+  - name: aether-backend
+    newTag: latest

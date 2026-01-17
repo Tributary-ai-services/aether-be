@@ -1,0 +1,176 @@
+version: '3.8'
+
+services:
+  # Neo4j Graph Database for testing
+  neo4j-test:
+    image: neo4j:5.15-community
+    container_name: aether-test-neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    volumes:
+      - neo4j-test-data:/data
+      - neo4j-test-logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - aether-test-network
+
+  # Redis for caching and sessions
+  redis-test:
+    image: redis:7-alpine
+    container_name: aether-test-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ""
+    volumes:
+      - redis-test-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - aether-test-network
+
+  # MinIO for S3-compatible storage testing
+  minio-test:
+    image: minio/minio:latest
+    container_name: aether-test-minio
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+      - MINIO_CONSOLE_ADDRESS=:9001
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-test-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - aether-test-network
+
+  # Mock AudiModal service using WireMock
+  audimodal-mock:
+    image: wiremock/wiremock:latest
+    container_name: aether-test-audimodal
+    ports:
+      - "8084:8080"
+    volumes:
+      - ./tests/fixtures/mock_responses:/home/wiremock/mappings:ro
+      - ./tests/fixtures/mock_responses/__files:/home/wiremock/__files:ro
+    command: ["--global-response-templating", "--verbose"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/__admin/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aether-test-network
+
+  # Mock DeepLake service
+  deeplake-mock:
+    image: wiremock/wiremock:latest
+    container_name: aether-test-deeplake
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./tests/fixtures/mock_responses/deeplake:/home/wiremock/mappings:ro
+      - ./tests/fixtures/mock_responses/deeplake/__files:/home/wiremock/__files:ro
+    command: ["--global-response-templating", "--verbose"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/__admin/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aether-test-network
+
+  # Keycloak for authentication testing (optional)
+  keycloak-test:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: aether-test-keycloak
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_DB=dev-file
+    ports:
+      - "8081:8080"
+    command: start-dev
+    volumes:
+      - keycloak-test-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - aether-test-network
+    profiles:
+      - auth-testing
+
+  # Test setup service to initialize data and configurations
+  test-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-setup
+    container_name: aether-test-setup
+    depends_on:
+      neo4j-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      minio-test:
+        condition: service_healthy
+      audimodal-mock:
+        condition: service_healthy
+    environment:
+      - NEO4J_URI=bolt://neo4j-test:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=password
+      - REDIS_ADDR=redis-test:6379
+      - MINIO_ENDPOINT=http://minio-test:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+    volumes:
+      - ./tests/fixtures:/app/fixtures:ro
+      - ./tests/config:/app/config:ro
+    command: ["./setup-test-environment.sh"]
+    networks:
+      - aether-test-network
+    profiles:
+      - setup
+
+volumes:
+  neo4j-test-data:
+    driver: local
+  neo4j-test-logs:
+    driver: local
+  redis-test-data:
+    driver: local
+  minio-test-data:
+    driver: local
+  keycloak-test-data:
+    driver: local
+
+networks:
+  aether-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

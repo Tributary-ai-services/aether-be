@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aether-be
+  labels:
+    name: aether-be
+    app: aether
+    environment: production

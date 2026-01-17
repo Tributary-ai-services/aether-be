@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-config
+data:
+  gin-mode: "release"
+  neo4j-uri: "bolt://neo4j.aether-staging.svc.cluster.local:7687"
+  keycloak-url: "https://keycloak-staging.aether.com"
+  redis-addr: "redis.aether-staging.svc.cluster.local:6379"
+  kafka-brokers: "kafka.aether-staging.svc.cluster.local:9092"
+  s3-endpoint: "https://s3-staging.aether.com"
+  log-level: "info"

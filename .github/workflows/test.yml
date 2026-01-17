@@ -1,0 +1,328 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [1.21, 1.22, 1.23]
+    
+    services:
+      # Neo4j Graph Database for aether-be
+      neo4j:
+        image: neo4j:5.15-community
+        env:
+          NEO4J_AUTH: neo4j/password
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p password 'RETURN 1'"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+      
+      # Redis for caching and sessions
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      
+      # MinIO for S3-compatible storage testing
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 9000:9000
+          - 9001:9001
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+        volumes:
+          - /tmp/minio-data:/data
+      
+      # Mock AudiModal service for integration tests
+      audimodal-mock:
+        image: wiremock/wiremock:latest
+        ports:
+          - 8084:8080
+        options: >-
+          --health-cmd "curl -f http://localhost:8080/__admin/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        check-latest: true
+        
+    - name: Verify Go installation
+      run: |
+        go version
+        go env GOVERSION
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+          
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Verify dependencies
+      run: go mod verify
+      
+    - name: Run go fmt
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "The following files need formatting:"
+          gofmt -s -l .
+          exit 1
+        fi
+        
+    - name: Run go vet
+      run: go vet ./...
+      
+    - name: Install golangci-lint
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.59.1
+        
+    - name: Run linter
+      run: golangci-lint run --timeout=5m
+      
+    - name: Set up test environment
+      run: |
+        echo "NEO4J_URI=bolt://localhost:7687" >> $GITHUB_ENV
+        echo "NEO4J_USERNAME=neo4j" >> $GITHUB_ENV
+        echo "NEO4J_PASSWORD=password" >> $GITHUB_ENV
+        echo "NEO4J_DATABASE=neo4j" >> $GITHUB_ENV
+        echo "REDIS_ADDR=localhost:6379" >> $GITHUB_ENV
+        echo "REDIS_PASSWORD=" >> $GITHUB_ENV
+        echo "REDIS_DB=0" >> $GITHUB_ENV
+        echo "S3_ENDPOINT=http://localhost:9000" >> $GITHUB_ENV
+        echo "AWS_ACCESS_KEY_ID=minioadmin" >> $GITHUB_ENV
+        echo "AWS_SECRET_ACCESS_KEY=minioadmin123" >> $GITHUB_ENV
+        echo "S3_BUCKET=aether-test-storage" >> $GITHUB_ENV
+        echo "AUDIMODAL_API_URL=http://localhost:8084" >> $GITHUB_ENV
+        echo "AUDIMODAL_API_KEY=test-key-12345" >> $GITHUB_ENV
+        echo "LOG_LEVEL=debug" >> $GITHUB_ENV
+        echo "GIN_MODE=test" >> $GITHUB_ENV
+        
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for Neo4j..."
+        timeout 120s bash -c 'until cypher-shell -u neo4j -p password "RETURN 1"; do sleep 2; done'
+        echo "Waiting for Redis..."
+        timeout 60s bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+        echo "Waiting for MinIO..."
+        timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
+        echo "Waiting for AudiModal Mock..."
+        timeout 60s bash -c 'until curl -f http://localhost:8084/__admin/health; do sleep 2; done'
+        
+    - name: Set up MinIO buckets
+      run: |
+        # Install MinIO client
+        wget https://dl.min.io/client/mc/release/linux-amd64/mc
+        chmod +x mc
+        sudo mv mc /usr/local/bin/
+        
+        # Configure MinIO client
+        mc alias set test-minio http://localhost:9000 minioadmin minioadmin123
+        
+        # Create test bucket
+        mc mb test-minio/aether-test-storage || echo "Bucket already exists"
+        
+    - name: Run database migrations
+      run: |
+        # Run Neo4j migrations if they exist
+        if [ -f "migrations/run_migrations.sh" ]; then
+          cd migrations && ./run_migrations.sh
+        fi
+      
+    - name: Run unit tests
+      run: make test-unit || go test -v -short ./internal/... ./pkg/...
+      
+    - name: Run configuration tests
+      run: make test-config || go test -v ./internal/config/...
+      
+    - name: Run handler tests
+      run: make test-handlers || go test -v ./internal/handlers/...
+      
+    - name: Run service tests
+      run: make test-services || go test -v ./internal/services/...
+      
+    - name: Run integration tests
+      run: make test-integration || go test -v -tags=integration ./tests/...
+      
+    - name: Run document processing tests
+      run: make test-document-processing || go test -v -run TestDocumentProcessing ./tests/...
+      
+    - name: Run tests with race detection
+      run: go test -race -short $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|examples/)")
+      continue-on-error: true
+      
+    - name: Generate coverage report
+      run: |
+        go test -coverprofile=coverage.out $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|examples/)")
+        go tool cover -func=coverage.out
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  # Security scanning job
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+          
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Run Gosec Security Scanner
+      run: |
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        gosec -fmt sarif -out gosec-report.sarif ./... || echo "Gosec completed with findings"
+        ls -la gosec-report.sarif || echo "SARIF file not found"
+      continue-on-error: true
+        
+    - name: Upload Gosec scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always() && hashFiles('gosec-report.sarif') != ''
+      with:
+        sarif_file: gosec-report.sarif
+        
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+      continue-on-error: true
+
+  # Benchmark testing job
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+          
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Run benchmarks
+      run: |
+        go test -bench=. -benchmem ./... | tee benchmark.txt
+        
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        tool: 'go'
+        output-file-path: benchmark.txt
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: true
+        comment-on-alert: true
+        alert-threshold: '200%'
+        fail-on-alert: false
+
+  # Docker build test
+  docker:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64
+        push: false
+        tags: aether-backend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Test Docker image
+      run: |
+        docker run --rm --name aether-test aether-backend:test /bin/sh -c "echo 'Container validation successful'"

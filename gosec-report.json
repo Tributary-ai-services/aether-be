@@ -1,0 +1,108 @@
+{
+	"Golang errors": {},
+	"Issues": [
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion uint64 -\u003e int64",
+			"file": "/home/jscharber/eng/TAS/aether-be/internal/metrics/collector.go",
+			"code": "135: \truntime.ReadMemStats(\u0026memStats)\n136: \tsmc.metrics.SetMemoryUsage(int64(memStats.Alloc))\n137: \n",
+			"line": "136",
+			"column": "34",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int -\u003e int32",
+			"file": "/home/jscharber/eng/TAS/aether-be/internal/services/storage.go",
+			"code": "322: \t\tPrefix:  aws.String(prefix),\n323: \t\tMaxKeys: aws.Int32(int32(maxKeys)),\n324: \t}\n",
+			"line": "323",
+			"column": "27",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "400",
+				"url": "https://cwe.mitre.org/data/definitions/400.html"
+			},
+			"rule_id": "G112",
+			"details": "Potential Slowloris Attack because ReadHeaderTimeout is not configured in the http.Server",
+			"file": "/home/jscharber/eng/TAS/aether-be/examples/metrics/metrics_example.go",
+			"code": "218: \n219: \tserver := \u0026http.Server{\n220: \t\tAddr:    \":8080\",\n221: \t\tHandler: mux,\n222: \t}\n223: \n",
+			"line": "219-222",
+			"column": "13",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/home/jscharber/eng/TAS/aether-be/internal/database/redis.go",
+			"code": "51: \tif err := redisClient.Ping(ctx); err != nil {\n52: \t\tclient.Close()\n53: \t\treturn nil, fmt.Errorf(\"failed to connect to Redis: %w\", err)\n",
+			"line": "52",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/home/jscharber/eng/TAS/aether-be/internal/database/neo4j.go",
+			"code": "52: \tif err := client.VerifyConnectivity(ctx); err != nil {\n53: \t\tdriver.Close(context.Background())\n54: \t\treturn nil, fmt.Errorf(\"failed to verify Neo4j connectivity: %w\", err)\n",
+			"line": "53",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/home/jscharber/eng/TAS/aether-be/cmd/server/main.go",
+			"code": "186: \t// Set timezone to UTC\n187: \tos.Setenv(\"TZ\", \"UTC\")\n188: \n",
+			"line": "187",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		}
+	],
+	"Stats": {
+		"files": 32,
+		"lines": 9936,
+		"nosec": 0,
+		"found": 6
+	},
+	"GosecVersion": "dev"
+}

@@ -1,0 +1,237 @@
+# Canary Deployment Configuration for Aether-BE
+# This configuration defines the progressive rollout strategy for canary deployments
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-canary-config
+  namespace: aether-be
+data:
+  # Canary rollout stages
+  rollout_stages: |
+    stages:
+      - name: "initial"
+        traffic_percentage: 10
+        duration: "15m"
+        success_criteria:
+          error_rate_threshold: 1.0  # %
+          response_time_p95: 2000    # ms
+          success_rate: 99.0         # %
+      
+      - name: "expanded"
+        traffic_percentage: 25
+        duration: "30m"
+        success_criteria:
+          error_rate_threshold: 0.8
+          response_time_p95: 1800
+          success_rate: 99.2
+      
+      - name: "majority"
+        traffic_percentage: 50
+        duration: "45m"
+        success_criteria:
+          error_rate_threshold: 0.5
+          response_time_p95: 1500
+          success_rate: 99.5
+      
+      - name: "near_complete"
+        traffic_percentage: 75
+        duration: "30m"
+        success_criteria:
+          error_rate_threshold: 0.3
+          response_time_p95: 1200
+          success_rate: 99.7
+      
+      - name: "complete"
+        traffic_percentage: 100
+        duration: "15m"
+        success_criteria:
+          error_rate_threshold: 0.2
+          response_time_p95: 1000
+          success_rate: 99.9
+
+  # Monitoring configuration
+  monitoring: |
+    metrics:
+      - name: "document_processing_success_rate"
+        query: "sum(rate(document_processing_success_total[5m])) / sum(rate(document_processing_attempts_total[5m])) * 100"
+        threshold: 99.0
+        comparison: "greater_than"
+      
+      - name: "api_error_rate"
+        query: "sum(rate(http_requests_total{status=~'5..'}[5m])) / sum(rate(http_requests_total[5m])) * 100"
+        threshold: 1.0
+        comparison: "less_than"
+      
+      - name: "response_time_p95"
+        query: "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) * 1000"
+        threshold: 2000
+        comparison: "less_than"
+      
+      - name: "chunking_performance"
+        query: "histogram_quantile(0.95, sum(rate(chunking_duration_seconds_bucket[5m])) by (le))"
+        threshold: 10.0
+        comparison: "less_than"
+      
+      - name: "storage_operations_success"
+        query: "sum(rate(storage_operations_success_total[5m])) / sum(rate(storage_operations_total[5m])) * 100"
+        threshold: 99.5
+        comparison: "greater_than"
+
+  # Rollback configuration
+  rollback: |
+    triggers:
+      - type: "error_rate"
+        threshold: 2.0
+        duration: "5m"
+        action: "immediate_rollback"
+      
+      - type: "response_time"
+        threshold: 5000  # ms
+        duration: "10m"
+        action: "immediate_rollback"
+      
+      - type: "success_rate"
+        threshold: 98.0
+        duration: "5m"
+        action: "immediate_rollback"
+      
+      - type: "manual"
+        action: "controlled_rollback"
+    
+    rollback_strategy:
+      - step: "stop_traffic_increase"
+        duration: "immediate"
+      
+      - step: "reduce_traffic_to_previous"
+        duration: "2m"
+        target_percentage: "previous_stage"
+      
+      - step: "complete_rollback"
+        duration: "5m"
+        target_percentage: 0
+      
+      - step: "validate_rollback"
+        duration: "10m"
+        checks:
+          - "health_endpoints"
+          - "error_rate_normal"
+          - "response_time_normal"
+
+  # Feature flag integration
+  feature_flags: |
+    flags:
+      - name: "new_chunking_algorithm"
+        default_value: false
+        canary_value: true
+        description: "Enable new semantic chunking algorithm"
+        rollout_percentage: "match_canary"
+      
+      - name: "enhanced_embeddings"
+        default_value: false
+        canary_value: true
+        description: "Enable enhanced embedding generation"
+        rollout_percentage: "match_canary"
+      
+      - name: "improved_search"
+        default_value: true
+        canary_value: true
+        description: "Use improved search algorithms"
+        rollout_percentage: 100
+      
+      - name: "debug_logging"
+        default_value: false
+        canary_value: true
+        description: "Enable debug logging for canary traffic"
+        rollout_percentage: "match_canary"
+
+  # A/B testing configuration
+  ab_testing: |
+    experiments:
+      - name: "chunking_strategy_comparison"
+        description: "Compare semantic vs adaptive chunking strategies"
+        traffic_split: 50  # 50/50 split
+        variants:
+          - name: "control"
+            config:
+              default_strategy: "semantic"
+              feature_flags:
+                new_chunking_algorithm: false
+          - name: "treatment"
+            config:
+              default_strategy: "adaptive"
+              feature_flags:
+                new_chunking_algorithm: true
+        
+        success_metrics:
+          - name: "chunk_quality_score"
+            target: "higher_is_better"
+            minimum_improvement: 5.0  # %
+          
+          - name: "processing_time"
+            target: "lower_is_better"
+            maximum_degradation: 10.0  # %
+          
+          - name: "user_satisfaction"
+            target: "higher_is_better"
+            minimum_improvement: 2.0  # %
+        
+        duration: "7d"
+        minimum_sample_size: 1000
+
+  # Validation tests for canary
+  validation_tests: |
+    test_suites:
+      - name: "health_checks"
+        tests:
+          - endpoint: "/health"
+            expected_status: 200
+            timeout: 5s
+          
+          - endpoint: "/health/ready"
+            expected_status: 200
+            timeout: 10s
+          
+          - endpoint: "/health/live"
+            expected_status: 200
+            timeout: 5s
+      
+      - name: "api_functionality"
+        tests:
+          - name: "document_upload"
+            endpoint: "/api/v1/documents/upload"
+            method: "POST"
+            payload: "test_document.pdf"
+            expected_status: 200
+            timeout: 30s
+          
+          - name: "strategy_retrieval"
+            endpoint: "/api/v1/strategies"
+            method: "GET"
+            expected_status: 200
+            timeout: 10s
+          
+          - name: "chunk_search"
+            endpoint: "/api/v1/chunks/search"
+            method: "POST"
+            payload: '{"query": "test search"}'
+            expected_status: 200
+            timeout: 15s
+      
+      - name: "performance_baseline"
+        tests:
+          - name: "response_time_check"
+            type: "performance"
+            target_p95: 2000  # ms
+            duration: "5m"
+          
+          - name: "throughput_check"
+            type: "performance"
+            target_rps: 100
+            duration: "5m"
+          
+          - name: "resource_usage"
+            type: "performance"
+            cpu_threshold: 80  # %
+            memory_threshold: 85  # %
+            duration: "10m"

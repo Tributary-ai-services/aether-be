@@ -1,0 +1,74 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aether-backend-ingress
+  namespace: aether-be
+  labels:
+    app: aether-backend
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # CORS headers for API
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://aether.tas.scharber.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - aether-api.tas.scharber.com
+    secretName: aether-backend-tls
+  rules:
+  - host: aether-api.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: aether-backend
+            port:
+              number: 8080
+
+---
+# Neo4j Browser Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: neo4j-ingress
+  namespace: aether-be
+  labels:
+    app: neo4j
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "tas-ca-issuer"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase timeouts for Neo4j queries
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    # WebSocket support for Neo4j Browser
+    nginx.ingress.kubernetes.io/websocket-services: "neo4j"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - neo4j.tas.scharber.com
+    secretName: neo4j-tls
+  rules:
+  - host: neo4j.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: neo4j
+            port:
+              number: 7474

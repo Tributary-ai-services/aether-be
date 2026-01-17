@@ -1,0 +1,228 @@
+# Test Environment Configuration for Aether-BE
+# This configuration is used for integration and end-to-end testing
+
+# Server Configuration
+server:
+  host: "localhost"
+  port: 8080
+  gin_mode: "test"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+
+# Database Configuration
+database:
+  neo4j:
+    uri: "bolt://localhost:7687"
+    username: "neo4j"
+    password: "password"
+    database: "neo4j"
+    max_connection_pool_size: 10
+    max_connection_lifetime: 300s
+    connection_acquisition_timeout: 60s
+    socket_connect_timeout: 5s
+    socket_keep_alive: true
+
+# Cache Configuration
+cache:
+  redis:
+    addr: "localhost:6379"
+    password: ""
+    db: 0
+    pool_size: 10
+    min_idle_conns: 5
+    dial_timeout: 5s
+    read_timeout: 3s
+    write_timeout: 3s
+    pool_timeout: 4s
+    idle_timeout: 300s
+    idle_check_frequency: 60s
+
+# Storage Configuration
+storage:
+  enabled: true
+  provider: "minio"
+  aws:
+    region: "us-east-1"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin123"
+  s3:
+    bucket: "aether-test-storage"
+    endpoint: "http://localhost:9000"
+    force_path_style: true
+    disable_ssl: true
+  upload:
+    max_file_size: 10485760  # 10MB
+    allowed_mime_types:
+      - "application/pdf"
+      - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      - "text/plain"
+      - "text/csv"
+      - "application/json"
+      - "application/xml"
+      - "text/xml"
+      - "image/jpeg"
+      - "image/png"
+      - "audio/mpeg"
+      - "video/mp4"
+
+# AudiModal Configuration
+audimodal:
+  base_url: "http://localhost:8084"
+  api_key: "test-key-12345"
+  enabled: true
+  default_strategy: "semantic"
+  tenant_management: true
+  processing_timeout: 300
+  retry_attempts: 3
+  enable_webhooks: true
+  webhook_secret: "test-webhook-secret"
+  max_concurrent_files: 5
+  chunk_size_limit: 4096
+
+# DeepLake Configuration
+deeplake:
+  api_url: "http://localhost:8085"
+  api_key: "test-deeplake-key"
+  tenant_id: "test-tenant-123"
+  enabled: true
+  dataset_prefix: "aether_test_"
+  embedding_dimension: 1536
+  max_batch_size: 100
+  timeout: 30s
+
+# Authentication Configuration (for auth testing)
+auth:
+  enabled: false  # Disabled by default for basic testing
+  keycloak:
+    url: "http://localhost:8081"
+    realm: "master"
+    client_id: "aether-backend"
+    client_secret: "test-client-secret"
+    allowed_issuers:
+      - "http://localhost:8081/realms/master"
+  jwt:
+    secret_key: "test-jwt-secret-key-for-testing-only"
+    expiration: 24h
+    refresh_expiration: 168h  # 7 days
+
+# Logging Configuration
+logging:
+  level: "debug"
+  format: "json"
+  output: "stdout"
+  enable_request_logging: true
+  enable_query_logging: true
+
+# Testing Specific Configuration
+testing:
+  # Test data configuration
+  fixtures_path: "./tests/fixtures"
+  test_timeout: 300s  # 5 minutes for long-running tests
+  
+  # Mock service configurations
+  mock_services:
+    audimodal:
+      url: "http://localhost:8084"
+      response_delay: "100ms"
+      success_rate: 0.95
+    deeplake:
+      url: "http://localhost:8085"
+      response_delay: "50ms"
+      success_rate: 0.98
+  
+  # Test data sets
+  test_documents:
+    pdf_simple: "documents/simple_text.pdf"
+    pdf_complex: "documents/complex_layout.pdf"
+    pdf_scanned: "documents/scanned_document.pdf"
+    pdf_password: "documents/password_protected.pdf"
+    docx_sample: "documents/sample_document.docx"
+    xlsx_sample: "documents/sample_spreadsheet.xlsx"
+    pptx_sample: "documents/sample_presentation.pptx"
+    txt_sample: "documents/plain_text.txt"
+    csv_sample: "documents/sample_data.csv"
+    json_sample: "documents/sample_data.json"
+    xml_sample: "documents/sample_data.xml"
+    jpg_sample: "images/sample_image.jpg"
+    png_sample: "images/sample_screenshot.png"
+    mp3_sample: "audio/sample_audio.mp3"
+    mp4_sample: "video/sample_video.mp4"
+  
+  # Expected test results
+  expected_results:
+    pdf_simple:
+      chunks: 5
+      strategy: "semantic"
+      quality_score: 0.8
+      processing_time: 10000  # milliseconds
+    pdf_complex:
+      chunks: 8
+      strategy: "adaptive"
+      quality_score: 0.75
+      processing_time: 15000
+    csv_sample:
+      chunks: 3
+      strategy: "row_based"
+      quality_score: 0.9
+      processing_time: 5000
+  
+  # Performance benchmarks
+  performance:
+    upload_timeout: 2000    # 2 seconds
+    processing_timeout: 30000  # 30 seconds
+    chunk_generation_timeout: 10000  # 10 seconds
+    storage_verification_timeout: 5000  # 5 seconds
+    search_response_timeout: 1000  # 1 second
+  
+  # Coverage requirements
+  coverage:
+    unit_tests: 0.90      # 90%
+    integration_tests: 0.95  # 95%
+    api_endpoints: 1.0    # 100%
+    document_formats: 1.0 # 100%
+    chunking_strategies: 1.0  # 100%
+    error_scenarios: 0.80 # 80%
+
+# Feature flags for testing
+features:
+  enable_chunking: true
+  enable_embeddings: true
+  enable_search: true
+  enable_analytics: false
+  enable_compliance: false
+  enable_notifications: false
+
+# Environment specific overrides
+environments:
+  github_actions:
+    database:
+      neo4j:
+        uri: "bolt://localhost:7687"
+    cache:
+      redis:
+        addr: "localhost:6379"
+    storage:
+      s3:
+        endpoint: "http://localhost:9000"
+    audimodal:
+      base_url: "http://localhost:8084"
+    deeplake:
+      api_url: "http://localhost:8085"
+  
+  local_docker:
+    database:
+      neo4j:
+        uri: "bolt://neo4j-test:7687"
+    cache:
+      redis:
+        addr: "redis-test:6379"
+    storage:
+      s3:
+        endpoint: "http://minio-test:9000"
+    audimodal:
+      base_url: "http://audimodal-mock:8080"
+    deeplake:
+      api_url: "http://deeplake-mock:8080"
