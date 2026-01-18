@@ -499,23 +499,21 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string,
 		return errors.Forbidden("You don't have permission to delete this document")
 	}
 
-	// Soft delete: update status to deleted and update notebook counts
+	// Hard delete: update notebook counts and fully remove document node
 	query := `
 		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
-		MATCH (d)-[:BELONGS_TO]->(n:Notebook {tenant_id: $tenant_id})
-		SET d.status = 'deleted',
-		    d.deleted_at = datetime(),
-		    d.updated_at = datetime($updated_at),
-		    n.document_count = COALESCE(n.document_count, 0) - 1,
-		    n.total_size_bytes = COALESCE(n.total_size_bytes, 0) - d.size_bytes,
+		OPTIONAL MATCH (d)-[:BELONGS_TO]->(n:Notebook {tenant_id: $tenant_id})
+		WITH d, n, d.size_bytes AS doc_size
+		SET n.document_count = COALESCE(n.document_count, 0) - 1,
+		    n.total_size_bytes = COALESCE(n.total_size_bytes, 0) - COALESCE(doc_size, 0),
 		    n.updated_at = datetime()
-		RETURN d
+		WITH d
+		DETACH DELETE d
 	`
 
 	params := map[string]interface{}{
 		"document_id": documentID,
 		"tenant_id":   spaceCtx.TenantID,
-		"updated_at":  time.Now().Format(time.RFC3339),
 	}
 
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -526,27 +524,44 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string,
 
 	// Cancel processing job if active
 	if document.ProcessingJobID != "" && s.processingService != nil {
-		// First try to get the job to retrieve the AudiModal file ID
+		// Try to delete the file from AudiModal
+		// The file ID can be stored in job.Config["audimodal_file_id"] or
+		// the processing_job_id itself may be the audimodal file ID
+		var audiModalFileID string
+
+		// First try to get the job to retrieve the AudiModal file ID from config
 		job, jobErr := s.processingService.GetProcessingJob(ctx, document.ProcessingJobID)
 		if jobErr == nil && job != nil && job.Config != nil {
-			// Check if we have an AudiModal file ID to delete
 			if fileID, ok := job.Config["audimodal_file_id"].(string); ok && fileID != "" {
-				// Try to cast processing service to AudiModalService to access DeleteFile
-				if audiModalService, ok := s.processingService.(*AudiModalService); ok {
-					s.logger.Info("Deleting file from AudiModal",
-						zap.String("document_id", documentID),
-						zap.String("audimodal_file_id", fileID))
-					
-					if deleteErr := audiModalService.DeleteFile(ctx, fileID); deleteErr != nil {
-						s.logger.Error("Failed to delete file from AudiModal",
-							zap.String("document_id", documentID),
-							zap.String("audimodal_file_id", fileID),
-							zap.Error(deleteErr))
-					}
-				}
+				audiModalFileID = fileID
 			}
 		}
-		
+
+		// Fallback: use processing_job_id as the audimodal file ID
+		// This handles cases where the processing_job_id is the audimodal file UUID
+		if audiModalFileID == "" {
+			audiModalFileID = document.ProcessingJobID
+			s.logger.Info("Using processing_job_id as audimodal file ID",
+				zap.String("document_id", documentID),
+				zap.String("audimodal_file_id", audiModalFileID))
+		}
+
+		// Delete the file from AudiModal
+		if audiModalService, ok := s.processingService.(*AudiModalService); ok {
+			s.logger.Info("Deleting file from AudiModal",
+				zap.String("document_id", documentID),
+				zap.String("tenant_id", spaceCtx.TenantID),
+				zap.String("audimodal_file_id", audiModalFileID))
+
+			if deleteErr := audiModalService.DeleteFile(ctx, spaceCtx.TenantID, audiModalFileID); deleteErr != nil {
+				s.logger.Error("Failed to delete file from AudiModal",
+					zap.String("document_id", documentID),
+					zap.String("tenant_id", spaceCtx.TenantID),
+					zap.String("audimodal_file_id", audiModalFileID),
+					zap.Error(deleteErr))
+			}
+		}
+
 		// Cancel the processing job
 		if err := s.processingService.CancelProcessingJob(ctx, document.ProcessingJobID); err != nil {
 			s.logger.Warn("Failed to cancel processing job",

@@ -919,40 +919,53 @@ func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fil
 }
 
 // DeleteFile deletes a file from AudiModal
-func (s *AudiModalService) DeleteFile(ctx context.Context, fileID string) error {
-	url := fmt.Sprintf("%s/file/%s", s.baseURL, fileID)
-	
+// tenantID is the Aether tenant ID which will be resolved to the AudiModal tenant UUID
+func (s *AudiModalService) DeleteFile(ctx context.Context, tenantID, fileID string) error {
+	// Resolve the Aether tenant ID to an AudiModal UUID
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s", s.baseURL, tenantUUID, fileID)
+
 	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create delete request: %w", err)
 	}
-	
+
 	// Set headers
 	if s.apiKey != "" {
 		req.Header.Set("X-API-Key", s.apiKey)
 	}
-	
+
 	s.logger.Info("Deleting file from AudiModal",
+		zap.String("tenant_id", tenantID),
+		zap.String("tenant_uuid", tenantUUID),
 		zap.String("file_id", fileID))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send delete request to AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		s.logger.Error("AudiModal file deletion failed",
+			zap.String("tenant_id", tenantID),
+			zap.String("tenant_uuid", tenantUUID),
 			zap.String("file_id", fileID),
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(body)))
 		return fmt.Errorf("AudiModal file deletion failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	s.logger.Info("File deleted successfully from AudiModal",
+		zap.String("tenant_id", tenantID),
+		zap.String("tenant_uuid", tenantUUID),
 		zap.String("file_id", fileID))
-	
+
 	return nil
 }
 
