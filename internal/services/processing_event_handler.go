@@ -24,7 +24,8 @@ type ProcessingCompleteEvent struct {
 
 // ProcessingCompleteData contains the processing result data
 type ProcessingCompleteData struct {
-	FileID              string        `json:"file_id"`              // AudiModal file UUID
+	FileID              string        `json:"file_id"`                        // AudiModal file UUID
+	DocumentID          string        `json:"document_id,omitempty"`          // Neo4j Document.id from Aether-BE for cross-service consistency
 	URL                 string        `json:"url"`
 	TotalProcessingTime time.Duration `json:"total_processing_time"`
 	ChunksCreated       int           `json:"chunks_created"`
@@ -85,15 +86,28 @@ func (h *ProcessingEventHandler) handleProcessingComplete(ctx context.Context, m
 		zap.String("source", event.Source),
 		zap.String("tenant_id", event.TenantID),
 		zap.String("file_id", event.Data.FileID),
+		zap.String("document_id", event.Data.DocumentID),
 		zap.String("storage_location", event.Data.StorageLocation),
 		zap.Int("chunks_created", event.Data.ChunksCreated),
 		zap.Bool("success", event.Data.Success),
 	)
 
-	// First, try to find document by audimodal file ID (most reliable method)
-	// This requires the processing_job_id to be set during document upload
+	// Document ID resolution priority:
+	// 1. DocumentID from event (most reliable - directly from AudiModal's stored neo4j_document_id)
+	// 2. Find by AudiModal file ID (requires processing_job_id to be set during upload)
+	// 3. Extract from URL/path or find by URL/filename
+
 	var documentID string
-	if event.Data.FileID != "" {
+
+	// Priority 1: Use DocumentID from event if available (most reliable method)
+	if event.Data.DocumentID != "" {
+		documentID = event.Data.DocumentID
+		h.logger.Info("Using document_id from event (most reliable)",
+			zap.String("document_id", documentID))
+	}
+
+	// Priority 2: Try to find document by audimodal file ID
+	if documentID == "" && event.Data.FileID != "" {
 		doc, err := h.documentService.FindDocumentByAudiModalFileID(ctx, event.Data.FileID, event.TenantID)
 		if err != nil {
 			h.logger.Warn("Error looking up document by audimodal file ID",
@@ -107,7 +121,7 @@ func (h *ProcessingEventHandler) handleProcessingComplete(ctx context.Context, m
 		}
 	}
 
-	// Fallback: try to extract from path or find by URL/filename
+	// Priority 3: Fallback - try to extract from path or find by URL/filename
 	if documentID == "" {
 		documentID = h.extractDocumentID(event.Data.URL, event.Data.StorageLocation)
 	}
