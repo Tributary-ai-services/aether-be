@@ -355,6 +355,12 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		spaces.GET("/:id", s.SpaceHandler.GetSpace)
 		spaces.PUT("/:id", s.SpaceHandler.UpdateSpace)
 		spaces.DELETE("/:id", s.SpaceHandler.DeleteSpace)
+
+		// Space member management routes
+		spaces.GET("/:id/members", s.SpaceHandler.ListSpaceMembers)
+		spaces.POST("/:id/members", s.SpaceHandler.AddSpaceMember)
+		spaces.PATCH("/:id/members/:userId", s.SpaceHandler.UpdateSpaceMember)
+		spaces.DELETE("/:id/members/:userId", s.SpaceHandler.RemoveSpaceMember)
 	}
 
 	// ML/Analytics routes

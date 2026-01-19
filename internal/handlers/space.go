@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -375,4 +376,340 @@ func (h *SpaceHandler) DeleteSpace(c *gin.Context) {
 		zap.String("space_id", spaceID))
 
 	c.Status(http.StatusNoContent)
+}
+
+// =============================================================================
+// Space Member Management Endpoints
+// =============================================================================
+
+// ListSpaceMembers lists all members of a space
+// @Summary List space members
+// @Description Get all members of a space with their roles
+// @Tags spaces
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Space ID"
+// @Param limit query int false "Limit" default(20)
+// @Param offset query int false "Offset" default(0)
+// @Success 200 {object} models.SpaceMembersListResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 403 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/spaces/{id}/members [get]
+func (h *SpaceHandler) ListSpaceMembers(c *gin.Context) {
+	spaceID := c.Param("id")
+	if spaceID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Space ID is required", nil))
+		return
+	}
+
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Check user has access to view this space
+	role, err := h.spaceService.GetUserRoleInSpace(c.Request.Context(), spaceID, userID)
+	if err != nil {
+		h.logger.Error("Failed to check user role", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+	if role == "" {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have access to this space", map[string]interface{}{
+			"space_id": spaceID,
+		}))
+		return
+	}
+
+	// Parse pagination
+	limit := 20
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := parseInt(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := parseInt(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	// Get members
+	response, err := h.spaceService.GetSpaceMembers(c.Request.Context(), spaceID, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to get space members", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// AddSpaceMember adds a member to a space
+// @Summary Add space member
+// @Description Invite a user to a space with a specific role
+// @Tags spaces
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Space ID"
+// @Param member body models.AddMemberRequest true "Member data"
+// @Success 201 {object} models.SpaceMemberResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 403 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 409 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/spaces/{id}/members [post]
+func (h *SpaceHandler) AddSpaceMember(c *gin.Context) {
+	spaceID := c.Param("id")
+	if spaceID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Space ID is required", nil))
+		return
+	}
+
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Check user has permission to invite members (owner or admin)
+	role, err := h.spaceService.GetUserRoleInSpace(c.Request.Context(), spaceID, userID)
+	if err != nil {
+		h.logger.Error("Failed to check user role", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+	if role == "" {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have access to this space", map[string]interface{}{
+			"space_id": spaceID,
+		}))
+		return
+	}
+	if !models.HasPermissionLevel(role, "admin") {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have permission to invite members", map[string]interface{}{
+			"space_id":      spaceID,
+			"current_role":  role,
+			"required_role": "admin",
+		}))
+		return
+	}
+
+	var req models.AddMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request payload", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request payload", err))
+		return
+	}
+
+	// Validate request
+	if err := validateStruct(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
+		return
+	}
+
+	// Add member
+	err = h.spaceService.AddMember(c.Request.Context(), spaceID, req.UserID, req.Role, userID)
+	if err != nil {
+		h.logger.Error("Failed to add member", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	h.logger.Info("Member added to space",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", req.UserID),
+		zap.String("role", req.Role),
+		zap.String("invited_by", userID))
+
+	// Return the new member info
+	response := &models.SpaceMemberResponse{
+		UserID:    req.UserID,
+		SpaceID:   spaceID,
+		Role:      req.Role,
+		InvitedBy: userID,
+	}
+
+	c.JSON(http.StatusCreated, response)
+}
+
+// UpdateSpaceMember updates a member's role in a space
+// @Summary Update space member
+// @Description Update a member's role in a space
+// @Tags spaces
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Space ID"
+// @Param userId path string true "User ID"
+// @Param role body models.UpdateMemberRoleRequest true "Role data"
+// @Success 200 {object} models.SpaceMemberResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 403 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/spaces/{id}/members/{userId} [patch]
+func (h *SpaceHandler) UpdateSpaceMember(c *gin.Context) {
+	spaceID := c.Param("id")
+	targetUserID := c.Param("userId")
+	if spaceID == "" || targetUserID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Space ID and User ID are required", nil))
+		return
+	}
+
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Check user has permission to update member roles (owner or admin)
+	role, err := h.spaceService.GetUserRoleInSpace(c.Request.Context(), spaceID, userID)
+	if err != nil {
+		h.logger.Error("Failed to check user role", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+	if role == "" {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have access to this space", map[string]interface{}{
+			"space_id": spaceID,
+		}))
+		return
+	}
+	if !models.HasPermissionLevel(role, "admin") {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have permission to update member roles", map[string]interface{}{
+			"space_id":      spaceID,
+			"current_role":  role,
+			"required_role": "admin",
+		}))
+		return
+	}
+
+	var req models.UpdateMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request payload", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request payload", err))
+		return
+	}
+
+	// Validate request
+	if err := validateStruct(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
+		return
+	}
+
+	// Update member role
+	err = h.spaceService.UpdateMemberRole(c.Request.Context(), spaceID, targetUserID, req.Role)
+	if err != nil {
+		h.logger.Error("Failed to update member role", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	h.logger.Info("Member role updated",
+		zap.String("space_id", spaceID),
+		zap.String("target_user_id", targetUserID),
+		zap.String("new_role", req.Role),
+		zap.String("updated_by", userID))
+
+	// Return updated member info
+	response := &models.SpaceMemberResponse{
+		UserID:  targetUserID,
+		SpaceID: spaceID,
+		Role:    req.Role,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// RemoveSpaceMember removes a member from a space
+// @Summary Remove space member
+// @Description Remove a user from a space
+// @Tags spaces
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Space ID"
+// @Param userId path string true "User ID"
+// @Success 204
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 403 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/spaces/{id}/members/{userId} [delete]
+func (h *SpaceHandler) RemoveSpaceMember(c *gin.Context) {
+	spaceID := c.Param("id")
+	targetUserID := c.Param("userId")
+	if spaceID == "" || targetUserID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Space ID and User ID are required", nil))
+		return
+	}
+
+	// Resolve Keycloak ID to internal user ID
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Check user has permission to remove members (owner or admin)
+	role, err := h.spaceService.GetUserRoleInSpace(c.Request.Context(), spaceID, userID)
+	if err != nil {
+		h.logger.Error("Failed to check user role", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+	if role == "" {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have access to this space", map[string]interface{}{
+			"space_id": spaceID,
+		}))
+		return
+	}
+	if !models.HasPermissionLevel(role, "admin") {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have permission to remove members", map[string]interface{}{
+			"space_id":      spaceID,
+			"current_role":  role,
+			"required_role": "admin",
+		}))
+		return
+	}
+
+	// Remove member
+	err = h.spaceService.RemoveMember(c.Request.Context(), spaceID, targetUserID)
+	if err != nil {
+		h.logger.Error("Failed to remove member", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	h.logger.Info("Member removed from space",
+		zap.String("space_id", spaceID),
+		zap.String("target_user_id", targetUserID),
+		zap.String("removed_by", userID))
+
+	c.Status(http.StatusNoContent)
+}
+
+// parseInt helper function
+func parseInt(s string) (int, error) {
+	var result int
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
 }
