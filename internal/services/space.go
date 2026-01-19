@@ -950,3 +950,296 @@ func (s *SpaceService) recordToSpaceMember(record interface{}, spaceID string) (
 
 	return member, nil
 }
+
+// =============================================================================
+// Consistency Validation Methods
+// =============================================================================
+
+// InconsistencyReport represents a detected inconsistency between embedded fields and relationships
+type InconsistencyReport struct {
+	EntityType         string `json:"entity_type"`          // "notebook" or "user"
+	EntityID           string `json:"entity_id"`            // ID of the entity
+	EmbeddedSpaceID    string `json:"embedded_space_id"`    // Space ID from embedded field
+	EmbeddedTenantID   string `json:"embedded_tenant_id"`   // Tenant ID from embedded field
+	RelationshipSpace  string `json:"relationship_space"`   // Space ID from relationship
+	RelationshipTenant string `json:"relationship_tenant"`  // Tenant ID from relationship Space
+	Issue              string `json:"issue"`                // Description of the inconsistency
+}
+
+// ConsistencyCheckResult contains the results of a consistency check
+type ConsistencyCheckResult struct {
+	TotalNotebooks             int                    `json:"total_notebooks"`
+	TotalUsers                 int                    `json:"total_users"`
+	InconsistentNotebooks      int                    `json:"inconsistent_notebooks"`
+	InconsistentUsers          int                    `json:"inconsistent_users"`
+	OrphanedNotebooks          int                    `json:"orphaned_notebooks"`
+	OrphanedSpaces             int                    `json:"orphaned_spaces"`
+	UsersWithoutOwnsRelation   int                    `json:"users_without_owns_relation"`
+	Inconsistencies            []*InconsistencyReport `json:"inconsistencies"`
+	CheckedAt                  time.Time              `json:"checked_at"`
+}
+
+// CheckConsistency performs a consistency check between embedded fields and relationships
+// This helps detect drift in the hybrid model (embedded fields + relationships)
+func (s *SpaceService) CheckConsistency(ctx context.Context) (*ConsistencyCheckResult, error) {
+	s.logger.Info("Running consistency check")
+
+	result := &ConsistencyCheckResult{
+		Inconsistencies: make([]*InconsistencyReport, 0),
+		CheckedAt:       time.Now(),
+	}
+
+	// Check notebook consistency
+	notebookInconsistencies, err := s.checkNotebookConsistency(ctx)
+	if err != nil {
+		s.logger.Error("Failed to check notebook consistency", zap.Error(err))
+		return nil, err
+	}
+	result.Inconsistencies = append(result.Inconsistencies, notebookInconsistencies...)
+	result.InconsistentNotebooks = len(notebookInconsistencies)
+
+	// Check user-space consistency
+	userInconsistencies, err := s.checkUserSpaceConsistency(ctx)
+	if err != nil {
+		s.logger.Error("Failed to check user-space consistency", zap.Error(err))
+		return nil, err
+	}
+	result.Inconsistencies = append(result.Inconsistencies, userInconsistencies...)
+	result.InconsistentUsers = len(userInconsistencies)
+
+	// Count orphaned entities
+	orphanCounts, err := s.countOrphanedEntities(ctx)
+	if err != nil {
+		s.logger.Error("Failed to count orphaned entities", zap.Error(err))
+		return nil, err
+	}
+	result.OrphanedNotebooks = orphanCounts["notebooks"]
+	result.OrphanedSpaces = orphanCounts["spaces"]
+	result.UsersWithoutOwnsRelation = orphanCounts["users"]
+
+	// Get totals
+	totals, err := s.getTotals(ctx)
+	if err != nil {
+		s.logger.Warn("Failed to get totals", zap.Error(err))
+	} else {
+		result.TotalNotebooks = totals["notebooks"]
+		result.TotalUsers = totals["users"]
+	}
+
+	s.logger.Info("Consistency check complete",
+		zap.Int("inconsistent_notebooks", result.InconsistentNotebooks),
+		zap.Int("inconsistent_users", result.InconsistentUsers),
+		zap.Int("orphaned_notebooks", result.OrphanedNotebooks),
+		zap.Int("orphaned_spaces", result.OrphanedSpaces),
+		zap.Int("total_inconsistencies", len(result.Inconsistencies)),
+	)
+
+	return result, nil
+}
+
+// checkNotebookConsistency checks if notebook embedded fields match their BELONGS_TO relationship
+func (s *SpaceService) checkNotebookConsistency(ctx context.Context) ([]*InconsistencyReport, error) {
+	query := `
+		MATCH (n:Notebook)
+		WHERE n.space_id IS NOT NULL
+		OPTIONAL MATCH (n)-[:BELONGS_TO]->(s:Space)
+		WITH n, s
+		WHERE s IS NULL
+		   OR n.space_id <> s.id
+		   OR (n.tenant_id IS NOT NULL AND s.tenant_id IS NOT NULL AND n.tenant_id <> s.tenant_id)
+		RETURN n.id as notebook_id,
+		       n.space_id as embedded_space_id,
+		       n.tenant_id as embedded_tenant_id,
+		       s.id as relationship_space_id,
+		       s.tenant_id as relationship_tenant_id,
+		       CASE
+		           WHEN s IS NULL THEN 'No BELONGS_TO relationship exists'
+		           WHEN n.space_id <> s.id THEN 'Space ID mismatch'
+		           WHEN n.tenant_id <> s.tenant_id THEN 'Tenant ID mismatch'
+		           ELSE 'Unknown'
+		       END as issue
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, nil)
+	if err != nil {
+		return nil, errors.Database("Failed to check notebook consistency", err)
+	}
+
+	reports := make([]*InconsistencyReport, 0, len(result.Records))
+	for _, record := range result.Records {
+		report := &InconsistencyReport{
+			EntityType: "notebook",
+		}
+
+		if val, ok := record.Get("notebook_id"); ok && val != nil {
+			report.EntityID = val.(string)
+		}
+		if val, ok := record.Get("embedded_space_id"); ok && val != nil {
+			report.EmbeddedSpaceID = val.(string)
+		}
+		if val, ok := record.Get("embedded_tenant_id"); ok && val != nil {
+			report.EmbeddedTenantID = val.(string)
+		}
+		if val, ok := record.Get("relationship_space_id"); ok && val != nil {
+			report.RelationshipSpace = val.(string)
+		}
+		if val, ok := record.Get("relationship_tenant_id"); ok && val != nil {
+			report.RelationshipTenant = val.(string)
+		}
+		if val, ok := record.Get("issue"); ok && val != nil {
+			report.Issue = val.(string)
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// checkUserSpaceConsistency checks if user personal_space_id matches their OWNS relationship
+func (s *SpaceService) checkUserSpaceConsistency(ctx context.Context) ([]*InconsistencyReport, error) {
+	query := `
+		MATCH (u:User)
+		WHERE u.personal_space_id IS NOT NULL
+		OPTIONAL MATCH (u)-[:OWNS]->(s:Space)
+		WITH u, s
+		WHERE s IS NULL
+		   OR u.personal_space_id <> s.id
+		RETURN u.id as user_id,
+		       u.personal_space_id as embedded_space_id,
+		       s.id as relationship_space_id,
+		       s.tenant_id as relationship_tenant_id,
+		       CASE
+		           WHEN s IS NULL THEN 'No OWNS relationship exists'
+		           WHEN u.personal_space_id <> s.id THEN 'Personal space ID mismatch'
+		           ELSE 'Unknown'
+		       END as issue
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, nil)
+	if err != nil {
+		return nil, errors.Database("Failed to check user-space consistency", err)
+	}
+
+	reports := make([]*InconsistencyReport, 0, len(result.Records))
+	for _, record := range result.Records {
+		report := &InconsistencyReport{
+			EntityType: "user",
+		}
+
+		if val, ok := record.Get("user_id"); ok && val != nil {
+			report.EntityID = val.(string)
+		}
+		if val, ok := record.Get("embedded_space_id"); ok && val != nil {
+			report.EmbeddedSpaceID = val.(string)
+		}
+		if val, ok := record.Get("relationship_space_id"); ok && val != nil {
+			report.RelationshipSpace = val.(string)
+		}
+		if val, ok := record.Get("relationship_tenant_id"); ok && val != nil {
+			report.RelationshipTenant = val.(string)
+		}
+		if val, ok := record.Get("issue"); ok && val != nil {
+			report.Issue = val.(string)
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// countOrphanedEntities counts entities with missing relationships
+func (s *SpaceService) countOrphanedEntities(ctx context.Context) (map[string]int, error) {
+	counts := make(map[string]int)
+
+	// Count orphaned notebooks (have space_id but no BELONGS_TO)
+	notebookQuery := `
+		MATCH (n:Notebook)
+		WHERE n.space_id IS NOT NULL
+		  AND NOT EXISTS { (n)-[:BELONGS_TO]->(:Space) }
+		RETURN count(n) as count
+	`
+	notebookResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, notebookQuery, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(notebookResult.Records) > 0 {
+		if val, ok := notebookResult.Records[0].Get("count"); ok {
+			if countInt, ok := val.(int64); ok {
+				counts["notebooks"] = int(countInt)
+			}
+		}
+	}
+
+	// Count orphaned personal spaces (no OWNS relationship)
+	spaceQuery := `
+		MATCH (s:Space {type: "personal"})
+		WHERE NOT EXISTS { (:User)-[:OWNS]->(s) }
+		RETURN count(s) as count
+	`
+	spaceResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, spaceQuery, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(spaceResult.Records) > 0 {
+		if val, ok := spaceResult.Records[0].Get("count"); ok {
+			if countInt, ok := val.(int64); ok {
+				counts["spaces"] = int(countInt)
+			}
+		}
+	}
+
+	// Count users with personal_space_id but no OWNS relationship
+	userQuery := `
+		MATCH (u:User)
+		WHERE u.personal_space_id IS NOT NULL
+		  AND NOT EXISTS { (u)-[:OWNS]->(:Space {id: u.personal_space_id}) }
+		RETURN count(u) as count
+	`
+	userResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, userQuery, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(userResult.Records) > 0 {
+		if val, ok := userResult.Records[0].Get("count"); ok {
+			if countInt, ok := val.(int64); ok {
+				counts["users"] = int(countInt)
+			}
+		}
+	}
+
+	return counts, nil
+}
+
+// getTotals gets total counts of entities
+func (s *SpaceService) getTotals(ctx context.Context) (map[string]int, error) {
+	totals := make(map[string]int)
+
+	query := `
+		MATCH (n:Notebook)
+		WITH count(n) as notebook_count
+		MATCH (u:User)
+		RETURN notebook_count, count(u) as user_count
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(result.Records) > 0 {
+		if val, ok := result.Records[0].Get("notebook_count"); ok {
+			if countInt, ok := val.(int64); ok {
+				totals["notebooks"] = int(countInt)
+			}
+		}
+		if val, ok := result.Records[0].Get("user_count"); ok {
+			if countInt, ok := val.(int64); ok {
+				totals["users"] = int(countInt)
+			}
+		}
+	}
+
+	return totals, nil
+}
