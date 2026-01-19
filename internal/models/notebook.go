@@ -19,7 +19,7 @@ type Notebook struct {
 
 	// Space and tenant information
 	SpaceType SpaceType `json:"space_type" validate:"required,oneof=personal organization"`
-	SpaceID   string    `json:"space_id" validate:"required,uuid"`
+	SpaceID   string    `json:"space_id" validate:"required"`
 	TenantID  string    `json:"tenant_id" validate:"required"`
 
 	// Parent notebook ID (for hierarchical structure)
