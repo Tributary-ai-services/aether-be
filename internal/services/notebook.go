@@ -139,6 +139,16 @@ func (s *NotebookService) CreateNotebook(ctx context.Context, req models.Noteboo
 		// Don't fail the entire operation, but this is more critical
 	}
 
+	// Create BELONGS_TO relationship to Space
+	if err := s.createBelongsToSpaceRelationship(ctx, notebook.ID, spaceCtx.SpaceID, spaceCtx.TenantID); err != nil {
+		// Log but don't fail - relationship can be created by migration
+		s.logger.Warn("Failed to create BELONGS_TO relationship",
+			zap.String("notebook_id", notebook.ID),
+			zap.String("space_id", spaceCtx.SpaceID),
+			zap.Error(err),
+		)
+	}
+
 	s.logger.Info("Notebook created successfully",
 		zap.String("notebook_id", notebook.ID),
 		zap.String("name", notebook.Name),
@@ -621,7 +631,7 @@ func (s *NotebookService) createParentChildRelationship(ctx context.Context, par
 
 func (s *NotebookService) createOwnerRelationship(ctx context.Context, userID, notebookID string, tenantID string) error {
 	query := `
-		MATCH (user:User {id: $user_id}), 
+		MATCH (user:User {id: $user_id}),
 		      (notebook:Notebook {id: $notebook_id, tenant_id: $tenant_id})
 		CREATE (notebook)-[:OWNED_BY]->(user)
 	`
@@ -633,6 +643,58 @@ func (s *NotebookService) createOwnerRelationship(ctx context.Context, userID, n
 
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	return err
+}
+
+// createBelongsToSpaceRelationship creates a BELONGS_TO relationship between a Notebook and its Space
+// This establishes explicit containment for RBAC via graph relationships
+func (s *NotebookService) createBelongsToSpaceRelationship(ctx context.Context, notebookID, spaceID, tenantID string) error {
+	s.logger.Info("Creating BELONGS_TO relationship",
+		zap.String("notebook_id", notebookID),
+		zap.String("space_id", spaceID),
+		zap.String("tenant_id", tenantID),
+	)
+
+	query := `
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}),
+		      (s:Space {id: $space_id})
+		MERGE (n)-[r:BELONGS_TO]->(s)
+		ON CREATE SET r.created_at = datetime()
+		RETURN r
+	`
+
+	params := map[string]interface{}{
+		"notebook_id": notebookID,
+		"space_id":    spaceID,
+		"tenant_id":   tenantID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to create BELONGS_TO relationship",
+			zap.String("notebook_id", notebookID),
+			zap.String("space_id", spaceID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to create BELONGS_TO relationship", err)
+	}
+
+	if len(result.Records) == 0 {
+		s.logger.Warn("BELONGS_TO relationship creation returned no records - Notebook or Space may not exist",
+			zap.String("notebook_id", notebookID),
+			zap.String("space_id", spaceID),
+		)
+		return errors.NotFoundWithDetails("Notebook or Space not found", map[string]interface{}{
+			"notebook_id": notebookID,
+			"space_id":    spaceID,
+		})
+	}
+
+	s.logger.Info("BELONGS_TO relationship created successfully",
+		zap.String("notebook_id", notebookID),
+		zap.String("space_id", spaceID),
+	)
+
+	return nil
 }
 
 func (s *NotebookService) createSharingRelationship(ctx context.Context, notebookID, userID, groupID, permission, grantedBy string) error {
