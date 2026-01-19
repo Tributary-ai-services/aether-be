@@ -271,6 +271,18 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		zap.String("username", user.Username),
 	)
 
+	// Create OWNS relationship between User and personal Space
+	if user.PersonalSpaceID != "" {
+		if err := s.createOwnsRelationship(ctx, user.ID, user.PersonalSpaceID); err != nil {
+			// Log but don't fail - relationship can be created by migration
+			s.logger.Warn("Failed to create OWNS relationship",
+				zap.String("user_id", user.ID),
+				zap.String("space_id", user.PersonalSpaceID),
+				zap.Error(err),
+			)
+		}
+	}
+
 	return user, nil
 }
 
@@ -326,6 +338,55 @@ func (s *UserService) createPersonalSpace(ctx context.Context, user *models.User
 	s.logger.Info("Personal space created successfully",
 		zap.String("user_id", user.ID),
 		zap.String("space_id", user.PersonalSpaceID),
+	)
+
+	return nil
+}
+
+// createOwnsRelationship creates an OWNS relationship between a User and a Space
+// This establishes explicit ownership for RBAC via graph relationships
+func (s *UserService) createOwnsRelationship(ctx context.Context, userID, spaceID string) error {
+	s.logger.Info("Creating OWNS relationship",
+		zap.String("user_id", userID),
+		zap.String("space_id", spaceID),
+	)
+
+	query := `
+		MATCH (u:User {id: $user_id}), (s:Space {id: $space_id})
+		MERGE (u)-[r:OWNS]->(s)
+		ON CREATE SET r.created_at = datetime()
+		RETURN r
+	`
+
+	params := map[string]interface{}{
+		"user_id":  userID,
+		"space_id": spaceID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to create OWNS relationship",
+			zap.String("user_id", userID),
+			zap.String("space_id", spaceID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to create OWNS relationship", err)
+	}
+
+	if len(result.Records) == 0 {
+		s.logger.Warn("OWNS relationship creation returned no records - User or Space may not exist",
+			zap.String("user_id", userID),
+			zap.String("space_id", spaceID),
+		)
+		return errors.NotFoundWithDetails("User or Space not found", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	s.logger.Info("OWNS relationship created successfully",
+		zap.String("user_id", userID),
+		zap.String("space_id", spaceID),
 	)
 
 	return nil
