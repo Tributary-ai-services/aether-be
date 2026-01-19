@@ -548,3 +548,405 @@ func (s *SpaceService) getRolePermissions(role string) []string {
 		return []string{"read"}
 	}
 }
+
+// =============================================================================
+// MEMBER_OF Relationship Methods
+// =============================================================================
+
+// AddMember adds a user as a member of a space with the specified role
+// Creates a MEMBER_OF relationship between User and Space
+func (s *SpaceService) AddMember(ctx context.Context, spaceID, userID, role, invitedBy string) error {
+	s.logger.Info("Adding member to space",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+		zap.String("role", role),
+		zap.String("invited_by", invitedBy),
+	)
+
+	// Validate role
+	if !s.isValidRole(role) {
+		return errors.ValidationWithDetails("Invalid role", map[string]interface{}{
+			"role":        role,
+			"valid_roles": []string{"admin", "member", "viewer"},
+		})
+	}
+
+	// Check if user already has access (via OWNS or MEMBER_OF)
+	existingRole, err := s.GetUserRoleInSpace(ctx, spaceID, userID)
+	if err != nil {
+		return err
+	}
+	if existingRole != "" {
+		return errors.ConflictWithDetails("User already has access to this space", map[string]interface{}{
+			"user_id":       userID,
+			"space_id":      spaceID,
+			"existing_role": existingRole,
+		})
+	}
+
+	// Verify space exists
+	_, err = s.GetSpaceByID(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	// Create MEMBER_OF relationship
+	query := `
+		MATCH (u:User {id: $user_id}), (sp:Space {id: $space_id})
+		CREATE (u)-[r:MEMBER_OF {
+			role: $role,
+			permissions: $permissions,
+			joined_at: datetime(),
+			invited_by: $invited_by
+		}]->(sp)
+		RETURN r.role
+	`
+
+	params := map[string]interface{}{
+		"user_id":     userID,
+		"space_id":    spaceID,
+		"role":        role,
+		"permissions": s.getRolePermissions(role),
+		"invited_by":  invitedBy,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to add member to space",
+			zap.String("space_id", spaceID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to add member to space", err)
+	}
+
+	if len(result.Records) == 0 {
+		return errors.NotFoundWithDetails("User or Space not found", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	s.logger.Info("Member added to space successfully",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+		zap.String("role", role),
+	)
+
+	return nil
+}
+
+// GetSpaceMembers returns all members of a space with their roles
+func (s *SpaceService) GetSpaceMembers(ctx context.Context, spaceID string, limit, offset int) (*models.SpaceMembersListResponse, error) {
+	s.logger.Debug("Getting space members",
+		zap.String("space_id", spaceID),
+		zap.Int("limit", limit),
+		zap.Int("offset", offset),
+	)
+
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Get all members including owner (via OWNS) and members (via MEMBER_OF)
+	query := `
+		MATCH (sp:Space {id: $space_id})
+		// Get owner
+		OPTIONAL MATCH (owner:User)-[:OWNS]->(sp)
+		// Get members
+		OPTIONAL MATCH (member:User)-[m:MEMBER_OF]->(sp)
+		// Combine results
+		WITH sp,
+		     COLLECT(DISTINCT {
+		         user: owner,
+		         role: 'owner',
+		         joined_at: sp.created_at,
+		         invited_by: null
+		     }) as owners,
+		     COLLECT(DISTINCT {
+		         user: member,
+		         role: m.role,
+		         joined_at: m.joined_at,
+		         invited_by: m.invited_by
+		     }) as members
+		UNWIND (owners + members) as member_info
+		WHERE member_info.user IS NOT NULL
+		RETURN member_info.user.id as user_id,
+		       member_info.user.username as username,
+		       member_info.user.email as email,
+		       member_info.user.full_name as full_name,
+		       member_info.user.avatar_url as avatar_url,
+		       member_info.role as role,
+		       member_info.joined_at as joined_at,
+		       member_info.invited_by as invited_by
+		ORDER BY
+		    CASE member_info.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2 ELSE 3 END,
+		    member_info.joined_at
+		SKIP $offset
+		LIMIT $limit
+	`
+
+	params := map[string]interface{}{
+		"space_id": spaceID,
+		"limit":    limit,
+		"offset":   offset,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to get space members", zap.String("space_id", spaceID), zap.Error(err))
+		return nil, errors.Database("Failed to retrieve space members", err)
+	}
+
+	members := make([]*models.SpaceMemberResponse, 0, len(result.Records))
+	for _, record := range result.Records {
+		member, err := s.recordToSpaceMember(record, spaceID)
+		if err != nil {
+			s.logger.Warn("Failed to parse member record", zap.Error(err))
+			continue
+		}
+		members = append(members, member)
+	}
+
+	// Get total count
+	countQuery := `
+		MATCH (sp:Space {id: $space_id})
+		OPTIONAL MATCH (owner:User)-[:OWNS]->(sp)
+		OPTIONAL MATCH (member:User)-[:MEMBER_OF]->(sp)
+		RETURN count(DISTINCT owner) + count(DISTINCT member) as total
+	`
+
+	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{
+		"space_id": spaceID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to get member count", zap.Error(err))
+		return &models.SpaceMembersListResponse{
+			Members: members,
+			Total:   len(members),
+			Limit:   limit,
+			Offset:  offset,
+			HasMore: false,
+		}, nil
+	}
+
+	total := 0
+	if len(countResult.Records) > 0 {
+		if totalValue, found := countResult.Records[0].Get("total"); found {
+			if totalInt, ok := totalValue.(int64); ok {
+				total = int(totalInt)
+			}
+		}
+	}
+
+	return &models.SpaceMembersListResponse{
+		Members: members,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+		HasMore: offset+len(members) < total,
+	}, nil
+}
+
+// UpdateMemberRole updates a member's role in a space
+func (s *SpaceService) UpdateMemberRole(ctx context.Context, spaceID, userID, newRole string) error {
+	s.logger.Info("Updating member role",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+		zap.String("new_role", newRole),
+	)
+
+	// Validate role
+	if !s.isValidRole(newRole) {
+		return errors.ValidationWithDetails("Invalid role", map[string]interface{}{
+			"role":        newRole,
+			"valid_roles": []string{"admin", "member", "viewer"},
+		})
+	}
+
+	// Check if user is the owner - owner role cannot be changed via this method
+	currentRole, err := s.GetUserRoleInSpace(ctx, spaceID, userID)
+	if err != nil {
+		return err
+	}
+	if currentRole == "" {
+		return errors.NotFoundWithDetails("User is not a member of this space", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+	if currentRole == "owner" {
+		return errors.ForbiddenWithDetails("Cannot change owner's role", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	// Update MEMBER_OF relationship
+	query := `
+		MATCH (u:User {id: $user_id})-[r:MEMBER_OF]->(sp:Space {id: $space_id})
+		SET r.role = $new_role,
+		    r.permissions = $permissions,
+		    r.updated_at = datetime()
+		RETURN r.role
+	`
+
+	params := map[string]interface{}{
+		"user_id":     userID,
+		"space_id":    spaceID,
+		"new_role":    newRole,
+		"permissions": s.getRolePermissions(newRole),
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to update member role",
+			zap.String("space_id", spaceID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to update member role", err)
+	}
+
+	if len(result.Records) == 0 {
+		return errors.NotFoundWithDetails("Membership not found", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	s.logger.Info("Member role updated successfully",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+		zap.String("new_role", newRole),
+	)
+
+	return nil
+}
+
+// RemoveMember removes a member from a space
+func (s *SpaceService) RemoveMember(ctx context.Context, spaceID, userID string) error {
+	s.logger.Info("Removing member from space",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+	)
+
+	// Check if user is the owner - owner cannot be removed
+	currentRole, err := s.GetUserRoleInSpace(ctx, spaceID, userID)
+	if err != nil {
+		return err
+	}
+	if currentRole == "" {
+		return errors.NotFoundWithDetails("User is not a member of this space", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+	if currentRole == "owner" {
+		return errors.ForbiddenWithDetails("Cannot remove owner from space", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	// Delete MEMBER_OF relationship
+	query := `
+		MATCH (u:User {id: $user_id})-[r:MEMBER_OF]->(sp:Space {id: $space_id})
+		DELETE r
+		RETURN count(*) as deleted
+	`
+
+	params := map[string]interface{}{
+		"user_id":  userID,
+		"space_id": spaceID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to remove member from space",
+			zap.String("space_id", spaceID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to remove member from space", err)
+	}
+
+	// Check if deletion actually happened
+	if len(result.Records) > 0 {
+		if deleted, found := result.Records[0].Get("deleted"); found {
+			if deletedInt, ok := deleted.(int64); ok && deletedInt == 0 {
+				return errors.NotFoundWithDetails("Membership not found", map[string]interface{}{
+					"user_id":  userID,
+					"space_id": spaceID,
+				})
+			}
+		}
+	}
+
+	s.logger.Info("Member removed from space successfully",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+	)
+
+	return nil
+}
+
+// isValidRole checks if a role is valid for MEMBER_OF relationships
+// Note: "owner" is not valid here - ownership is via OWNS relationship
+func (s *SpaceService) isValidRole(role string) bool {
+	validRoles := map[string]bool{
+		"admin":  true,
+		"member": true,
+		"viewer": true,
+	}
+	return validRoles[role]
+}
+
+// recordToSpaceMember converts a Neo4j record to SpaceMemberResponse
+func (s *SpaceService) recordToSpaceMember(record interface{}, spaceID string) (*models.SpaceMemberResponse, error) {
+	r, ok := record.(*neo4j.Record)
+	if !ok {
+		return nil, errors.Internal("Invalid record type")
+	}
+
+	member := &models.SpaceMemberResponse{
+		SpaceID: spaceID,
+	}
+
+	if val, ok := r.Get("user_id"); ok && val != nil {
+		member.UserID = val.(string)
+	}
+	if val, ok := r.Get("role"); ok && val != nil {
+		member.Role = val.(string)
+	}
+	if val, ok := r.Get("username"); ok && val != nil {
+		member.UserName = val.(string)
+	}
+	if val, ok := r.Get("email"); ok && val != nil {
+		member.UserEmail = val.(string)
+	}
+	if val, ok := r.Get("full_name"); ok && val != nil {
+		member.UserName = val.(string) // Use full_name if available
+	}
+	if val, ok := r.Get("avatar_url"); ok && val != nil {
+		member.Avatar = val.(string)
+	}
+	if val, ok := r.Get("invited_by"); ok && val != nil {
+		member.InvitedBy = val.(string)
+	}
+
+	// Parse joined_at timestamp
+	if val, ok := r.Get("joined_at"); ok && val != nil {
+		if t, ok := val.(time.Time); ok {
+			member.JoinedAt = t
+		}
+	}
+
+	// Set permissions based on role
+	member.Permissions = s.getRolePermissions(member.Role)
+
+	return member, nil
+}
