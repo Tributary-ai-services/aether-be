@@ -1,3 +1,4 @@
+//go:build ignore
 package main
 
 import (
@@ -7,21 +8,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/database"
+	"github.com/Tributary-ai-services/aether-be/internal/logger"
 )
 
 // Migration to add space_id and ensure tenant_id for all notebooks and documents
 func main() {
 	// Load configuration
-	cfg, err := config.LoadConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("Failed to load config:", err)
 	}
 
+	// Initialize logger
+	appLogger, err := logger.NewDefault()
+	if err != nil {
+		log.Fatal("Failed to initialize logger:", err)
+	}
+
 	// Connect to Neo4j
-	neo4jClient, err := database.NewNeo4jClient(cfg.Database.Neo4j)
+	neo4jClient, err := database.NewNeo4jClient(cfg.Neo4j, appLogger)
 	if err != nil {
 		log.Fatal("Failed to connect to Neo4j:", err)
 	}

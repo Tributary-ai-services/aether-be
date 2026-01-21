@@ -74,26 +74,67 @@ func (h *SpaceHandler) CreateSpace(c *gin.Context) {
 		return
 	}
 
-	// For now, only support organization spaces via this endpoint
-	// Personal spaces are auto-created
+	// Organization ID is REQUIRED - spaces must belong to an organization
 	if req.OrganizationID == "" {
-		c.JSON(http.StatusBadRequest, errors.BadRequest("Organization ID is required for space creation"))
+		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Organization ID is required", map[string]interface{}{
+			"field": "organization_id",
+		}))
 		return
 	}
 
-	// TODO: Implement organization space creation
-	// This would involve:
-	// 1. Validate user has permission to create spaces in the organization
-	// 2. Create tenant in AudiModal for the space
-	// 3. Create space record in database
-	// 4. Set up initial permissions
+	// Verify user is owner or admin of the organization
+	role, err := h.organizationService.GetUserRoleInOrganization(c.Request.Context(), req.OrganizationID, userID)
+	if err != nil {
+		h.logger.Error("Failed to check organization membership",
+			zap.String("user_id", userID),
+			zap.String("org_id", req.OrganizationID),
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
 
-	h.logger.Info("Space creation requested", 
+	if role == "" {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You are not a member of this organization", map[string]interface{}{
+			"organization_id": req.OrganizationID,
+		}))
+		return
+	}
+
+	if role != "owner" && role != "admin" {
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("Only organization owners and admins can create spaces", map[string]interface{}{
+			"your_role":       role,
+			"organization_id": req.OrganizationID,
+		}))
+		return
+	}
+
+	h.logger.Info("Creating organization space",
 		zap.String("user_id", userID),
 		zap.String("org_id", req.OrganizationID),
-		zap.String("space_name", req.Name))
+		zap.String("space_name", req.Name),
+		zap.String("user_role_in_org", role))
 
-	c.JSON(http.StatusNotImplemented, errors.BadRequest("Organization space creation not yet implemented"))
+	// Create the space using SpaceService
+	space, err := h.spaceService.CreateSpace(c.Request.Context(), userID, req)
+	if err != nil {
+		h.logger.Error("Failed to create space",
+			zap.String("user_id", userID),
+			zap.String("org_id", req.OrganizationID),
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Convert to response with user's role (owner since they created it)
+	response := space.ToFullResponse()
+	response.UserRole = "owner"
+
+	h.logger.Info("Space created successfully",
+		zap.String("space_id", space.ID),
+		zap.String("tenant_id", space.TenantID),
+		zap.String("user_id", userID))
+
+	c.JSON(http.StatusCreated, response)
 }
 
 // GetSpaces gets spaces available to current user

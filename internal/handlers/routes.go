@@ -53,8 +53,8 @@ func NewAPIServer(
 	// Initialize services
 	userService := services.NewUserService(neo4j, audiModalClient, log)
 	organizationService := services.NewOrganizationService(neo4j, audiModalClient, log)
-	spaceContextService := services.NewSpaceContextService(userService, organizationService, audiModalClient, log)
 	spaceService := services.NewSpaceService(neo4j, log)
+	spaceContextService := services.NewSpaceContextService(userService, organizationService, spaceService, audiModalClient, log)
 	notebookService := services.NewNotebookService(neo4j, log)
 	documentService := services.NewDocumentService(neo4j, notebookService, log)
 	chunkService := services.NewChunkService(neo4j, log)

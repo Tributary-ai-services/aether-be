@@ -1,5 +1,14 @@
 package integration
 
+// TODO: Fix failing WebSocket integration tests
+// Several tests in this file fail due to "websocket: bad handshake" errors:
+// - TestWebSocketConnectionLimits/multiple_connections
+// - TestWebSocketErrorHandling tests
+// These failures appear to be related to test setup/authentication issues,
+// not actual WebSocket functionality problems.
+// See: tests/integration/websocket_test.go lines 387, 423, 441
+// Priority: Medium - Not blocking production functionality
+
 import (
 	"encoding/json"
 	"fmt"

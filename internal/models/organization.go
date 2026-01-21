@@ -48,7 +48,7 @@ type OrganizationCreateRequest struct {
 	Website      string                 `json:"website,omitempty" validate:"omitempty,url,max=500"`
 	Location     string                 `json:"location,omitempty" validate:"omitempty,safe_string,max=200"`
 	Visibility   string                 `json:"visibility" validate:"required,oneof=public private"`
-	BillingEmail string                 `json:"billing_email,omitempty" validate:"omitempty,email,max=254"`
+	BillingEmail string                 `json:"billingEmail,omitempty" validate:"omitempty,email,max=254"`
 	Billing      map[string]interface{} `json:"billing,omitempty" validate:"omitempty,neo4j_compatible"`
 	Settings     map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
 }

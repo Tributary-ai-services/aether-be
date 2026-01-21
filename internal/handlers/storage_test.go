@@ -1,11 +1,17 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
-	
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// StorageService interface for storage operations used in test handlers
+type StorageService interface {
+	UploadFileToTenantBucket(ctx context.Context, tenantID, key string, data []byte, contentType string) (string, error)
+}
 
 // TestStorageHandler handles storage testing endpoints
 type TestStorageHandler struct {

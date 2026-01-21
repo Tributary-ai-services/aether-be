@@ -89,24 +89,31 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 				Name:         fmt.Sprintf("%s-personal", existingUserByEmail.Username),
 				DisplayName:  fmt.Sprintf("%s's Personal Space", existingUserByEmail.FullName),
 				BillingPlan:  "personal",
-				ContactEmail: existingUserByEmail.Email,
-				Quotas: map[string]interface{}{
-					"max_data_sources":      10,
-					"max_files":            1000,
-					"max_storage_mb":        5120, // 5GB
-					"max_vector_dimensions": 1536,
-					"max_monthly_searches":  10000,
+				BillingEmail: existingUserByEmail.Email,
+				Quotas: TenantQuotas{
+					FilesPerHour:         100,
+					StorageGB:            5,
+					ComputeHours:         10,
+					APIRequestsPerMinute: 100,
+					MaxConcurrentJobs:    2,
+					MaxFileSize:          52428800, // 50MB
+					MaxChunksPerFile:     500,
+					VectorStorageGB:      5,
 				},
-				Compliance: map[string]interface{}{
-					"data_retention_days":   365,
-					"encryption_enabled":    true,
-					"audit_logging_enabled": true,
-					"gdpr_compliant":       true,
+				Compliance: TenantCompliance{
+					GDPR:               true,
+					HIPAA:              false,
+					SOX:                false,
+					PCI:                false,
+					DataResidency:      []string{},
+					RetentionDays:      365,
+					EncryptionRequired: true,
 				},
-				Settings: map[string]interface{}{
-					"user_id":       existingUserByEmail.ID,
-					"user_email":    existingUserByEmail.Email,
-					"creation_type": "retroactive_setup",
+				ContactInfo: TenantContactInfo{
+					AdminEmail:     existingUserByEmail.Email,
+					SecurityEmail:  existingUserByEmail.Email,
+					BillingEmail:   existingUserByEmail.Email,
+					TechnicalEmail: existingUserByEmail.Email,
 				},
 			}
 			
@@ -167,24 +174,31 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		Name:         fmt.Sprintf("%s-personal", user.Username),
 		DisplayName:  fmt.Sprintf("%s's Personal Space", user.FullName),
 		BillingPlan:  "personal",
-		ContactEmail: user.Email,
-		Quotas: map[string]interface{}{
-			"max_data_sources":      10,
-			"max_files":            1000,
-			"max_storage_mb":        5120, // 5GB
-			"max_vector_dimensions": 1536,
-			"max_monthly_searches":  10000,
+		BillingEmail: user.Email,
+		Quotas: TenantQuotas{
+			FilesPerHour:         100,
+			StorageGB:            5,
+			ComputeHours:         10,
+			APIRequestsPerMinute: 100,
+			MaxConcurrentJobs:    2,
+			MaxFileSize:          52428800, // 50MB
+			MaxChunksPerFile:     500,
+			VectorStorageGB:      5,
 		},
-		Compliance: map[string]interface{}{
-			"data_retention_days":   365,
-			"encryption_enabled":    true,
-			"audit_logging_enabled": true,
-			"gdpr_compliant":       true,
+		Compliance: TenantCompliance{
+			GDPR:               true,
+			HIPAA:              false,
+			SOX:                false,
+			PCI:                false,
+			DataResidency:      []string{},
+			RetentionDays:      365,
+			EncryptionRequired: true,
 		},
-		Settings: map[string]interface{}{
-			"user_id":       user.ID,
-			"user_email":    user.Email,
-			"creation_type": "user_registration",
+		ContactInfo: TenantContactInfo{
+			AdminEmail:     user.Email,
+			SecurityEmail:  user.Email,
+			BillingEmail:   user.Email,
+			TechnicalEmail: user.Email,
 		},
 	}
 

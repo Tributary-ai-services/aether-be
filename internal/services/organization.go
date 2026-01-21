@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -158,6 +159,20 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		})
 		RETURN o`
 
+	// Serialize settings and billing to JSON strings for Neo4j storage
+	// (Neo4j cannot store nested maps as properties)
+	var settingsJSON, billingJSON string
+	if org.Settings != nil {
+		if data, err := json.Marshal(org.Settings); err == nil {
+			settingsJSON = string(data)
+		}
+	}
+	if org.Billing != nil {
+		if data, err := json.Marshal(org.Billing); err == nil {
+			billingJSON = string(data)
+		}
+	}
+
 	params := map[string]interface{}{
 		"id":              org.ID,
 		"name":            org.Name,
@@ -169,8 +184,8 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		"visibility":      org.Visibility,
 		"tenant_id":       org.TenantID,
 		"tenant_api_key":  org.TenantAPIKey,
-		"billing":         org.Billing,
-		"settings":        org.Settings,
+		"billing":         billingJSON,
+		"settings":        settingsJSON,
 		"created_by":      org.CreatedBy,
 		"created_at":      org.CreatedAt.Format(time.RFC3339),
 		"updated_at":      org.UpdatedAt.Format(time.RFC3339),
@@ -219,6 +234,10 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 			zap.String("tenant_id", defaultSpace.TenantID))
 	}
 
+	// Set the creator's role for the response (they're automatically the owner)
+	org.UserRole = "owner"
+	org.MemberCount = 1
+
 	s.logger.Info("Organization created successfully", zap.String("org_id", org.ID), zap.String("created_by", createdBy))
 	return org, nil
 }
@@ -228,9 +247,11 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 func (s *OrganizationService) GetOrganization(ctx context.Context, orgID string, userID string) (*models.Organization, error) {
 	query := `
 		MATCH (o:Organization {id: $org_id})
-		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-(u:User {keycloak_id: $keycloak_id})
+		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
+		WITH o, r.role as user_role
 		OPTIONAL MATCH (o)<-[:MEMBER_OF]-()
-		WITH o, r.role as user_role, count(*) as member_count
+		WITH o, user_role, count(*) as member_count
 		OPTIONAL MATCH (t:Team {organization_id: o.id})
 		WITH o, user_role, member_count, count(t) as team_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(o)
@@ -238,8 +259,8 @@ func (s *OrganizationService) GetOrganization(ctx context.Context, orgID string,
 		RETURN o, user_role, member_count, team_count, notebook_count`
 
 	params := map[string]interface{}{
-		"org_id":      orgID,
-		"keycloak_id": userID,
+		"org_id":  orgID,
+		"user_id": userID,
 	}
 
 	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
@@ -279,10 +300,11 @@ func (s *OrganizationService) GetOrganization(ctx context.Context, orgID string,
 }
 
 // GetOrganizations retrieves organizations for a user
-// Note: userID parameter is the Keycloak ID from JWT, not the internal User ID
+// Note: userID parameter can be either the Keycloak ID or internal Neo4j User ID
 func (s *OrganizationService) GetOrganizations(ctx context.Context, userID string) ([]*models.Organization, error) {
 	query := `
-		MATCH (o:Organization)<-[r:MEMBER_OF]-(u:User {keycloak_id: $keycloak_id})
+		MATCH (o:Organization)<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
 		WITH o, r.role as user_role
 		OPTIONAL MATCH (o)<-[:MEMBER_OF]-()
 		WITH o, user_role, count(*) as member_count
@@ -294,7 +316,7 @@ func (s *OrganizationService) GetOrganizations(ctx context.Context, userID strin
 		ORDER BY o.created_at DESC`
 
 	params := map[string]interface{}{
-		"keycloak_id": userID,
+		"user_id": userID,
 	}
 
 	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
@@ -397,11 +419,21 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, orgID stri
 	}
 	if req.Billing != nil {
 		setParts = append(setParts, "o.billing = $billing")
-		params["billing"] = req.Billing
+		// Serialize billing to JSON string for Neo4j storage
+		if data, err := json.Marshal(req.Billing); err == nil {
+			params["billing"] = string(data)
+		} else {
+			params["billing"] = ""
+		}
 	}
 	if req.Settings != nil {
 		setParts = append(setParts, "o.settings = $settings")
-		params["settings"] = req.Settings
+		// Serialize settings to JSON string for Neo4j storage
+		if data, err := json.Marshal(req.Settings); err == nil {
+			params["settings"] = string(data)
+		} else {
+			params["settings"] = ""
+		}
 	}
 
 	if len(setParts) == 0 {
@@ -850,12 +882,29 @@ func (s *OrganizationService) recordToOrganization(record *neo4j.Record) (*model
 		org.Location = location.(string)
 	}
 
+	// Deserialize billing and settings from JSON strings (stored in Neo4j as strings)
 	if billing, ok := props["billing"]; ok && billing != nil {
-		org.Billing = billing.(map[string]interface{})
+		if billingStr, ok := billing.(string); ok && billingStr != "" {
+			var billingMap map[string]interface{}
+			if err := json.Unmarshal([]byte(billingStr), &billingMap); err == nil {
+				org.Billing = billingMap
+			}
+		} else if billingMap, ok := billing.(map[string]interface{}); ok {
+			// Backwards compatibility: handle old records that stored maps directly
+			org.Billing = billingMap
+		}
 	}
 
 	if settings, ok := props["settings"]; ok && settings != nil {
-		org.Settings = settings.(map[string]interface{})
+		if settingsStr, ok := settings.(string); ok && settingsStr != "" {
+			var settingsMap map[string]interface{}
+			if err := json.Unmarshal([]byte(settingsStr), &settingsMap); err == nil {
+				org.Settings = settingsMap
+			}
+		} else if settingsMap, ok := settings.(map[string]interface{}); ok {
+			// Backwards compatibility: handle old records that stored maps directly
+			org.Settings = settingsMap
+		}
 	}
 
 	if createdAt, ok := props["created_at"]; ok {

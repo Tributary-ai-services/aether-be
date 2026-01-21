@@ -47,7 +47,7 @@ type NotebookCreateRequest struct {
 	Name               string                 `json:"name" validate:"required,safe_string,min=1,max=255"`
 	Description        string                 `json:"description,omitempty" validate:"safe_string,max=1000"`
 	Visibility         string                 `json:"visibility" validate:"required,notebook_visibility"`
-	ParentID           string                 `json:"parent_id,omitempty" validate:"omitempty,uuid"`
+	ParentID           string                 `json:"parentId,omitempty" validate:"omitempty,uuid"`
 	TeamID             string                 `json:"team_id,omitempty" validate:"omitempty,uuid"`
 	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty" validate:"omitempty,neo4j_compatible"`
 	Tags               []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -26,6 +27,146 @@ func NewSpaceService(neo4j *database.Neo4jClient, log *logger.Logger) *SpaceServ
 		neo4j:  neo4j,
 		logger: log.WithService("space_service"),
 	}
+}
+
+// CreateSpace creates a new organization space linked to an organization via HAS_SPACE relationship
+// Organization ID is REQUIRED - spaces must belong to an organization
+func (s *SpaceService) CreateSpace(ctx context.Context, userID string, req models.SpaceCreateRequest) (*models.Space, error) {
+	// Organization ID is REQUIRED for space creation
+	if req.OrganizationID == "" {
+		return nil, errors.ValidationWithDetails("Organization ID is required", map[string]interface{}{
+			"field": "organization_id",
+		})
+	}
+
+	s.logger.Info("Creating organization space",
+		zap.String("user_id", userID),
+		zap.String("org_id", req.OrganizationID),
+		zap.String("name", req.Name),
+	)
+
+	// Validate organization exists
+	orgExistsQuery := `MATCH (o:Organization {id: $org_id}) RETURN o.id, o.name`
+	orgResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, orgExistsQuery, map[string]interface{}{
+		"org_id": req.OrganizationID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to check organization existence",
+			zap.String("org_id", req.OrganizationID),
+			zap.Error(err),
+		)
+		return nil, errors.Database("Failed to verify organization", err)
+	}
+	if len(orgResult.Records) == 0 {
+		return nil, errors.NotFoundWithDetails("Organization not found", map[string]interface{}{
+			"organization_id": req.OrganizationID,
+		})
+	}
+
+	// Create the space using the factory method
+	spaceName := req.Name
+	space := models.NewSpace(
+		spaceName,
+		req.Description,
+		models.SpaceTypeOrganization,
+		req.OrganizationID,
+		models.SpaceOwnerTypeOrganization,
+	)
+
+	// Override visibility if provided
+	if req.Visibility != "" {
+		space.Visibility = req.Visibility
+	}
+
+	// Apply default settings for organization spaces
+	space.Settings = models.DefaultSpaceSettings(models.SpaceTypeOrganization)
+
+	// Serialize settings to JSON string for Neo4j (Neo4j doesn't support nested maps)
+	settingsJSON := ""
+	if space.Settings != nil {
+		settingsBytes, err := json.Marshal(space.Settings)
+		if err != nil {
+			s.logger.Error("Failed to serialize space settings",
+				zap.Error(err),
+			)
+			return nil, errors.Internal("Failed to serialize space settings")
+		}
+		settingsJSON = string(settingsBytes)
+	}
+
+	// Create the Space node in Neo4j AND link it to the Organization via HAS_SPACE relationship
+	createQuery := `
+		MATCH (o:Organization {id: $org_id})
+		CREATE (sp:Space {
+			id: $id,
+			tenant_id: $tenant_id,
+			audimodal_tenant_id: $audimodal_tenant_id,
+			deeplake_namespace: $deeplake_namespace,
+			name: $name,
+			description: $description,
+			space_type: $type,
+			visibility: $visibility,
+			owner_id: $owner_id,
+			owner_type: $owner_type,
+			status: $status,
+			settings: $settings,
+			created_at: datetime($created_at),
+			updated_at: datetime($updated_at)
+		})
+		CREATE (o)-[:HAS_SPACE {
+			created_at: datetime(),
+			is_default: false
+		}]->(sp)
+		RETURN sp.id
+	`
+
+	createParams := map[string]interface{}{
+		"org_id":              req.OrganizationID,
+		"id":                  space.ID,
+		"tenant_id":           space.TenantID,
+		"audimodal_tenant_id": space.AudimodalTenantID,
+		"deeplake_namespace":  space.DeeplakeNamespace,
+		"name":                space.Name,
+		"description":         space.Description,
+		"type":                string(space.Type),
+		"visibility":          space.Visibility,
+		"owner_id":            space.OwnerID,
+		"owner_type":          string(space.OwnerType),
+		"status":              string(space.Status),
+		"settings":            settingsJSON, // Stored as JSON string
+		"created_at":          space.CreatedAt.Format(time.RFC3339),
+		"updated_at":          space.UpdatedAt.Format(time.RFC3339),
+	}
+
+	createResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, createQuery, createParams)
+	if err != nil {
+		s.logger.Error("Failed to create space node with HAS_SPACE relationship",
+			zap.String("space_id", space.ID),
+			zap.String("org_id", req.OrganizationID),
+			zap.Error(err),
+		)
+		return nil, errors.Database("Failed to create space", err)
+	}
+
+	// Verify the space was created (org must exist for MATCH to return records)
+	if len(createResult.Records) == 0 {
+		s.logger.Error("Space not created - organization MATCH failed",
+			zap.String("org_id", req.OrganizationID),
+			zap.String("space_id", space.ID),
+		)
+		return nil, errors.NotFoundWithDetails("Organization not found during space creation", map[string]interface{}{
+			"organization_id": req.OrganizationID,
+		})
+	}
+
+	s.logger.Info("Organization space created successfully with HAS_SPACE relationship",
+		zap.String("space_id", space.ID),
+		zap.String("tenant_id", space.TenantID),
+		zap.String("user_id", userID),
+		zap.String("org_id", req.OrganizationID),
+	)
+
+	return space, nil
 }
 
 // GetSpaceByID retrieves a Space by its ID
@@ -66,41 +207,59 @@ func (s *SpaceService) GetSpaceByID(ctx context.Context, spaceID string) (*model
 	return space, nil
 }
 
-// GetUserSpaces retrieves all spaces a user has access to (via OWNS or MEMBER_OF relationships)
+// GetUserSpaces retrieves all spaces a user has access to:
+// - Personal spaces: via OWNS relationship
+// - Organization spaces: via user's MEMBER_OF relationship to Organization which HAS_SPACE
+// Note: userID parameter is the Keycloak ID from JWT
 func (s *SpaceService) GetUserSpaces(ctx context.Context, userID string) ([]*models.SpaceInfo, error) {
-	s.logger.Debug("Getting user spaces", zap.String("user_id", userID))
+	s.logger.Debug("Getting user spaces", zap.String("keycloak_id", userID))
 
-	// Query for spaces the user owns OR is a member of
+	// Query for:
+	// 1. Personal spaces the user owns (direct OWNS relationship)
+	// 2. Organization spaces via organization membership (User -[:MEMBER_OF]-> Org -[:HAS_SPACE]-> Space)
 	query := `
-		MATCH (u:User {id: $user_id})
-		OPTIONAL MATCH (u)-[:OWNS]->(owned:Space)
-		OPTIONAL MATCH (u)-[m:MEMBER_OF]->(member:Space)
+		MATCH (u:User {keycloak_id: $keycloak_id})
+
+		// Personal spaces (direct ownership)
+		OPTIONAL MATCH (u)-[:OWNS]->(personalSpace:Space)
+		WHERE personalSpace.space_type = 'personal'
+
+		// Organization spaces (via org membership)
+		OPTIONAL MATCH (u)-[orgMembership:MEMBER_OF]->(org:Organization)-[:HAS_SPACE]->(orgSpace:Space)
+
 		WITH u,
 		     COLLECT(DISTINCT {
-		         space: owned,
+		         space: personalSpace,
 		         role: 'owner',
-		         joined_at: null
-		     }) as owned_spaces,
+		         org_id: null,
+		         org_name: null
+		     }) as personal_spaces,
 		     COLLECT(DISTINCT {
-		         space: member,
-		         role: m.role,
-		         joined_at: m.joined_at
-		     }) as member_spaces
-		UNWIND (owned_spaces + member_spaces) as space_info
+		         space: orgSpace,
+		         role: orgMembership.role,
+		         org_id: org.id,
+		         org_name: org.name
+		     }) as org_spaces
+
+		UNWIND (personal_spaces + org_spaces) as space_info
+		WITH space_info
 		WHERE space_info.space IS NOT NULL
-		RETURN space_info.space.id as id,
+		RETURN DISTINCT
+		       space_info.space.id as id,
 		       space_info.space.name as name,
 		       space_info.space.space_type as type,
 		       space_info.space.tenant_id as tenant_id,
 		       space_info.space.visibility as visibility,
 		       space_info.space.status as status,
 		       space_info.role as role,
-		       space_info.joined_at as joined_at
-		ORDER BY space_info.space.created_at DESC
+		       space_info.org_id as organization_id,
+		       space_info.org_name as organization_name,
+		       space_info.space.created_at as created_at
+		ORDER BY created_at DESC
 	`
 
 	params := map[string]interface{}{
-		"user_id": userID,
+		"keycloak_id": userID,
 	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -431,6 +590,14 @@ func (s *SpaceService) recordToSpaceInfo(record interface{}) (*models.SpaceInfo,
 	}
 	if val, ok := r.Get("role"); ok && val != nil {
 		spaceInfo.UserRole = val.(string)
+	}
+
+	// Parse organization fields
+	if val, ok := r.Get("organization_id"); ok && val != nil {
+		spaceInfo.OrganizationID = val.(string)
+	}
+	if val, ok := r.Get("organization_name"); ok && val != nil {
+		spaceInfo.OrganizationName = val.(string)
 	}
 
 	// Map role to permissions
@@ -1242,4 +1409,100 @@ func (s *SpaceService) getTotals(ctx context.Context) (map[string]int, error) {
 	}
 
 	return totals, nil
+}
+
+// CheckUserSpaceAccess checks if a user has access to a space and returns their role
+// It checks for:
+// 1. Direct OWNS relationship (owner)
+// 2. MEMBER_OF relationship to the space
+// 3. Membership in the owning organization (for organization-owned spaces)
+// Returns: (hasAccess bool, role string, err error)
+func (s *SpaceService) CheckUserSpaceAccess(ctx context.Context, userID, spaceID string) (bool, string, error) {
+	s.logger.Debug("Checking user space access",
+		zap.String("user_id", userID),
+		zap.String("space_id", spaceID),
+	)
+
+	// Query checks multiple access paths:
+	// 1. User directly owns the space (OWNS relationship)
+	// 2. User is a direct member of the space (MEMBER_OF relationship)
+	// 3. Space is owned by an organization that the user is a member of
+	query := `
+		MATCH (sp:Space {id: $space_id})
+		MATCH (u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
+
+		// Check direct ownership
+		OPTIONAL MATCH (u)-[:OWNS]->(sp)
+		WITH sp, u, CASE WHEN (u)-[:OWNS]->(sp) THEN 'owner' ELSE null END as owner_role
+
+		// Check direct membership
+		OPTIONAL MATCH (u)-[direct_member:MEMBER_OF]->(sp)
+		WITH sp, u, owner_role, direct_member.role as direct_role
+
+		// Check organization membership (if space is owned by org)
+		OPTIONAL MATCH (org:Organization {id: sp.owner_id})<-[org_member:MEMBER_OF]-(u)
+		WHERE sp.owner_type = 'organization'
+
+		RETURN owner_role,
+		       direct_role,
+		       org_member.role as org_role,
+		       sp.owner_type as owner_type
+	`
+
+	params := map[string]interface{}{
+		"space_id": spaceID,
+		"user_id":  userID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to check user space access", zap.Error(err))
+		return false, "", err
+	}
+
+	if len(result.Records) == 0 {
+		return false, "", nil
+	}
+
+	record := result.Records[0]
+
+	// Check roles in priority order: owner > direct member > org member
+	if ownerRole, ok := record.Get("owner_role"); ok && ownerRole != nil {
+		if roleStr, ok := ownerRole.(string); ok && roleStr != "" {
+			s.logger.Debug("User has owner access to space",
+				zap.String("user_id", userID),
+				zap.String("space_id", spaceID),
+			)
+			return true, roleStr, nil
+		}
+	}
+
+	if directRole, ok := record.Get("direct_role"); ok && directRole != nil {
+		if roleStr, ok := directRole.(string); ok && roleStr != "" {
+			s.logger.Debug("User has direct member access to space",
+				zap.String("user_id", userID),
+				zap.String("space_id", spaceID),
+				zap.String("role", roleStr),
+			)
+			return true, roleStr, nil
+		}
+	}
+
+	if orgRole, ok := record.Get("org_role"); ok && orgRole != nil {
+		if roleStr, ok := orgRole.(string); ok && roleStr != "" {
+			s.logger.Debug("User has organization member access to space",
+				zap.String("user_id", userID),
+				zap.String("space_id", spaceID),
+				zap.String("role", roleStr),
+			)
+			return true, roleStr, nil
+		}
+	}
+
+	s.logger.Debug("User does not have access to space",
+		zap.String("user_id", userID),
+		zap.String("space_id", spaceID),
+	)
+	return false, "", nil
 }

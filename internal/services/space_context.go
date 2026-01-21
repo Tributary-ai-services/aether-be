@@ -14,19 +14,21 @@ import (
 
 // SpaceContextService handles space context resolution
 type SpaceContextService struct {
-	userService *UserService
-	orgService  *OrganizationService
-	audiModal   *AudiModalService
-	logger      *logger.Logger
+	userService  *UserService
+	orgService   *OrganizationService
+	spaceService *SpaceService
+	audiModal    *AudiModalService
+	logger       *logger.Logger
 }
 
 // NewSpaceContextService creates a new space context service
-func NewSpaceContextService(userService *UserService, orgService *OrganizationService, audiModal *AudiModalService, log *logger.Logger) *SpaceContextService {
+func NewSpaceContextService(userService *UserService, orgService *OrganizationService, spaceService *SpaceService, audiModal *AudiModalService, log *logger.Logger) *SpaceContextService {
 	return &SpaceContextService{
-		userService: userService,
-		orgService:  orgService,
-		audiModal:   audiModal,
-		logger:      log.WithService("space_context_service"),
+		userService:  userService,
+		orgService:   orgService,
+		spaceService: spaceService,
+		audiModal:    audiModal,
+		logger:       log.WithService("space_context_service"),
 	}
 }
 
@@ -109,29 +111,46 @@ func (s *SpaceContextService) resolvePersonalSpace(ctx context.Context, userID, 
 }
 
 // resolveOrganizationSpace resolves an organization space context
-func (s *SpaceContextService) resolveOrganizationSpace(ctx context.Context, userID, orgID string) (*models.SpaceContext, error) {
-	// Get organization details
-	org, err := s.orgService.GetOrganization(ctx, orgID, userID)
-	if err != nil {
-		return nil, err
+// It first tries to find an Organization node, then falls back to Space nodes
+func (s *SpaceContextService) resolveOrganizationSpace(ctx context.Context, userID, spaceOrOrgID string) (*models.SpaceContext, error) {
+	// First try to find an Organization with the given ID
+	org, err := s.orgService.GetOrganization(ctx, spaceOrOrgID, userID)
+	if err == nil {
+		// Found an Organization - use the original Organization-based flow
+		return s.resolveOrganizationSpaceFromOrg(ctx, userID, org)
 	}
 
+	// If Organization not found, try to find a Space node with organization type
+	if errors.IsNotFound(err) && s.spaceService != nil {
+		s.logger.Debug("Organization not found, trying Space node lookup",
+			zap.String("space_or_org_id", spaceOrOrgID),
+			zap.String("user_id", userID),
+		)
+		return s.resolveOrganizationSpaceFromSpaceNode(ctx, userID, spaceOrOrgID)
+	}
+
+	// Return the original error if it wasn't a not-found error
+	return nil, err
+}
+
+// resolveOrganizationSpaceFromOrg resolves space context from an Organization node
+func (s *SpaceContextService) resolveOrganizationSpaceFromOrg(ctx context.Context, userID string, org *models.Organization) (*models.SpaceContext, error) {
 	// Check if organization has tenant
 	if !org.HasTenant() {
 		return nil, errors.NotFoundWithDetails("Organization space not configured", map[string]interface{}{
-			"org_id": orgID,
+			"org_id": org.ID,
 		})
 	}
 
 	// Check user membership
-	members, err := s.orgService.GetOrganizationMembers(ctx, orgID, userID)
+	members, err := s.orgService.GetOrganizationMembers(ctx, org.ID, userID)
 	if err != nil || len(members) == 0 {
 		return nil, errors.ForbiddenWithDetails("User is not a member of this organization", map[string]interface{}{
 			"user_id": userID,
-			"org_id":  orgID,
+			"org_id":  org.ID,
 		})
 	}
-	
+
 	// Find the user's member record
 	var member *models.OrganizationMember
 	for _, m := range members {
@@ -140,28 +159,81 @@ func (s *SpaceContextService) resolveOrganizationSpace(ctx context.Context, user
 			break
 		}
 	}
-	
+
 	if member == nil {
 		return nil, errors.ForbiddenWithDetails("User is not a member of this organization", map[string]interface{}{
 			"user_id": userID,
-			"org_id":  orgID,
+			"org_id":  org.ID,
 		})
 	}
 
 	// Map member role to permissions
 	permissions := s.getRolePermissions(member.Role)
-	
-	tenantID := org.TenantID
-	apiKey := org.TenantAPIKey
 
 	return &models.SpaceContext{
 		SpaceType:   models.SpaceTypeOrganization,
-		SpaceID:     orgID,
-		TenantID:    tenantID,
-		APIKey:      apiKey,
+		SpaceID:     org.ID,
+		TenantID:    org.TenantID,
+		APIKey:      org.TenantAPIKey,
 		UserID:      userID,
 		UserRole:    member.Role,
 		SpaceName:   org.Name,
+		ResolvedAt:  time.Now(),
+		Permissions: permissions,
+	}, nil
+}
+
+// resolveOrganizationSpaceFromSpaceNode resolves space context from a Space node with organization type
+func (s *SpaceContextService) resolveOrganizationSpaceFromSpaceNode(ctx context.Context, userID, spaceID string) (*models.SpaceContext, error) {
+	// Get the Space node
+	space, err := s.spaceService.GetSpaceByID(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify this is an organization-type space
+	if space.Type != models.SpaceTypeOrganization {
+		return nil, errors.BadRequestWithDetails("Space is not an organization space", map[string]interface{}{
+			"space_id":   spaceID,
+			"space_type": space.Type,
+		})
+	}
+
+	// Validate user access to this space
+	// Check if user has access via:
+	// 1. Direct OWNS relationship
+	// 2. Organization membership (if space is owned by an org)
+	hasAccess, role, err := s.spaceService.CheckUserSpaceAccess(ctx, userID, spaceID)
+	if err != nil {
+		s.logger.Error("Failed to check user space access",
+			zap.String("user_id", userID),
+			zap.String("space_id", spaceID),
+			zap.Error(err),
+		)
+		return nil, errors.ForbiddenWithDetails("Failed to verify space access", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	if !hasAccess {
+		return nil, errors.ForbiddenWithDetails("User does not have access to this space", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	// Map role to permissions
+	permissions := s.getRolePermissions(role)
+
+	return &models.SpaceContext{
+		SpaceType:   models.SpaceTypeOrganization,
+		SpaceID:     spaceID,
+		TenantID:    space.TenantID,
+		APIKey:      "", // Space nodes may not have API keys directly
+		UserID:      userID,
+		UserRole:    role,
+		SpaceName:   space.Name,
 		ResolvedAt:  time.Now(),
 		Permissions: permissions,
 	}, nil
@@ -203,24 +275,31 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 			Name:         fmt.Sprintf("%s-personal", user.Username),
 			DisplayName:  fmt.Sprintf("%s's Personal Space", user.FullName),
 			BillingPlan:  "personal",
-			ContactEmail: user.Email,
-			Quotas: map[string]interface{}{
-				"max_data_sources":      10,
-				"max_files":            1000,
-				"max_storage_mb":        5120, // 5GB
-				"max_vector_dimensions": 1536,
-				"max_monthly_searches":  10000,
+			BillingEmail: user.Email,
+			Quotas: TenantQuotas{
+				FilesPerHour:         100,
+				StorageGB:            5,
+				ComputeHours:         10,
+				APIRequestsPerMinute: 100,
+				MaxConcurrentJobs:    2,
+				MaxFileSize:          52428800, // 50MB
+				MaxChunksPerFile:     500,
+				VectorStorageGB:      5,
 			},
-			Compliance: map[string]interface{}{
-				"data_retention_days":   365,
-				"encryption_enabled":    true,
-				"audit_logging_enabled": true,
-				"gdpr_compliant":       true,
+			Compliance: TenantCompliance{
+				GDPR:               true,
+				HIPAA:              false,
+				SOX:                false,
+				PCI:                false,
+				DataResidency:      []string{},
+				RetentionDays:      365,
+				EncryptionRequired: true,
 			},
-			Settings: map[string]interface{}{
-				"user_id":       user.ID,
-				"user_email":    user.Email,
-				"creation_type": "on_demand_setup",
+			ContactInfo: TenantContactInfo{
+				AdminEmail:     user.Email,
+				SecurityEmail:  user.Email,
+				BillingEmail:   user.Email,
+				TechnicalEmail: user.Email,
 			},
 		}
 		
@@ -294,6 +373,38 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 				UserRole:    userRole,
 				Permissions: permissions,
 			})
+		}
+	}
+
+	// Also query for Space nodes that the user owns or is a member of (via graph relationships)
+	// This includes spaces created via the Space API (not just organization-based spaces)
+	if s.spaceService != nil {
+		spaceNodes, err := s.spaceService.GetUserSpaces(ctx, userID)
+		if err != nil {
+			s.logger.Warn("Failed to get user space nodes", zap.Error(err))
+			// Continue without space nodes rather than failing
+		} else {
+			// Add space nodes that aren't already in the response
+			existingSpaceIDs := make(map[string]bool)
+			if response.PersonalSpace != nil {
+				existingSpaceIDs[response.PersonalSpace.SpaceID] = true
+			}
+			for _, orgSpace := range response.OrganizationSpaces {
+				existingSpaceIDs[orgSpace.SpaceID] = true
+			}
+
+			for _, spaceNode := range spaceNodes {
+				if existingSpaceIDs[spaceNode.SpaceID] {
+					continue // Skip spaces already in response
+				}
+
+				// Add based on space type
+				if spaceNode.SpaceType == models.SpaceTypePersonal && response.PersonalSpace == nil {
+					response.PersonalSpace = spaceNode
+				} else if spaceNode.SpaceType == models.SpaceTypeOrganization {
+					response.OrganizationSpaces = append(response.OrganizationSpaces, spaceNode)
+				}
+			}
 		}
 	}
 
