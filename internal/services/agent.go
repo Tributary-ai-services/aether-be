@@ -72,7 +72,7 @@ func (s *AgentService) CreateAgent(ctx context.Context, req models.AgentCreateRe
 	}
 
 	// Step 1: Create agent in agent-builder
-	agentBuilderResp, err := s.createAgentInBuilder(ctx, req, authToken)
+	agentBuilderResp, err := s.createAgentInBuilder(ctx, req, spaceCtx, authToken)
 	if err != nil {
 		s.logger.Error("Failed to create agent in agent-builder", zap.Error(err))
 		return nil, err
@@ -327,17 +327,39 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			updatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		}
 		
+		// Extract llm_config if present
+		var llmConfig map[string]interface{}
+		if cfg, ok := agentMap["llm_config"].(map[string]interface{}); ok {
+			llmConfig = cfg
+		}
+
+		// Extract tags if present
+		var tags []string
+		if tagList, ok := agentMap["tags"].([]interface{}); ok {
+			for _, t := range tagList {
+				if tagStr, ok := t.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		}
+
 		agent := &models.AgentResponse{
 			ID:           safeString("id"),
 			Name:         safeString("name"),
 			Description:  safeString("description"),
 			Status:       models.AgentStatus(safeString("status")),
+			Type:         models.AgentType(safeString("type")),
+			OwnerID:      safeString("owner_id"),
+			SpaceID:      safeString("space_id"),
 			IsPublic:     safeBool("is_public"),
 			IsTemplate:   safeBool("is_template"),
+			SystemPrompt: safeString("system_prompt"),
+			LLMConfig:    llmConfig,
+			Tags:         tags,
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
 		}
-		
+
 		agents = append(agents, agent)
 	}
 	
@@ -573,7 +595,7 @@ func (s *AgentService) ExecuteAgent(ctx context.Context, agentID string, req mod
 
 // Helper methods for agent-builder communication
 
-func (s *AgentService) createAgentInBuilder(ctx context.Context, req models.AgentCreateRequest, authToken string) (map[string]interface{}, error) {
+func (s *AgentService) createAgentInBuilder(ctx context.Context, req models.AgentCreateRequest, spaceCtx *models.SpaceContext, authToken string) (map[string]interface{}, error) {
 	// Convert aether-be request to agent-builder format
 	builderReq := map[string]interface{}{
 		"name":          req.Name,
@@ -582,6 +604,7 @@ func (s *AgentService) createAgentInBuilder(ctx context.Context, req models.Agen
 		"system_prompt": req.SystemPrompt,
 		"llm_config":    req.LLMConfig,
 		"space_id":      req.SpaceID,
+		"space_type":    string(spaceCtx.SpaceType), // Required by agent-builder
 		"is_public":     req.IsPublic,
 		"is_template":   req.IsTemplate,
 		"tags":          req.Tags,
