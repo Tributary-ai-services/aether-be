@@ -63,11 +63,27 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 	if s.audiModal != nil {
 		s.logger.Info("Creating tenant for organization", zap.String("org_name", org.Name))
 
+		// Use billing email from request, or fall back to creator's email
+		billingEmail := req.BillingEmail
+		if billingEmail == "" {
+			// Look up the creator's email from Neo4j
+			userEmail, err := s.getUserEmail(ctx, createdBy)
+			if err != nil {
+				s.logger.Warn("Could not get user email for billing, will try with empty",
+					zap.String("created_by", createdBy),
+					zap.Error(err))
+			} else {
+				billingEmail = userEmail
+				s.logger.Info("Using creator's email as billing email",
+					zap.String("email", billingEmail))
+			}
+		}
+
 		tenantReq := CreateTenantRequest{
 			Name:         org.Slug,
 			DisplayName:  org.Name,
 			BillingPlan:  "organization",
-			BillingEmail: req.BillingEmail,
+			BillingEmail: billingEmail,
 			// Default quotas matching AudiModal's database constraints
 			Quotas: TenantQuotas{
 				FilesPerHour:         1000,
@@ -91,10 +107,10 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 			},
 			// Contact info using billing email
 			ContactInfo: TenantContactInfo{
-				AdminEmail:     req.BillingEmail,
-				SecurityEmail:  req.BillingEmail,
-				BillingEmail:   req.BillingEmail,
-				TechnicalEmail: req.BillingEmail,
+				AdminEmail:     billingEmail,
+				SecurityEmail:  billingEmail,
+				BillingEmail:   billingEmail,
+				TechnicalEmail: billingEmail,
 			},
 		}
 
@@ -1226,10 +1242,45 @@ func (s *OrganizationService) RemoveOrganizationMember(ctx context.Context, orgI
 		})
 	}
 
-	s.logger.Info("Organization member removed successfully", 
-		zap.String("org_id", orgID), 
+	s.logger.Info("Organization member removed successfully",
+		zap.String("org_id", orgID),
 		zap.String("user_id", targetUserID),
 		zap.String("removed_by", removedBy))
 
 	return nil
+}
+
+// getUserEmail looks up a user's email by their keycloak_id
+func (s *OrganizationService) getUserEmail(ctx context.Context, keycloakID string) (string, error) {
+	query := `MATCH (u:User {keycloak_id: $keycloak_id}) RETURN u.email as email`
+	params := map[string]interface{}{
+		"keycloak_id": keycloakID,
+	}
+
+	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
+		c.AccessMode = neo4j.AccessModeRead
+	})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		record, err := result.Single(ctx)
+		if err != nil {
+			return nil, err
+		}
+		email, _ := record.Get("email")
+		if email == nil {
+			return "", nil
+		}
+		return email.(string), nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return result.(string), nil
 }
