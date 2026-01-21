@@ -89,24 +89,31 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 				Name:         fmt.Sprintf("%s-personal", existingUserByEmail.Username),
 				DisplayName:  fmt.Sprintf("%s's Personal Space", existingUserByEmail.FullName),
 				BillingPlan:  "personal",
-				ContactEmail: existingUserByEmail.Email,
-				Quotas: map[string]interface{}{
-					"max_data_sources":      10,
-					"max_files":            1000,
-					"max_storage_mb":        5120, // 5GB
-					"max_vector_dimensions": 1536,
-					"max_monthly_searches":  10000,
+				BillingEmail: existingUserByEmail.Email,
+				Quotas: TenantQuotas{
+					FilesPerHour:         100,
+					StorageGB:            5,
+					ComputeHours:         10,
+					APIRequestsPerMinute: 100,
+					MaxConcurrentJobs:    2,
+					MaxFileSize:          52428800, // 50MB
+					MaxChunksPerFile:     500,
+					VectorStorageGB:      5,
 				},
-				Compliance: map[string]interface{}{
-					"data_retention_days":   365,
-					"encryption_enabled":    true,
-					"audit_logging_enabled": true,
-					"gdpr_compliant":       true,
+				Compliance: TenantCompliance{
+					GDPR:               true,
+					HIPAA:              false,
+					SOX:                false,
+					PCI:                false,
+					DataResidency:      []string{},
+					RetentionDays:      365,
+					EncryptionRequired: true,
 				},
-				Settings: map[string]interface{}{
-					"user_id":       existingUserByEmail.ID,
-					"user_email":    existingUserByEmail.Email,
-					"creation_type": "retroactive_setup",
+				ContactInfo: TenantContactInfo{
+					AdminEmail:     existingUserByEmail.Email,
+					SecurityEmail:  existingUserByEmail.Email,
+					BillingEmail:   existingUserByEmail.Email,
+					TechnicalEmail: existingUserByEmail.Email,
 				},
 			}
 			
@@ -167,24 +174,31 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		Name:         fmt.Sprintf("%s-personal", user.Username),
 		DisplayName:  fmt.Sprintf("%s's Personal Space", user.FullName),
 		BillingPlan:  "personal",
-		ContactEmail: user.Email,
-		Quotas: map[string]interface{}{
-			"max_data_sources":      10,
-			"max_files":            1000,
-			"max_storage_mb":        5120, // 5GB
-			"max_vector_dimensions": 1536,
-			"max_monthly_searches":  10000,
+		BillingEmail: user.Email,
+		Quotas: TenantQuotas{
+			FilesPerHour:         100,
+			StorageGB:            5,
+			ComputeHours:         10,
+			APIRequestsPerMinute: 100,
+			MaxConcurrentJobs:    2,
+			MaxFileSize:          52428800, // 50MB
+			MaxChunksPerFile:     500,
+			VectorStorageGB:      5,
 		},
-		Compliance: map[string]interface{}{
-			"data_retention_days":   365,
-			"encryption_enabled":    true,
-			"audit_logging_enabled": true,
-			"gdpr_compliant":       true,
+		Compliance: TenantCompliance{
+			GDPR:               true,
+			HIPAA:              false,
+			SOX:                false,
+			PCI:                false,
+			DataResidency:      []string{},
+			RetentionDays:      365,
+			EncryptionRequired: true,
 		},
-		Settings: map[string]interface{}{
-			"user_id":       user.ID,
-			"user_email":    user.Email,
-			"creation_type": "user_registration",
+		ContactInfo: TenantContactInfo{
+			AdminEmail:     user.Email,
+			SecurityEmail:  user.Email,
+			BillingEmail:   user.Email,
+			TechnicalEmail: user.Email,
 		},
 	}
 
@@ -271,6 +285,18 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 		zap.String("username", user.Username),
 	)
 
+	// Create OWNS relationship between User and personal Space
+	if user.PersonalSpaceID != "" {
+		if err := s.createOwnsRelationship(ctx, user.ID, user.PersonalSpaceID); err != nil {
+			// Log but don't fail - relationship can be created by migration
+			s.logger.Warn("Failed to create OWNS relationship",
+				zap.String("user_id", user.ID),
+				zap.String("space_id", user.PersonalSpaceID),
+				zap.Error(err),
+			)
+		}
+	}
+
 	return user, nil
 }
 
@@ -326,6 +352,55 @@ func (s *UserService) createPersonalSpace(ctx context.Context, user *models.User
 	s.logger.Info("Personal space created successfully",
 		zap.String("user_id", user.ID),
 		zap.String("space_id", user.PersonalSpaceID),
+	)
+
+	return nil
+}
+
+// createOwnsRelationship creates an OWNS relationship between a User and a Space
+// This establishes explicit ownership for RBAC via graph relationships
+func (s *UserService) createOwnsRelationship(ctx context.Context, userID, spaceID string) error {
+	s.logger.Info("Creating OWNS relationship",
+		zap.String("user_id", userID),
+		zap.String("space_id", spaceID),
+	)
+
+	query := `
+		MATCH (u:User {id: $user_id}), (s:Space {id: $space_id})
+		MERGE (u)-[r:OWNS]->(s)
+		ON CREATE SET r.created_at = datetime()
+		RETURN r
+	`
+
+	params := map[string]interface{}{
+		"user_id":  userID,
+		"space_id": spaceID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to create OWNS relationship",
+			zap.String("user_id", userID),
+			zap.String("space_id", spaceID),
+			zap.Error(err),
+		)
+		return errors.Database("Failed to create OWNS relationship", err)
+	}
+
+	if len(result.Records) == 0 {
+		s.logger.Warn("OWNS relationship creation returned no records - User or Space may not exist",
+			zap.String("user_id", userID),
+			zap.String("space_id", spaceID),
+		)
+		return errors.NotFoundWithDetails("User or Space not found", map[string]interface{}{
+			"user_id":  userID,
+			"space_id": spaceID,
+		})
+	}
+
+	s.logger.Info("OWNS relationship created successfully",
+		zap.String("user_id", userID),
+		zap.String("space_id", spaceID),
 	)
 
 	return nil

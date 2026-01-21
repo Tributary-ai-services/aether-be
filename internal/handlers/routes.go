@@ -53,7 +53,8 @@ func NewAPIServer(
 	// Initialize services
 	userService := services.NewUserService(neo4j, audiModalClient, log)
 	organizationService := services.NewOrganizationService(neo4j, audiModalClient, log)
-	spaceService := services.NewSpaceContextService(userService, organizationService, audiModalClient, log)
+	spaceService := services.NewSpaceService(neo4j, log)
+	spaceContextService := services.NewSpaceContextService(userService, organizationService, spaceService, audiModalClient, log)
 	notebookService := services.NewNotebookService(neo4j, log)
 	documentService := services.NewDocumentService(neo4j, notebookService, log)
 	chunkService := services.NewChunkService(neo4j, log)
@@ -75,7 +76,7 @@ func NewAPIServer(
 	// Onboarding service for automatic new user setup
 	onboardingService := services.NewOnboardingService(
 		userService,
-		spaceService,
+		spaceContextService,
 		notebookService,
 		agentService,
 		documentService,
@@ -97,7 +98,7 @@ func NewAPIServer(
 	}
 
 	// Initialize handlers
-	userHandler := NewUserHandler(userService, spaceService, onboardingService, log)
+	userHandler := NewUserHandler(userService, spaceContextService, onboardingService, log)
 	notebookHandler := NewNotebookHandler(notebookService, userService, log)
 	documentHandler := NewDocumentHandler(documentService, audiModalClient, log)
 	chunkHandler := NewChunkHandler(neo4j, chunkService, audiModalClient, log)
@@ -107,7 +108,7 @@ func NewAPIServer(
 	workflowHandler := NewWorkflowHandler(workflowService, log)
 	teamHandler := NewTeamHandler(teamService, userService, log)
 	organizationHandler := NewOrganizationHandler(organizationService, userService, log)
-	spaceHandler := NewSpaceHandler(spaceService, userService, organizationService, log)
+	spaceHandler := NewSpaceHandler(spaceContextService, spaceService, userService, organizationService, log)
 	agentHandler := NewAgentHandler(agentService, userService, teamService, log)
 	streamHandler := NewStreamHandler(streamService, log)
 	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
@@ -155,7 +156,7 @@ func NewAPIServer(
 		RouterHandler:        routerHandler,
 		LoggingHandler:       loggingHandler,
 		VectorSearchHandler:  vectorSearchHandler,
-		SpaceService:         spaceService,
+		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
 	}
@@ -354,6 +355,12 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		spaces.GET("/:id", s.SpaceHandler.GetSpace)
 		spaces.PUT("/:id", s.SpaceHandler.UpdateSpace)
 		spaces.DELETE("/:id", s.SpaceHandler.DeleteSpace)
+
+		// Space member management routes
+		spaces.GET("/:id/members", s.SpaceHandler.ListSpaceMembers)
+		spaces.POST("/:id/members", s.SpaceHandler.AddSpaceMember)
+		spaces.PATCH("/:id/members/:userId", s.SpaceHandler.UpdateSpaceMember)
+		spaces.DELETE("/:id/members/:userId", s.SpaceHandler.RemoveSpaceMember)
 	}
 
 	// ML/Analytics routes

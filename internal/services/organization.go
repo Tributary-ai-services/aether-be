@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -62,20 +63,69 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 	// Create tenant in AudiModal if enabled
 	if s.audiModal != nil {
 		s.logger.Info("Creating tenant for organization", zap.String("org_name", org.Name))
-		
+
+		// Use billing email from request, or fall back to creator's email
+		billingEmail := req.BillingEmail
+		if billingEmail == "" {
+			// Look up the creator's email from Neo4j
+			userEmail, err := s.getUserEmail(ctx, createdBy)
+			if err != nil {
+				s.logger.Warn("Could not get user email for billing, will try with empty",
+					zap.String("created_by", createdBy),
+					zap.Error(err))
+			} else {
+				billingEmail = userEmail
+				s.logger.Info("Using creator's email as billing email",
+					zap.String("email", billingEmail))
+			}
+		}
+
 		tenantReq := CreateTenantRequest{
 			Name:         org.Slug,
 			DisplayName:  org.Name,
 			BillingPlan:  "organization",
-			ContactEmail: req.BillingEmail,
-			Quotas:       make(map[string]interface{}), // TODO: Set proper quotas
-			Compliance:   make(map[string]interface{}), // TODO: Set compliance settings
-			Settings:     make(map[string]interface{}), // TODO: Set organization settings
+			BillingEmail: billingEmail,
+			// Default quotas matching AudiModal's database constraints
+			Quotas: TenantQuotas{
+				FilesPerHour:         1000,
+				StorageGB:            100,
+				ComputeHours:         100,
+				APIRequestsPerMinute: 1000,
+				MaxConcurrentJobs:    10,
+				MaxFileSize:          104857600, // 100MB
+				MaxChunksPerFile:     1000,
+				VectorStorageGB:      50,
+			},
+			// Default compliance settings
+			Compliance: TenantCompliance{
+				GDPR:               false,
+				HIPAA:              false,
+				SOX:                false,
+				PCI:                false,
+				DataResidency:      []string{},
+				RetentionDays:      365,
+				EncryptionRequired: true,
+			},
+			// Contact info using billing email
+			ContactInfo: TenantContactInfo{
+				AdminEmail:     billingEmail,
+				SecurityEmail:  billingEmail,
+				BillingEmail:   billingEmail,
+				TechnicalEmail: billingEmail,
+			},
 		}
 
 		tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
 		if err != nil {
 			s.logger.Error("Failed to create tenant in AudiModal", zap.Error(err), zap.String("org_name", org.Name))
+			// Check if this is a validation error from AudiModal (status 400)
+			// If so, return a validation error (400) instead of external service error (502)
+			errStr := err.Error()
+			if strings.Contains(errStr, "status 400") || strings.Contains(errStr, "VALIDATION_ERROR") {
+				return nil, errors.ValidationWithDetails("Failed to create organization tenant: validation error from document processor", map[string]interface{}{
+					"details": errStr,
+				})
+			}
 			return nil, errors.ExternalService("Failed to create organization tenant", err)
 		}
 
@@ -109,6 +159,20 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		})
 		RETURN o`
 
+	// Serialize settings and billing to JSON strings for Neo4j storage
+	// (Neo4j cannot store nested maps as properties)
+	var settingsJSON, billingJSON string
+	if org.Settings != nil {
+		if data, err := json.Marshal(org.Settings); err == nil {
+			settingsJSON = string(data)
+		}
+	}
+	if org.Billing != nil {
+		if data, err := json.Marshal(org.Billing); err == nil {
+			billingJSON = string(data)
+		}
+	}
+
 	params := map[string]interface{}{
 		"id":              org.ID,
 		"name":            org.Name,
@@ -120,8 +184,8 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		"visibility":      org.Visibility,
 		"tenant_id":       org.TenantID,
 		"tenant_api_key":  org.TenantAPIKey,
-		"billing":         org.Billing,
-		"settings":        org.Settings,
+		"billing":         billingJSON,
+		"settings":        settingsJSON,
 		"created_by":      org.CreatedBy,
 		"created_at":      org.CreatedAt.Format(time.RFC3339),
 		"updated_at":      org.UpdatedAt.Format(time.RFC3339),
@@ -156,17 +220,38 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		return nil, err
 	}
 
+	// Create default space for organization with HAS_SPACE relationship
+	defaultSpace, err := s.createDefaultSpaceForOrganization(ctx, org, createdBy)
+	if err != nil {
+		s.logger.Error("Failed to create default space for organization",
+			zap.Error(err),
+			zap.String("org_id", org.ID))
+		// Don't fail org creation - space can be created later via migration
+	} else {
+		s.logger.Info("Default space created for organization",
+			zap.String("org_id", org.ID),
+			zap.String("space_id", defaultSpace.ID),
+			zap.String("tenant_id", defaultSpace.TenantID))
+	}
+
+	// Set the creator's role for the response (they're automatically the owner)
+	org.UserRole = "owner"
+	org.MemberCount = 1
+
 	s.logger.Info("Organization created successfully", zap.String("org_id", org.ID), zap.String("created_by", createdBy))
 	return org, nil
 }
 
 // GetOrganization retrieves an organization by ID
+// Note: userID parameter is the Keycloak ID from JWT, not the internal User ID
 func (s *OrganizationService) GetOrganization(ctx context.Context, orgID string, userID string) (*models.Organization, error) {
 	query := `
 		MATCH (o:Organization {id: $org_id})
-		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
+		WITH o, r.role as user_role
 		OPTIONAL MATCH (o)<-[:MEMBER_OF]-()
-		WITH o, r.role as user_role, count(*) as member_count
+		WITH o, user_role, count(*) as member_count
 		OPTIONAL MATCH (t:Team {organization_id: o.id})
 		WITH o, user_role, member_count, count(t) as team_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(o)
@@ -215,9 +300,11 @@ func (s *OrganizationService) GetOrganization(ctx context.Context, orgID string,
 }
 
 // GetOrganizations retrieves organizations for a user
+// Note: userID parameter can be either the Keycloak ID or internal Neo4j User ID
 func (s *OrganizationService) GetOrganizations(ctx context.Context, userID string) ([]*models.Organization, error) {
 	query := `
-		MATCH (o:Organization)<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (o:Organization)<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
 		WITH o, r.role as user_role
 		OPTIONAL MATCH (o)<-[:MEMBER_OF]-()
 		WITH o, user_role, count(*) as member_count
@@ -332,11 +419,21 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, orgID stri
 	}
 	if req.Billing != nil {
 		setParts = append(setParts, "o.billing = $billing")
-		params["billing"] = req.Billing
+		// Serialize billing to JSON string for Neo4j storage
+		if data, err := json.Marshal(req.Billing); err == nil {
+			params["billing"] = string(data)
+		} else {
+			params["billing"] = ""
+		}
 	}
 	if req.Settings != nil {
 		setParts = append(setParts, "o.settings = $settings")
-		params["settings"] = req.Settings
+		// Serialize settings to JSON string for Neo4j storage
+		if data, err := json.Marshal(req.Settings); err == nil {
+			params["settings"] = string(data)
+		} else {
+			params["settings"] = ""
+		}
 	}
 
 	if len(setParts) == 0 {
@@ -353,16 +450,16 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, orgID stri
 		MATCH (o:Organization {id: $org_id})
 		SET %s
 		WITH o
-		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-(u:User {keycloak_id: $keycloak_id})
 		OPTIONAL MATCH (o)<-[:MEMBER_OF]-()
 		WITH o, r.role as user_role, count(*) as member_count
 		OPTIONAL MATCH (t:Team {organization_id: o.id})
-		WITH o, user_role, member_count, count(t) as team_count
+		With o, user_role, member_count, count(t) as team_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(o)
 		WITH o, user_role, member_count, team_count, count(n) as notebook_count
 		RETURN o, user_role, member_count, team_count, notebook_count`, setClause)
 
-	params["user_id"] = userID
+	params["keycloak_id"] = userID
 
 	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
 		c.AccessMode = neo4j.AccessModeWrite
@@ -421,12 +518,15 @@ func (s *OrganizationService) DeleteOrganization(ctx context.Context, orgID stri
 // Internal helper methods
 
 func (s *OrganizationService) deleteOrganizationInternal(ctx context.Context, orgID string) error {
+	// Updated to cascade delete spaces linked via HAS_SPACE relationship
 	query := `
 		MATCH (o:Organization {id: $org_id})
 		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-()
 		OPTIONAL MATCH (t:Team {organization_id: $org_id})
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(o)
-		DETACH DELETE o, r, t, n`
+		OPTIONAL MATCH (o)-[:HAS_SPACE]->(sp:Space)
+		OPTIONAL MATCH (spn:Notebook)-[:BELONGS_TO]->(sp)
+		DETACH DELETE o, t, n, sp, spn`
 
 	params := map[string]interface{}{
 		"org_id": orgID,
@@ -454,6 +554,96 @@ func (s *OrganizationService) deleteOrganizationInternal(ctx context.Context, or
 
 	s.logger.Info("Organization deleted successfully", zap.String("org_id", orgID))
 	return nil
+}
+
+// createDefaultSpaceForOrganization creates a default space when an organization is created
+// It creates the Space node and links it to the Organization via a HAS_SPACE relationship
+func (s *OrganizationService) createDefaultSpaceForOrganization(ctx context.Context, org *models.Organization, createdBy string) (*models.Space, error) {
+	now := time.Now()
+	timestamp := now.Unix()
+
+	spaceID := fmt.Sprintf("space_%d", timestamp)
+	tenantID := fmt.Sprintf("tenant_%d", timestamp)
+	spaceName := fmt.Sprintf("%s Default Space", org.Name)
+	spaceDescription := fmt.Sprintf("Default workspace for %s", org.Name)
+
+	query := `
+		MATCH (o:Organization {id: $org_id})
+		CREATE (sp:Space {
+			id: $space_id,
+			tenant_id: $tenant_id,
+			name: $name,
+			description: $description,
+			space_type: 'organization',
+			visibility: 'private',
+			owner_id: $org_id,
+			owner_type: 'organization',
+			status: 'active',
+			created_at: datetime($created_at),
+			updated_at: datetime($updated_at)
+		})
+		CREATE (o)-[:HAS_SPACE {
+			created_at: datetime($created_at),
+			is_default: true
+		}]->(sp)
+		RETURN sp.id as space_id, sp.tenant_id as tenant_id
+	`
+
+	params := map[string]interface{}{
+		"org_id":      org.ID,
+		"space_id":    spaceID,
+		"tenant_id":   tenantID,
+		"name":        spaceName,
+		"description": spaceDescription,
+		"created_at":  now.Format(time.RFC3339),
+		"updated_at":  now.Format(time.RFC3339),
+	}
+
+	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
+		c.AccessMode = neo4j.AccessModeWrite
+	})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to create default space for organization",
+			zap.Error(err),
+			zap.String("org_id", org.ID))
+		return nil, errors.DatabaseWithDetails("Failed to create default space", err, map[string]interface{}{
+			"org_id": org.ID,
+		})
+	}
+
+	records := result.([]*neo4j.Record)
+	if len(records) == 0 {
+		return nil, errors.NotFoundWithDetails("Organization not found when creating default space", map[string]interface{}{
+			"org_id": org.ID,
+		})
+	}
+
+	// Create the Space model to return
+	space := &models.Space{
+		ID:          spaceID,
+		TenantID:    tenantID,
+		Name:        spaceName,
+		Description: spaceDescription,
+		Type:        models.SpaceTypeOrganization,
+		Visibility:  "private",
+		OwnerID:     org.ID,
+		OwnerType:   models.SpaceOwnerTypeOrganization,
+		Status:      models.SpaceStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	return space, nil
 }
 
 func (s *OrganizationService) organizationSlugExists(ctx context.Context, slug string) (bool, error) {
@@ -526,8 +716,10 @@ func (s *OrganizationService) organizationSlugExistsExcluding(ctx context.Contex
 }
 
 func (s *OrganizationService) getUserRoleInOrganization(ctx context.Context, orgID string, userID string) (string, error) {
+	// Try to find user by keycloak_id first (for JWT-based lookups), then fall back to internal id
 	query := `
-		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
 		RETURN r.role as role`
 
 	params := map[string]interface{}{
@@ -567,9 +759,55 @@ func (s *OrganizationService) getUserRoleInOrganization(ctx context.Context, org
 	return role.(string), nil
 }
 
-func (s *OrganizationService) addOrganizationMember(ctx context.Context, orgID string, userID string, role string, invitedBy string, title string, department string) error {
+// GetUserRoleInOrganization returns the user's role in the organization (public method)
+// Returns empty string if user is not a member (does not error)
+func (s *OrganizationService) GetUserRoleInOrganization(ctx context.Context, orgID string, userID string) (string, error) {
+	// Try to find user by keycloak_id first (for JWT-based lookups), then fall back to internal id
 	query := `
-		MATCH (o:Organization {id: $org_id}), (u:User {id: $user_id})
+		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
+		RETURN r.role as role`
+
+	params := map[string]interface{}{
+		"org_id":  orgID,
+		"user_id": userID,
+	}
+
+	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
+		c.AccessMode = neo4j.AccessModeRead
+	})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+
+	if err != nil {
+		return "", errors.DatabaseWithDetails("Failed to get user role", err, map[string]interface{}{
+			"org_id":  orgID,
+			"user_id": userID,
+		})
+	}
+
+	records := result.([]*neo4j.Record)
+	if len(records) == 0 {
+		// Return empty string instead of error - let caller decide what to do
+		return "", nil
+	}
+
+	role, _ := records[0].Get("role")
+	return role.(string), nil
+}
+
+func (s *OrganizationService) addOrganizationMember(ctx context.Context, orgID string, userID string, role string, invitedBy string, title string, department string) error {
+	// Match user by either keycloak_id or internal id for flexibility
+	query := `
+		MATCH (o:Organization {id: $org_id}), (u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
 		CREATE (u)-[r:MEMBER_OF {
 			role: $role,
 			joined_at: datetime($joined_at),
@@ -644,12 +882,29 @@ func (s *OrganizationService) recordToOrganization(record *neo4j.Record) (*model
 		org.Location = location.(string)
 	}
 
+	// Deserialize billing and settings from JSON strings (stored in Neo4j as strings)
 	if billing, ok := props["billing"]; ok && billing != nil {
-		org.Billing = billing.(map[string]interface{})
+		if billingStr, ok := billing.(string); ok && billingStr != "" {
+			var billingMap map[string]interface{}
+			if err := json.Unmarshal([]byte(billingStr), &billingMap); err == nil {
+				org.Billing = billingMap
+			}
+		} else if billingMap, ok := billing.(map[string]interface{}); ok {
+			// Backwards compatibility: handle old records that stored maps directly
+			org.Billing = billingMap
+		}
 	}
 
 	if settings, ok := props["settings"]; ok && settings != nil {
-		org.Settings = settings.(map[string]interface{})
+		if settingsStr, ok := settings.(string); ok && settingsStr != "" {
+			var settingsMap map[string]interface{}
+			if err := json.Unmarshal([]byte(settingsStr), &settingsMap); err == nil {
+				org.Settings = settingsMap
+			}
+		} else if settingsMap, ok := settings.(map[string]interface{}); ok {
+			// Backwards compatibility: handle old records that stored maps directly
+			org.Settings = settingsMap
+		}
 	}
 
 	if createdAt, ok := props["created_at"]; ok {
@@ -918,9 +1173,10 @@ func (s *OrganizationService) UpdateOrganizationMemberRole(ctx context.Context, 
 		}
 	}
 
-	// Update role
+	// Update role - match user by either keycloak_id or internal id
 	query := `
-		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
 		SET r.role = $role, r.title = $title, r.department = $department
 		RETURN r`
 
@@ -1000,8 +1256,10 @@ func (s *OrganizationService) RemoveOrganizationMember(ctx context.Context, orgI
 	}
 
 	// Remove member (also removes from all teams in the organization)
+	// Match user by either keycloak_id or internal id
 	query := `
-		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.keycloak_id = $user_id OR u.id = $user_id
 		OPTIONAL MATCH (t:Team {organization_id: $org_id})<-[tr:MEMBER_OF]-(u)
 		DELETE r, tr
 		RETURN count(*) as deleted`
@@ -1041,10 +1299,45 @@ func (s *OrganizationService) RemoveOrganizationMember(ctx context.Context, orgI
 		})
 	}
 
-	s.logger.Info("Organization member removed successfully", 
-		zap.String("org_id", orgID), 
+	s.logger.Info("Organization member removed successfully",
+		zap.String("org_id", orgID),
 		zap.String("user_id", targetUserID),
 		zap.String("removed_by", removedBy))
 
 	return nil
+}
+
+// getUserEmail looks up a user's email by their keycloak_id
+func (s *OrganizationService) getUserEmail(ctx context.Context, keycloakID string) (string, error) {
+	query := `MATCH (u:User {keycloak_id: $keycloak_id}) RETURN u.email as email`
+	params := map[string]interface{}{
+		"keycloak_id": keycloakID,
+	}
+
+	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
+		c.AccessMode = neo4j.AccessModeRead
+	})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		record, err := result.Single(ctx)
+		if err != nil {
+			return nil, err
+		}
+		email, _ := record.Get("email")
+		if email == nil {
+			return "", nil
+		}
+		return email.(string), nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return result.(string), nil
 }

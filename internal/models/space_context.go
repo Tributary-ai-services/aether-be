@@ -85,12 +85,14 @@ func (sc *SpaceContext) GetTenantInfo() (tenantID, apiKey string) {
 
 // SpaceInfo provides public information about a space
 type SpaceInfo struct {
-	SpaceType   SpaceType `json:"space_type"`
-	SpaceID     string    `json:"space_id"`
-	SpaceName   string    `json:"space_name"`
-	TenantID    string    `json:"tenant_id"`
-	UserRole    string    `json:"user_role"`
-	Permissions []string  `json:"permissions"`
+	SpaceType        SpaceType `json:"space_type"`
+	SpaceID          string    `json:"space_id"`
+	SpaceName        string    `json:"space_name"`
+	TenantID         string    `json:"tenant_id"`
+	UserRole         string    `json:"user_role"`
+	Permissions      []string  `json:"permissions"`
+	OrganizationID   string    `json:"organization_id,omitempty"`   // Organization that owns this space (for org spaces)
+	OrganizationName string    `json:"organization_name,omitempty"` // Display name of the organization
 }
 
 // ToSpaceInfo converts SpaceContext to SpaceInfo (excludes sensitive data)
