@@ -117,6 +117,14 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 		tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
 		if err != nil {
 			s.logger.Error("Failed to create tenant in AudiModal", zap.Error(err), zap.String("org_name", org.Name))
+			// Check if this is a validation error from AudiModal (status 400)
+			// If so, return a validation error (400) instead of external service error (502)
+			errStr := err.Error()
+			if strings.Contains(errStr, "status 400") || strings.Contains(errStr, "VALIDATION_ERROR") {
+				return nil, errors.ValidationWithDetails("Failed to create organization tenant: validation error from document processor", map[string]interface{}{
+					"details": errStr,
+				})
+			}
 			return nil, errors.ExternalService("Failed to create organization tenant", err)
 		}
 
