@@ -41,15 +41,46 @@ type AudiModalService struct {
 	config   *config.AudiModalConfig
 }
 
+// TenantQuotas matches AudiModal's expected quotas structure
+type TenantQuotas struct {
+	FilesPerHour         int64 `json:"files_per_hour"`
+	StorageGB            int64 `json:"storage_gb"`
+	ComputeHours         int64 `json:"compute_hours"`
+	APIRequestsPerMinute int64 `json:"api_requests_per_minute"`
+	MaxConcurrentJobs    int64 `json:"max_concurrent_jobs"`
+	MaxFileSize          int64 `json:"max_file_size"`
+	MaxChunksPerFile     int64 `json:"max_chunks_per_file"`
+	VectorStorageGB      int64 `json:"vector_storage_gb"`
+}
+
+// TenantCompliance matches AudiModal's expected compliance structure
+type TenantCompliance struct {
+	GDPR               bool     `json:"gdpr"`
+	HIPAA              bool     `json:"hipaa"`
+	SOX                bool     `json:"sox"`
+	PCI                bool     `json:"pci"`
+	DataResidency      []string `json:"data_residency"`
+	RetentionDays      int      `json:"retention_days"`
+	EncryptionRequired bool     `json:"encryption_required"`
+}
+
+// TenantContactInfo matches AudiModal's expected contact info structure
+type TenantContactInfo struct {
+	AdminEmail     string `json:"admin_email"`
+	SecurityEmail  string `json:"security_email"`
+	BillingEmail   string `json:"billing_email"`
+	TechnicalEmail string `json:"technical_email"`
+}
+
 // CreateTenantRequest represents a request to create a tenant in AudiModal
 type CreateTenantRequest struct {
-	Name         string                 `json:"name"`
-	DisplayName  string                 `json:"display_name"`
-	BillingPlan  string                 `json:"billing_plan"`
-	Quotas       map[string]interface{} `json:"quotas"`
-	Compliance   map[string]interface{} `json:"compliance"`
-	Settings     map[string]interface{} `json:"settings"`
-	ContactEmail string                 `json:"contact_email"`
+	Name         string            `json:"name"`
+	DisplayName  string            `json:"display_name"`
+	BillingPlan  string            `json:"billing_plan"`
+	BillingEmail string            `json:"billing_email"`
+	Quotas       TenantQuotas      `json:"quotas"`
+	Compliance   TenantCompliance  `json:"compliance"`
+	ContactInfo  TenantContactInfo `json:"contact_info"`
 }
 
 // CreateTenantResponse represents the response from creating a tenant
@@ -79,25 +110,14 @@ func NewAudiModalService(baseURL, apiKey string, config *config.AudiModalConfig,
 
 // CreateTenant creates a new tenant in AudiModal
 func (s *AudiModalService) CreateTenant(ctx context.Context, req CreateTenantRequest) (*CreateTenantResponse, error) {
-	// Prepare request body for AudiModal API
-	// Note: Don't send "id" or "status" - AudiModal auto-generates these
-	requestBody := map[string]interface{}{
-		"name":          req.Name,
-		"display_name":  req.DisplayName,
-		"billing_plan":  req.BillingPlan,
-		"billing_email": req.ContactEmail,
-		"quotas":        req.Quotas,
-		"compliance":    req.Compliance,
-		"contact_info": map[string]string{
-			"admin_email":     req.ContactEmail,
-			"security_email":  req.ContactEmail,  // Use same email for all contacts
-			"billing_email":   req.ContactEmail,
-			"technical_email": req.ContactEmail,
-		},
-	}
+	// Debug log the request
+	requestJSON, _ := json.Marshal(req)
+	s.logger.Info("AudiModal CreateTenant request",
+		zap.String("tenant_name", req.Name),
+		zap.String("request_body", string(requestJSON)))
 
-	// Call AudiModal API to create tenant
-	resp, err := s.makeRequest(ctx, http.MethodPost, "/api/v1/tenants", requestBody)
+	// Call AudiModal API to create tenant using the typed request directly
+	resp, err := s.makeRequest(ctx, http.MethodPost, "/api/v1/tenants", req)
 	if err != nil {
 		s.logger.Error("Failed to create tenant in AudiModal",
 			zap.String("tenant_name", req.Name),
@@ -111,7 +131,8 @@ func (s *AudiModalService) CreateTenant(ctx context.Context, req CreateTenantReq
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		s.logger.Error("AudiModal API returned error",
 			zap.Int("status_code", resp.StatusCode),
-			zap.String("response_body", string(bodyBytes)))
+			zap.String("response_body", string(bodyBytes)),
+			zap.String("request_body", string(requestJSON)))
 		return nil, fmt.Errorf("AudiModal API returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -422,16 +443,31 @@ func (s *AudiModalService) getAudiModalMapping(ctx context.Context, aetherTenant
 			Name:         tenantName,
 			DisplayName:  fmt.Sprintf("Aether Tenant %s", strippedID),
 			BillingPlan:  "personal",
-			ContactEmail: "noreply@aether.ai",
-			Quotas: map[string]interface{}{
-				"storage_bytes":      10737418240, // 10GB
-				"max_files":          10000,
-				"max_file_size":      104857600, // 100MB
-				"api_requests_daily": 10000,
+			BillingEmail: "noreply@aether.ai",
+			Quotas: TenantQuotas{
+				FilesPerHour:         100,
+				StorageGB:            10,
+				ComputeHours:         10,
+				APIRequestsPerMinute: 100,
+				MaxConcurrentJobs:    2,
+				MaxFileSize:          104857600, // 100MB
+				MaxChunksPerFile:     500,
+				VectorStorageGB:      5,
 			},
-			Compliance: map[string]interface{}{
-				"data_retention_days": 365,
-				"gdpr_compliant":      true,
+			Compliance: TenantCompliance{
+				GDPR:               true,
+				HIPAA:              false,
+				SOX:                false,
+				PCI:                false,
+				DataResidency:      []string{},
+				RetentionDays:      365,
+				EncryptionRequired: true,
+			},
+			ContactInfo: TenantContactInfo{
+				AdminEmail:     "noreply@aether.ai",
+				SecurityEmail:  "noreply@aether.ai",
+				BillingEmail:   "noreply@aether.ai",
+				TechnicalEmail: "noreply@aether.ai",
 			},
 		}
 
