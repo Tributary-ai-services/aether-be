@@ -144,14 +144,61 @@ func (s *AgentService) canUserModifyAgent(ctx context.Context, agent *models.Age
 }
 
 // UpdateAgent updates an agent by updating both agent-builder and Neo4j
+// The agentID can be either a Neo4j ID or an agent-builder ID
 func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, req models.AgentUpdateRequest, userID string, authToken string) (*models.AgentResponse, error) {
-	// Get existing agent
+	// Try to get existing agent from Neo4j first
 	agent, err := s.getAgentFromNeo4j(ctx, agentID)
+
 	if err != nil {
-		return nil, err
+		// If not found in Neo4j, the agentID might be the agent-builder ID directly
+		// This handles agents created through agent-builder that don't have Neo4j records
+		s.logger.Info("Agent not found in Neo4j, attempting direct agent-builder update",
+			zap.String("agent_id", agentID),
+			zap.String("user_id", userID),
+		)
+
+		// Get agent from agent-builder to verify it exists and check ownership
+		builderAgent, builderErr := s.getAgentFromBuilder(ctx, agentID, authToken)
+		if builderErr != nil {
+			s.logger.Error("Failed to get agent from agent-builder",
+				zap.String("agent_id", agentID),
+				zap.Error(builderErr),
+			)
+			return nil, builderErr
+		}
+
+		// Check ownership for agent-builder-only agents
+		if builderAgent.OwnerID != userID {
+			return nil, errors.Forbidden("Insufficient permissions to update agent")
+		}
+
+		// Update directly in agent-builder
+		if updateErr := s.updateAgentInBuilder(ctx, agentID, req, authToken); updateErr != nil {
+			s.logger.Error("Failed to update agent in agent-builder",
+				zap.String("agent_id", agentID),
+				zap.Error(updateErr),
+			)
+			return nil, updateErr
+		}
+
+		s.logger.Info("Agent updated successfully in agent-builder",
+			zap.String("agent_id", agentID),
+		)
+
+		// Get the updated agent from agent-builder to return
+		updatedAgent, getErr := s.getAgentFromBuilder(ctx, agentID, authToken)
+		if getErr != nil {
+			s.logger.Error("Failed to get updated agent from agent-builder",
+				zap.String("agent_id", agentID),
+				zap.Error(getErr),
+			)
+			return nil, getErr
+		}
+
+		return s.buildAgentResponse(ctx, updatedAgent)
 	}
 
-	// Check if user can modify this agent (owner or team admin)
+	// Agent found in Neo4j - check permissions and update in both places
 	canModify, err := s.canUserModifyAgent(ctx, agent, userID)
 	if err != nil {
 		return nil, err
@@ -177,13 +224,35 @@ func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, req mode
 }
 
 // DeleteAgent deletes an agent from both agent-builder and Neo4j
+// The agentID can be either a Neo4j ID or an agent-builder ID
 func (s *AgentService) DeleteAgent(ctx context.Context, agentID string, userID string, authToken string) error {
+	// Try to get agent from Neo4j first
 	agent, err := s.getAgentFromNeo4j(ctx, agentID)
+
 	if err != nil {
-		return err
+		// If not found in Neo4j, the agentID might be the agent-builder ID directly
+		// This handles agents created through agent-builder that don't have Neo4j records
+		s.logger.Info("Agent not found in Neo4j, attempting direct agent-builder deletion",
+			zap.String("agent_id", agentID),
+			zap.String("user_id", userID),
+		)
+
+		// Delete directly in agent-builder using the provided ID
+		if deleteErr := s.deleteAgentInBuilder(ctx, agentID, authToken); deleteErr != nil {
+			s.logger.Error("Failed to delete agent in agent-builder",
+				zap.String("agent_id", agentID),
+				zap.Error(deleteErr),
+			)
+			return deleteErr
+		}
+
+		s.logger.Info("Agent deleted successfully from agent-builder",
+			zap.String("agent_id", agentID),
+		)
+		return nil
 	}
 
-	// Check if user can modify this agent (owner or team admin)
+	// Agent found in Neo4j - check permissions and delete from both places
 	canModify, err := s.canUserModifyAgent(ctx, agent, userID)
 	if err != nil {
 		return err
@@ -199,11 +268,15 @@ func (s *AgentService) DeleteAgent(ctx context.Context, agentID string, userID s
 	}
 
 	// Step 2: Delete agent and all relationships in Neo4j
-	if err := s.deleteAgentInNeo4j(ctx, agentID); err != nil {
+	if err := s.deleteAgentInNeo4j(ctx, agent.ID); err != nil {
 		s.logger.Error("Failed to delete agent in Neo4j", zap.Error(err))
 		return err
 	}
 
+	s.logger.Info("Agent deleted successfully from both Neo4j and agent-builder",
+		zap.String("neo4j_id", agent.ID),
+		zap.String("agent_builder_id", agent.AgentBuilderID),
+	)
 	return nil
 }
 
@@ -1279,13 +1352,298 @@ func (s *AgentService) canUserAccessAgent(agent *models.Agent, userID string, us
 	if agent.OwnerID == userID {
 		return true
 	}
-	
+
 	// 2. Agent is public
 	if agent.IsPublic {
 		return true
 	}
-	
+
 	// For now, allow access if the user is in the same space
 	// TODO: Implement proper team-based access control
 	return true
+}
+
+// HasDefaultAgent checks if a user has a default agent (with "personal-assistant" tag) in the specified space
+// This is used to prevent duplicate default agent creation during onboarding
+func (s *AgentService) HasDefaultAgent(ctx context.Context, spaceID string, userID string, authToken string) (bool, error) {
+	s.logger.Info("Checking for existing default agent",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+	)
+
+	// Search for agents with the "personal-assistant" tag in this space
+	req := models.AgentSearchRequest{
+		SpaceID: spaceID,
+		Tags:    []string{"personal-assistant"},
+		Limit:   1,
+		Offset:  0,
+	}
+
+	result, err := s.ListAgents(ctx, req, userID, []string{}, authToken)
+	if err != nil {
+		s.logger.Error("Failed to check for default agent",
+			zap.String("space_id", spaceID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return false, err
+	}
+
+	hasDefault := result.Total > 0
+	s.logger.Info("Default agent check completed",
+		zap.String("space_id", spaceID),
+		zap.String("user_id", userID),
+		zap.Bool("has_default_agent", hasDefault),
+		zap.Int("agents_found", result.Total),
+	)
+
+	return hasDefault, nil
+}
+
+// Internal Agent Methods - for system agents like Prompt Assistant
+
+// GetInternalAgents retrieves all internal (system) agents from agent-builder
+func (s *AgentService) GetInternalAgents(ctx context.Context, authToken string) ([]*models.InternalAgentResponse, error) {
+	s.logger.Info("Fetching internal agents")
+
+	// Call agent-builder to get internal agents
+	resp, err := s.makeAgentBuilderRequest(ctx, "GET", "/agents?is_internal=true", nil, authToken)
+	if err != nil {
+		s.logger.Error("Failed to fetch internal agents from agent-builder", zap.Error(err))
+		return nil, err
+	}
+
+	// Parse the response
+	agentsData, ok := resp["agents"].([]interface{})
+	if !ok {
+		s.logger.Warn("No internal agents found or unexpected response format")
+		return []*models.InternalAgentResponse{}, nil
+	}
+
+	var agents []*models.InternalAgentResponse
+	for _, agentData := range agentsData {
+		agentMap, ok := agentData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		agent := s.parseInternalAgentResponse(agentMap)
+		agents = append(agents, agent)
+	}
+
+	s.logger.Info("Internal agents fetched successfully", zap.Int("count", len(agents)))
+	return agents, nil
+}
+
+// GetInternalAgent retrieves a specific internal agent by ID
+func (s *AgentService) GetInternalAgent(ctx context.Context, agentID string, authToken string) (*models.InternalAgentResponse, error) {
+	s.logger.Info("Fetching internal agent", zap.String("agent_id", agentID))
+
+	// Call agent-builder to get the internal agent
+	resp, err := s.makeAgentBuilderRequest(ctx, "GET", fmt.Sprintf("/agents/%s", agentID), nil, authToken)
+	if err != nil {
+		s.logger.Error("Failed to fetch internal agent from agent-builder",
+			zap.String("agent_id", agentID),
+			zap.Error(err))
+		return nil, err
+	}
+
+	// Check if it's an internal agent
+	agentData, ok := resp["agent"].(map[string]interface{})
+	if !ok {
+		agentData = resp // Some responses may not have the "agent" wrapper
+	}
+
+	isInternal, _ := agentData["is_internal"].(bool)
+	if !isInternal {
+		return nil, errors.NotFound("Internal agent not found")
+	}
+
+	agent := s.parseInternalAgentResponse(agentData)
+	return agent, nil
+}
+
+// ExecuteInternalAgent executes an internal agent with conversation context
+func (s *AgentService) ExecuteInternalAgent(ctx context.Context, agentID string, req models.InternalAgentExecuteRequest, userID string, authToken string) (*models.AgentExecuteResponse, error) {
+	s.logger.Info("Executing internal agent",
+		zap.String("agent_id", agentID),
+		zap.String("user_id", userID),
+	)
+
+	startTime := time.Now()
+
+	// Build the execution request for agent-builder
+	builderReq := map[string]interface{}{
+		"input": req.Input,
+	}
+
+	// Add conversation history if provided
+	if len(req.History) > 0 {
+		builderReq["history"] = req.History
+	}
+
+	// Add session ID for conversation continuity
+	if req.SessionID != "" {
+		builderReq["session_id"] = req.SessionID
+	}
+
+	// Add context for Prompt Assistant
+	if req.Context != nil {
+		// Build a contextual message to prepend to the input
+		contextMsg := s.buildPromptAssistContext(req.Context)
+		if contextMsg != "" {
+			builderReq["context"] = map[string]interface{}{
+				"assist_for":             req.Context.AssistFor,
+				"agent_name":             req.Context.AgentName,
+				"agent_type":             req.Context.AgentType,
+				"current_description":    req.Context.CurrentDescription,
+				"current_system_prompt":  req.Context.CurrentSystemPrompt,
+			}
+		}
+	}
+
+	// Execute via agent-builder internal agent endpoint
+	resp, err := s.makeAgentBuilderRequest(ctx, "POST", fmt.Sprintf("/agents/internal/%s/execute", agentID), builderReq, authToken)
+	if err != nil {
+		s.logger.Error("Failed to execute internal agent",
+			zap.String("agent_id", agentID),
+			zap.Error(err))
+		return nil, err
+	}
+
+	endTime := time.Now()
+
+	// Build response
+	response := &models.AgentExecuteResponse{
+		ExecutionID:    getString(resp, "execution_id"),
+		AgentID:        agentID,
+		AgentType:      models.AgentTypeConversational, // Internal agents are conversational
+		Output:         getString(resp, "output"),
+		TokensUsed:     getInt(resp, "tokens_used"),
+		CostUSD:        getFloat(resp, "cost_usd"),
+		ResponseTimeMs: int(endTime.Sub(startTime).Milliseconds()),
+		StartedAt:      startTime,
+		CompletedAt:    endTime,
+	}
+
+	// Add conversation ID if returned
+	if convID := getString(resp, "conversation_id"); convID != "" {
+		response.ConversationID = &convID
+	}
+
+	// Add metadata
+	if metadata, ok := resp["metadata"].(map[string]interface{}); ok {
+		response.Metadata = metadata
+	}
+
+	s.logger.Info("Internal agent executed successfully",
+		zap.String("agent_id", agentID),
+		zap.String("execution_id", response.ExecutionID),
+		zap.Int("response_time_ms", response.ResponseTimeMs),
+	)
+
+	return response, nil
+}
+
+// parseInternalAgentResponse converts agent-builder response to InternalAgentResponse
+func (s *AgentService) parseInternalAgentResponse(data map[string]interface{}) *models.InternalAgentResponse {
+	agent := &models.InternalAgentResponse{
+		ID:          getString(data, "id"),
+		Name:        getString(data, "name"),
+		Description: getString(data, "description"),
+		IsInternal:  getBool(data, "is_internal"),
+		IsPublic:    getBool(data, "is_public"),
+	}
+
+	// Parse tags
+	if tagsData, ok := data["tags"].([]interface{}); ok {
+		for _, t := range tagsData {
+			if tag, ok := t.(string); ok {
+				agent.Tags = append(agent.Tags, tag)
+			}
+		}
+	}
+
+	// Parse LLM config
+	if llmConfig, ok := data["llm_config"].(map[string]interface{}); ok {
+		agent.LLMConfig = llmConfig
+	}
+
+	// Parse timestamps
+	if createdAt := getString(data, "created_at"); createdAt != "" {
+		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			agent.CreatedAt = t
+		}
+	}
+	if updatedAt := getString(data, "updated_at"); updatedAt != "" {
+		if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+			agent.UpdatedAt = t
+		}
+	}
+
+	return agent
+}
+
+// buildPromptAssistContext creates contextual information for the Prompt Assistant
+func (s *AgentService) buildPromptAssistContext(ctx *models.PromptAssistContext) string {
+	if ctx == nil {
+		return ""
+	}
+
+	var parts []string
+
+	if ctx.AgentName != "" {
+		parts = append(parts, fmt.Sprintf("Agent name: %s", ctx.AgentName))
+	}
+	if ctx.AgentType != "" {
+		parts = append(parts, fmt.Sprintf("Agent type: %s", ctx.AgentType))
+	}
+	if ctx.AssistFor != "" {
+		parts = append(parts, fmt.Sprintf("Assisting with: %s", ctx.AssistFor))
+	}
+	if ctx.CurrentDescription != "" {
+		parts = append(parts, fmt.Sprintf("Current description: %s", ctx.CurrentDescription))
+	}
+	if ctx.CurrentSystemPrompt != "" {
+		parts = append(parts, fmt.Sprintf("Current system prompt: %s", ctx.CurrentSystemPrompt))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// Helper functions for parsing JSON responses
+
+func getString(data map[string]interface{}, key string) string {
+	if v, ok := data[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getInt(data map[string]interface{}, key string) int {
+	if v, ok := data[key].(float64); ok {
+		return int(v)
+	}
+	if v, ok := data[key].(int); ok {
+		return v
+	}
+	return 0
+}
+
+func getFloat(data map[string]interface{}, key string) float64 {
+	if v, ok := data[key].(float64); ok {
+		return v
+	}
+	return 0.0
+}
+
+func getBool(data map[string]interface{}, key string) bool {
+	if v, ok := data[key].(bool); ok {
+		return v
+	}
+	return false
 }
