@@ -1,9 +1,16 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -167,6 +174,11 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 // @Router /api/v1/agents/{id} [put]
 func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	agentID := c.Param("id")
+	h.logger.Info("UpdateAgent called",
+		zap.String("agent_id", agentID),
+		zap.String("request_url", c.Request.URL.String()),
+	)
+
 	if agentID == "" {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Agent ID is required"))
 		return
@@ -186,6 +198,15 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request payload", err))
 		return
 	}
+
+	// Log request details for debugging
+	h.logger.Info("UpdateAgent request details",
+		zap.String("agent_id", agentID),
+		zap.String("user_id", userID),
+		zap.Any("name", req.Name),
+		zap.Any("type", req.Type),
+		zap.Bool("has_system_prompt", req.SystemPrompt != nil),
+	)
 
 	// Validate request
 	if err := validateStruct(&req); err != nil {
@@ -698,6 +719,368 @@ func (h *AgentHandler) ListExecutions(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// ============================================================================
+// Internal Agent Handlers - System agents like Prompt Assistant
+// ============================================================================
+
+// InternalAgent represents a system agent configuration
+type InternalAgent struct {
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	Type         string                 `json:"type"`
+	SystemPrompt string                 `json:"system_prompt"`
+	LLMConfig    map[string]interface{} `json:"llm_config"`
+	IsInternal   bool                   `json:"is_internal"`
+	CreatedAt    string                 `json:"created_at"`
+}
+
+// getInternalAgents returns the list of internal system agents
+func getInternalAgents() []InternalAgent {
+	return []InternalAgent{
+		{
+			ID:          "00000000-0000-0000-0000-000000000001",
+			Name:        "Prompt Assistant",
+			Description: "AI-powered assistant for improving agent descriptions and system prompts",
+			Type:        "conversational",
+			SystemPrompt: `You are a helpful AI assistant specialized in writing and improving prompts for AI agents.
+
+Your role is to help users create effective:
+1. Agent descriptions - Clear, concise descriptions that explain what the agent does
+2. System prompts - Well-structured instructions that guide agent behavior
+
+When helping with descriptions:
+- Keep them concise (1-3 sentences)
+- Focus on the agent's primary purpose and capabilities
+- Use clear, professional language
+
+When helping with system prompts:
+- Structure them with clear sections (role, capabilities, constraints)
+- Include specific instructions for the agent's behavior
+- Consider edge cases and error handling
+- Use consistent formatting
+
+Always respond with a JSON object in this format:
+{
+  "recommendation": "Your suggested text here",
+  "reasoning": "Brief explanation of why this works well",
+  "comments": "Any questions or suggestions for further refinement"
+}
+
+Be conversational and helpful. Ask clarifying questions if needed.`,
+			LLMConfig: map[string]interface{}{
+				"provider":    "openai",
+				"model":       "gpt-4o-mini",
+				"temperature": 0.7,
+				"max_tokens":  1024,
+			},
+			IsInternal: true,
+			CreatedAt:  "2024-01-01T00:00:00Z",
+		},
+	}
+}
+
+// ListInternalAgents lists all internal system agents
+// @Summary List internal agents
+// @Description Retrieve all internal system agents (e.g., Prompt Assistant)
+// @Tags internal-agents
+// @Produce json
+// @Security Bearer
+// @Success 200 {array} InternalAgent
+// @Failure 401 {object} errors.APIError
+// @Router /api/v1/agents/internal [get]
+func (h *AgentHandler) ListInternalAgents(c *gin.Context) {
+	agents := getInternalAgents()
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  len(agents),
+	})
+}
+
+// GetInternalAgent retrieves a specific internal agent by ID
+// @Summary Get internal agent
+// @Description Retrieve a specific internal system agent by ID
+// @Tags internal-agents
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Internal Agent ID"
+// @Success 200 {object} InternalAgent
+// @Failure 401 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Router /api/v1/agents/internal/{id} [get]
+func (h *AgentHandler) GetInternalAgent(c *gin.Context) {
+	agentID := c.Param("id")
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Agent ID is required"))
+		return
+	}
+
+	agents := getInternalAgents()
+	for _, agent := range agents {
+		if agent.ID == agentID {
+			c.JSON(http.StatusOK, agent)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, errors.NotFound("Internal agent not found"))
+}
+
+// InternalAgentExecuteRequest represents a request to execute an internal agent
+type InternalAgentExecuteRequest struct {
+	Input     string                 `json:"input" binding:"required"`
+	History   []ConversationMessage  `json:"history,omitempty"`
+	SessionID string                 `json:"session_id,omitempty"`
+	Context   map[string]interface{} `json:"context,omitempty"`
+}
+
+// ConversationMessage represents a message in the conversation history
+type ConversationMessage struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+// InternalAgentExecuteResponse represents the response from internal agent execution
+type InternalAgentExecuteResponse struct {
+	Output         string                 `json:"output"`
+	ConversationID string                 `json:"conversation_id,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ExecuteInternalAgent executes an internal system agent
+// @Summary Execute internal agent
+// @Description Execute an internal system agent (e.g., Prompt Assistant)
+// @Tags internal-agents
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Internal Agent ID"
+// @Param request body InternalAgentExecuteRequest true "Execution request"
+// @Success 200 {object} InternalAgentExecuteResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/agents/internal/{id}/execute [post]
+func (h *AgentHandler) ExecuteInternalAgent(c *gin.Context) {
+	h.logger.Info("ExecuteInternalAgent called")
+
+	agentID := c.Param("id")
+	h.logger.Info("ExecuteInternalAgent - processing request",
+		zap.String("agent_id", agentID),
+	)
+
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Agent ID is required"))
+		return
+	}
+
+	// Find the internal agent
+	var targetAgent *InternalAgent
+	agents := getInternalAgents()
+	h.logger.Debug("Available internal agents",
+		zap.Int("count", len(agents)),
+	)
+
+	for _, agent := range agents {
+		if agent.ID == agentID {
+			targetAgent = &agent
+			break
+		}
+	}
+
+	if targetAgent == nil {
+		h.logger.Warn("Internal agent not found",
+			zap.String("requested_id", agentID),
+		)
+		c.JSON(http.StatusNotFound, errors.NotFound("Internal agent not found"))
+		return
+	}
+
+	h.logger.Info("Found internal agent",
+		zap.String("agent_id", targetAgent.ID),
+		zap.String("agent_name", targetAgent.Name),
+	)
+
+	var req InternalAgentExecuteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request payload", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request payload", err))
+		return
+	}
+
+	h.logger.Info("Execute request parsed",
+		zap.String("input_preview", truncateString(req.Input, 100)),
+		zap.Int("history_length", len(req.History)),
+	)
+
+	// Get auth token for LLM router
+	authToken := extractAuthToken(c)
+	if authToken == "" {
+		h.logger.Warn("No authorization token provided")
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
+		return
+	}
+
+	// Build messages for LLM
+	messages := []map[string]string{
+		{
+			"role":    "system",
+			"content": targetAgent.SystemPrompt,
+		},
+	}
+
+	// Add conversation history
+	for _, msg := range req.History {
+		messages = append(messages, map[string]string{
+			"role":    msg.Role,
+			"content": msg.Content,
+		})
+	}
+
+	// Add current user message
+	messages = append(messages, map[string]string{
+		"role":    "user",
+		"content": req.Input,
+	})
+
+	// Execute via LLM router
+	output, err := h.executeLLMRequest(c.Request.Context(), messages, targetAgent.LLMConfig, authToken)
+	if err != nil {
+		h.logger.Error("Failed to execute internal agent", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to execute agent"))
+		return
+	}
+
+	response := InternalAgentExecuteResponse{
+		Output:         output,
+		ConversationID: req.SessionID,
+		Metadata: map[string]interface{}{
+			"agent_id":   targetAgent.ID,
+			"agent_name": targetAgent.Name,
+		},
+	}
+
+	h.logger.Info("Internal agent executed successfully",
+		zap.String("agent_id", agentID),
+		zap.String("agent_name", targetAgent.Name),
+	)
+
+	c.JSON(http.StatusOK, response)
+}
+
+// executeLLMRequest sends a request to the LLM router
+func (h *AgentHandler) executeLLMRequest(ctx context.Context, messages []map[string]string, llmConfig map[string]interface{}, authToken string) (string, error) {
+	// Try both environment variables for LLM router URL
+	routerURL := os.Getenv("TAS_LLM_ROUTER_URL")
+	if routerURL == "" {
+		routerURL = os.Getenv("ROUTER_SERVICE_BASE_URL")
+	}
+	if routerURL == "" {
+		routerURL = "http://llm-router.tas-llm-router:8086"
+	}
+
+	h.logger.Info("Executing LLM request",
+		zap.String("router_url", routerURL),
+		zap.Any("llm_config", llmConfig),
+		zap.Int("message_count", len(messages)),
+	)
+
+	// Build request payload
+	payload := map[string]interface{}{
+		"model":    llmConfig["model"],
+		"messages": messages,
+	}
+	if temp, ok := llmConfig["temperature"].(float64); ok {
+		payload["temperature"] = temp
+	}
+	if maxTokens, ok := llmConfig["max_tokens"].(int); ok {
+		payload["max_tokens"] = maxTokens
+	} else if maxTokens, ok := llmConfig["max_tokens"].(float64); ok {
+		payload["max_tokens"] = int(maxTokens)
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		h.logger.Error("Failed to marshal LLM request", zap.Error(err))
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	h.logger.Debug("LLM request payload", zap.String("payload", string(bodyBytes)))
+
+	// The LLM router's direct endpoint is /v1/chat/completions
+	// The /api/v1/router/chat/completions is aether-be's own proxy endpoint
+	fullURL := routerURL + "/v1/chat/completions"
+	h.logger.Info("Making LLM router request", zap.String("url", fullURL))
+
+	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		h.logger.Error("Failed to create LLM request", zap.Error(err))
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		h.logger.Error("Failed to execute LLM request",
+			zap.Error(err),
+			zap.String("url", fullURL),
+		)
+		return "", fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	h.logger.Info("LLM router response received",
+		zap.Int("status_code", resp.StatusCode),
+	)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.logger.Error("Failed to read LLM response", zap.Error(err))
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		h.logger.Error("LLM router error",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(respBytes)),
+		)
+		return "", fmt.Errorf("LLM router error (status %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBytes, &result); err != nil {
+		h.logger.Error("Failed to parse LLM response",
+			zap.Error(err),
+			zap.String("response_body", string(respBytes)),
+		)
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Extract content from OpenAI-style response
+	if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if message, ok := choice["message"].(map[string]interface{}); ok {
+				if content, ok := message["content"].(string); ok {
+					h.logger.Info("LLM response extracted successfully",
+						zap.Int("content_length", len(content)),
+					)
+					return content, nil
+				}
+			}
+		}
+	}
+
+	h.logger.Error("Unexpected LLM response format",
+		zap.String("response_body", string(respBytes)),
+	)
+	return "", fmt.Errorf("unexpected response format")
+}
+
 // GetAgentStats returns statistics for a specific agent
 // @Summary Get agent statistics
 // @Description Retrieve statistics and metrics for a specific agent
@@ -746,6 +1129,14 @@ func (h *AgentHandler) GetAgentStats(c *gin.Context) {
 	h.logger.Info("Agent stats retrieved",
 		zap.String("agent_id", agentID),
 	)
-	
+
 	c.JSON(http.StatusOK, stats)
+}
+
+// truncateString truncates a string to the specified length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
