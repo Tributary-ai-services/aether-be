@@ -644,11 +644,29 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID str
 		// After file upload succeeds, trigger text extraction processing
 		// AudiModal requires a separate API call to start processing after upload
 		if result.Data.Status == "discovered" {
+			// Extract compliance settings from config to pass DLP/redaction options
+			var procOptions *ProcessingOptions
+			if complianceSettings, ok := config["compliance_settings"].(map[string]interface{}); ok {
+				procOptions = &ProcessingOptions{
+					DLPScanEnabled: true, // Default to enabled
+					RedactionMode:  "mask", // Default to mask
+				}
+				if dlpEnabled, ok := complianceSettings["dlp_scan_enabled"].(bool); ok {
+					procOptions.DLPScanEnabled = dlpEnabled
+				}
+				if redactionMode, ok := complianceSettings["redaction_mode"].(string); ok && redactionMode != "" {
+					procOptions.RedactionMode = redactionMode
+				}
+				s.logger.Info("Using compliance settings for file processing",
+					zap.Bool("dlp_scan_enabled", procOptions.DLPScanEnabled),
+					zap.String("redaction_mode", procOptions.RedactionMode))
+			}
+
 			s.logger.Info("File uploaded, triggering text extraction",
 				zap.String("file_id", result.Data.ID),
 				zap.String("tenant_id", result.Data.TenantID))
 
-			if err := s.TriggerFileProcessing(ctx, result.Data.TenantID, result.Data.ID); err != nil {
+			if err := s.TriggerFileProcessingWithOptions(ctx, result.Data.TenantID, result.Data.ID, procOptions); err != nil {
 				s.logger.Warn("Failed to trigger file processing - file uploaded but extraction not started",
 					zap.String("file_id", result.Data.ID),
 					zap.Error(err))
@@ -718,6 +736,11 @@ func (s *AudiModalService) CancelProcessingJob(ctx context.Context, jobID string
 // TriggerFileProcessing triggers text extraction for a file in AudiModal
 // This must be called after file upload to start the actual text extraction process
 func (s *AudiModalService) TriggerFileProcessing(ctx context.Context, tenantUUID, fileID string) error {
+	return s.TriggerFileProcessingWithOptions(ctx, tenantUUID, fileID, nil)
+}
+
+// TriggerFileProcessingWithOptions triggers text extraction with custom options including DLP and redaction settings
+func (s *AudiModalService) TriggerFileProcessingWithOptions(ctx context.Context, tenantUUID, fileID string, options *ProcessingOptions) error {
 	url := fmt.Sprintf("/api/v1/tenants/%s/files/%s/process", tenantUUID, fileID)
 
 	// Use fixed_size_text as the default strategy since "auto" is not supported
@@ -725,10 +748,28 @@ func (s *AudiModalService) TriggerFileProcessing(ctx context.Context, tenantUUID
 		"chunking_strategy": "fixed_size_text",
 	}
 
+	// Apply processing options if provided
+	if options != nil {
+		if options.Strategy != "" {
+			req["chunking_strategy"] = options.Strategy
+		}
+		// Always pass DLP settings - default to enabled with mask redaction
+		req["dlp_scan_enabled"] = options.DLPScanEnabled
+		if options.RedactionMode != "" {
+			req["redaction_mode"] = options.RedactionMode
+		} else if options.DLPScanEnabled {
+			req["redaction_mode"] = "mask" // Default to mask when DLP is enabled
+		}
+	} else {
+		// Default: Enable DLP with mask redaction when no options provided
+		req["dlp_scan_enabled"] = true
+		req["redaction_mode"] = "mask"
+	}
+
 	s.logger.Info("Triggering file processing in AudiModal",
 		zap.String("tenant_uuid", tenantUUID),
 		zap.String("file_id", fileID),
-		zap.String("strategy", "fixed_size_text"))
+		zap.Any("request", req))
 
 	resp, err := s.makeRequest(ctx, http.MethodPost, url, req)
 	if err != nil {
@@ -847,6 +888,7 @@ type ProcessingOptions struct {
 	Strategy       string                 `json:"strategy,omitempty"`
 	StrategyConfig map[string]interface{} `json:"strategy_config,omitempty"`
 	DLPScanEnabled bool                   `json:"dlp_scan_enabled,omitempty"`
+	RedactionMode  string                 `json:"redaction_mode,omitempty"` // mask, replace, hash, remove, tokenize, none
 	Priority       string                 `json:"priority,omitempty"`
 	RetryAttempts  int                    `json:"retry_attempts,omitempty"`
 }
@@ -1825,6 +1867,301 @@ func (s *AudiModalService) GetMLAnalysisSummary(ctx context.Context, tenantID st
 		zap.String("document_id", documentID),
 		zap.Int("total_chunks", response.Data.TotalChunks),
 		zap.Float64("avg_confidence", response.Data.AvgConfidence))
+
+	return &response.Data, nil
+}
+
+// DLPViolationFilter represents filter options for querying DLP violations
+type DLPViolationFilter struct {
+	Severity       string `json:"severity,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Acknowledged   string `json:"acknowledged,omitempty"`
+	ComplianceType string `json:"compliance_type,omitempty"`
+	From           string `json:"from,omitempty"`
+	To             string `json:"to,omitempty"`
+	Page           int    `json:"page,omitempty"`
+	PageSize       int    `json:"page_size,omitempty"`
+}
+
+// DLPViolation represents a DLP violation record
+type DLPViolation struct {
+	ID             string   `json:"id"`
+	TenantID       string   `json:"tenant_id"`
+	PolicyID       string   `json:"policy_id,omitempty"`
+	FileID         string   `json:"file_id"`
+	ChunkID        string   `json:"chunk_id,omitempty"`
+	RuleName       string   `json:"rule_name"`
+	Severity       string   `json:"severity"`
+	ComplianceType string   `json:"compliance_type"`
+	Confidence     float64  `json:"confidence"`
+	MatchedText    string   `json:"matched_text,omitempty"`
+	Context        string   `json:"context,omitempty"`
+	StartOffset    int64    `json:"start_offset,omitempty"`
+	EndOffset      int64    `json:"end_offset,omitempty"`
+	LineNumber     int      `json:"line_number,omitempty"`
+	ActionsTaken   []string `json:"actions_taken"`
+	Status         string   `json:"status"`
+	Acknowledged   bool     `json:"acknowledged"`
+	AcknowledgedBy string   `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt string   `json:"acknowledged_at,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
+	FileName       string   `json:"file_name,omitempty"`
+}
+
+// DLPViolationSummary represents aggregated compliance statistics
+type DLPViolationSummary struct {
+	TotalViolations     int64            `json:"total_violations"`
+	UnacknowledgedCount int64            `json:"unacknowledged_count"`
+	AcknowledgedCount   int64            `json:"acknowledged_count"`
+	ComplianceScore     int              `json:"compliance_score"`
+	CriticalCount       int64            `json:"critical_count"`
+	HighCount           int64            `json:"high_count"`
+	MediumCount         int64            `json:"medium_count"`
+	LowCount            int64            `json:"low_count"`
+	PIIDetections       int64            `json:"pii_detections"`
+	BySeverity          map[string]int64 `json:"by_severity"`
+	ByRuleType          map[string]int64 `json:"by_rule_type"`
+}
+
+// BulkAcknowledgeResult represents the result of bulk acknowledging violations
+type BulkAcknowledgeResult struct {
+	SuccessCount int      `json:"success_count"`
+	FailureCount int      `json:"failure_count"`
+	FailedIDs    []string `json:"failed_ids,omitempty"`
+}
+
+// GetDLPViolations retrieves DLP violations from AudiModal with filtering
+func (s *AudiModalService) GetDLPViolations(ctx context.Context, tenantID string, filter DLPViolationFilter) ([]DLPViolation, int64, error) {
+	s.logger.Info("Fetching DLP violations from AudiModal",
+		zap.String("tenant_id", tenantID),
+		zap.Any("filter", filter))
+
+	// Build query parameters
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get AudiModal tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("/api/v1/tenants/%s/violations?page=%d&page_size=%d",
+		tenantUUID, filter.Page, filter.PageSize)
+
+	if filter.Severity != "" {
+		url += "&severity=" + filter.Severity
+	}
+	if filter.Status != "" {
+		url += "&status=" + filter.Status
+	}
+	if filter.ComplianceType != "" {
+		url += "&compliance_type=" + filter.ComplianceType
+	}
+
+	resp, err := s.makeRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to fetch violations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Warn("AudiModal violations fetch returned non-OK status",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(body)))
+		// Return empty list instead of error for now
+		return []DLPViolation{}, 0, nil
+	}
+
+	// AudiModal returns: { success, data: [...violations...], meta: { pagination: { total_count } } }
+	var response struct {
+		Success bool           `json:"success"`
+		Data    []DLPViolation `json:"data"`
+		Meta    struct {
+			Pagination struct {
+				TotalCount int64 `json:"total_count"`
+			} `json:"pagination"`
+			Count *int64 `json:"count"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		s.logger.Error("Failed to parse violations response",
+			zap.Error(err),
+			zap.String("response_body", string(body)))
+		return nil, 0, fmt.Errorf("failed to parse violations response: %w", err)
+	}
+
+	// Get total from either pagination.total_count or meta.count
+	total := response.Meta.Pagination.TotalCount
+	if total == 0 && response.Meta.Count != nil {
+		total = *response.Meta.Count
+	}
+
+	return response.Data, total, nil
+}
+
+// GetDLPViolation retrieves a single DLP violation by ID
+func (s *AudiModalService) GetDLPViolation(ctx context.Context, tenantID, violationID string) (*DLPViolation, error) {
+	s.logger.Info("Fetching single DLP violation from AudiModal",
+		zap.String("tenant_id", tenantID),
+		zap.String("violation_id", violationID))
+
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AudiModal tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("/api/v1/tenants/%s/violations/%s", tenantUUID, violationID)
+
+	resp, err := s.makeRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch violation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("violation not found")
+	}
+
+	var response struct {
+		Success bool         `json:"success"`
+		Data    DLPViolation `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse violation response: %w", err)
+	}
+
+	return &response.Data, nil
+}
+
+// GetDLPViolationSummary retrieves aggregated compliance statistics
+func (s *AudiModalService) GetDLPViolationSummary(ctx context.Context, tenantID string) (*DLPViolationSummary, error) {
+	s.logger.Info("Fetching DLP violation summary from AudiModal",
+		zap.String("tenant_id", tenantID))
+
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AudiModal tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("/api/v1/tenants/%s/violations/summary", tenantUUID)
+
+	resp, err := s.makeRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch violation summary: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		// Return empty summary instead of error
+		return &DLPViolationSummary{
+			TotalViolations:     0,
+			UnacknowledgedCount: 0,
+			AcknowledgedCount:   0,
+			ComplianceScore:     100,
+			CriticalCount:       0,
+			HighCount:           0,
+			MediumCount:         0,
+			LowCount:            0,
+			PIIDetections:       0,
+			BySeverity:          make(map[string]int64),
+			ByRuleType:          make(map[string]int64),
+		}, nil
+	}
+
+	var response struct {
+		Success bool                `json:"success"`
+		Data    DLPViolationSummary `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse violation summary response: %w", err)
+	}
+
+	return &response.Data, nil
+}
+
+// AcknowledgeDLPViolation marks a violation as acknowledged
+func (s *AudiModalService) AcknowledgeDLPViolation(ctx context.Context, tenantID, violationID, userID string) (*DLPViolation, error) {
+	s.logger.Info("Acknowledging DLP violation in AudiModal",
+		zap.String("tenant_id", tenantID),
+		zap.String("violation_id", violationID),
+		zap.String("acknowledged_by", userID))
+
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AudiModal tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("/api/v1/tenants/%s/violations/%s/acknowledge", tenantUUID, violationID)
+
+	reqBody := map[string]string{
+		"acknowledged_by": userID,
+	}
+
+	resp, err := s.makeRequest(ctx, "POST", url, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acknowledge violation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to acknowledge violation: status %d", resp.StatusCode)
+	}
+
+	var response struct {
+		Success bool         `json:"success"`
+		Data    DLPViolation `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse acknowledge response: %w", err)
+	}
+
+	return &response.Data, nil
+}
+
+// BulkAcknowledgeDLPViolations marks multiple violations as acknowledged
+func (s *AudiModalService) BulkAcknowledgeDLPViolations(ctx context.Context, tenantID string, violationIDs []string, userID string) (*BulkAcknowledgeResult, error) {
+	s.logger.Info("Bulk acknowledging DLP violations in AudiModal",
+		zap.String("tenant_id", tenantID),
+		zap.Int("violation_count", len(violationIDs)),
+		zap.String("acknowledged_by", userID))
+
+	tenantUUID, err := s.getAudiModalTenantUUID(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AudiModal tenant UUID: %w", err)
+	}
+
+	url := fmt.Sprintf("/api/v1/tenants/%s/violations/bulk-acknowledge", tenantUUID)
+
+	reqBody := map[string]interface{}{
+		"violation_ids":   violationIDs,
+		"acknowledged_by": userID,
+	}
+
+	resp, err := s.makeRequest(ctx, "POST", url, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bulk acknowledge violations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to bulk acknowledge violations: status %d", resp.StatusCode)
+	}
+
+	var response struct {
+		Success bool                  `json:"success"`
+		Data    BulkAcknowledgeResult `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse bulk acknowledge response: %w", err)
+	}
 
 	return &response.Data, nil
 }

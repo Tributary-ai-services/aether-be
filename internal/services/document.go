@@ -108,6 +108,7 @@ func (s *DocumentService) CreateDocument(ctx context.Context, req models.Documen
 			checksum: $checksum,
 			storage_path: $storage_path,
 			storage_bucket: $storage_bucket,
+			extracted_text: $extracted_text,
 			notebook_id: $notebook_id,
 			owner_id: $owner_id,
 			space_type: $space_type,
@@ -147,6 +148,7 @@ func (s *DocumentService) CreateDocument(ctx context.Context, req models.Documen
 		"checksum":       document.Checksum,
 		"storage_path":   document.StoragePath,
 		"storage_bucket": document.StorageBucket,
+		"extracted_text": document.ExtractedText,
 		"notebook_id":    document.NotebookID,
 		"owner_id":       document.OwnerID,
 		"space_type":     string(document.SpaceType),
@@ -255,6 +257,13 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 			"file_data":        req.FileData,
 			"filename":         document.OriginalName,
 			"mime_type":        document.MimeType,
+		}
+
+		// Include compliance settings for DLP scanning and redaction
+		if req.ComplianceSettings != nil {
+			processingConfig["compliance_settings"] = req.ComplianceSettings
+			s.logger.Info("Including compliance settings in processing config",
+				zap.Any("compliance_settings", req.ComplianceSettings))
 		}
 
 		job, err := s.processingService.SubmitProcessingJob(ctx, spaceCtx.TenantID, document.ID, "extract", processingConfig)

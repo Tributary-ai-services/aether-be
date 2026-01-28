@@ -591,10 +591,30 @@ func (s *AgentService) GetAgentKnowledgeSources(ctx context.Context, agentID, us
 
 // ExecuteAgent executes an agent with the provided input and handles type-specific logic
 func (s *AgentService) ExecuteAgent(ctx context.Context, agentID string, req models.AgentExecuteRequest, userID string, userTeams []string, authToken string) (*models.AgentExecuteResponse, error) {
-	// Get agent from agent-builder service (where agents actually live)
-	agent, err := s.getAgentFromBuilder(ctx, agentID, authToken)
+	// First get agent from Neo4j to get the agent_builder_id mapping
+	neo4jAgent, err := s.getAgentFromNeo4j(ctx, agentID)
+	if err != nil {
+		s.logger.Warn("Agent not found in Neo4j, trying direct agent-builder lookup",
+			zap.String("agent_id", agentID),
+			zap.Error(err))
+		// Fall back to using agentID directly for backwards compatibility
+		neo4jAgent = &models.Agent{AgentBuilderID: agentID}
+	}
+
+	// Use agent_builder_id to get full agent details from agent-builder
+	builderID := neo4jAgent.AgentBuilderID
+	if builderID == "" {
+		builderID = agentID // Fallback if no agent_builder_id set
+	}
+
+	agent, err := s.getAgentFromBuilder(ctx, builderID, authToken)
 	if err != nil {
 		return nil, errors.NotFound("Agent not found")
+	}
+
+	// Preserve Neo4j metadata (type, etc.) if available
+	if neo4jAgent != nil && neo4jAgent.Type != "" {
+		agent.Type = neo4jAgent.Type
 	}
 
 	// Check access permissions based on space and ownership

@@ -1,8 +1,9 @@
 package handlers
 
 import (
+	"database/sql"
 	"os"
-	
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
@@ -34,6 +35,9 @@ type APIServer struct {
 	RouterHandler        *RouterHandler
 	LoggingHandler       *LoggingHandler
 	VectorSearchHandler  *VectorSearchHandler
+	ComplianceHandler    *ComplianceHandler
+	DataSourceHandler    *DataSourceHandler
+	SecurityHandler      *SecurityHandler
 	SpaceService         *services.SpaceContextService
 	Metrics              *metrics.Metrics
 	logger               *logger.Logger
@@ -43,6 +47,7 @@ type APIServer struct {
 func NewAPIServer(
 	cfg *config.Config,
 	neo4j *database.Neo4jClient,
+	postgresDB *sql.DB,
 	keycloakClient *auth.KeycloakClient,
 	storageService *services.S3StorageService,
 	kafkaService *services.KafkaService,
@@ -114,6 +119,15 @@ func NewAPIServer(
 	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
 	loggingHandler := NewLoggingHandler(log)
 	vectorSearchHandler := NewVectorSearchHandler(notebookService, documentService, userService, &cfg.DeepLake, log)
+	complianceHandler := NewComplianceHandler(audiModalClient, log)
+
+	// Initialize Crawl4AI service and data source handler
+	crawl4aiService := services.NewCrawl4AIService(&cfg.Crawl4AI, log)
+	dataSourceHandler := NewDataSourceHandler(crawl4aiService, log)
+
+	// Initialize security event service and handler
+	securityEventService := services.NewSecurityEventService(kafkaService, postgresDB, log)
+	securityHandler := NewSecurityHandler(securityEventService, log)
 
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
@@ -156,6 +170,9 @@ func NewAPIServer(
 		RouterHandler:        routerHandler,
 		LoggingHandler:       loggingHandler,
 		VectorSearchHandler:  vectorSearchHandler,
+		ComplianceHandler:    complianceHandler,
+		DataSourceHandler:    dataSourceHandler,
+		SecurityHandler:      securityHandler,
 		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
@@ -311,6 +328,14 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		organizations.DELETE("/:id/members/:user_id", s.OrganizationHandler.RemoveOrganizationMember)
 	}
 
+	// Internal agent routes - system agents like Prompt Assistant (no space context required)
+	internalAgents := api.Group("/agents/internal")
+	{
+		internalAgents.GET("", s.AgentHandler.ListInternalAgents)
+		internalAgents.GET("/:id", s.AgentHandler.GetInternalAgent)
+		internalAgents.POST("/:id/execute", s.AgentHandler.ExecuteInternalAgent)
+	}
+
 	// Agent routes - with space context for multi-tenancy
 	agents := api.Group("/agents")
 	agents.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
@@ -321,12 +346,12 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		agents.GET("/:id", s.AgentHandler.GetAgent)
 		agents.PUT("/:id", s.AgentHandler.UpdateAgent)
 		agents.DELETE("/:id", s.AgentHandler.DeleteAgent)
-		
+
 		// Agent knowledge source management
 		agents.POST("/:id/knowledge-sources", s.AgentHandler.AddKnowledgeSource)
 		agents.GET("/:id/knowledge-sources", s.AgentHandler.GetKnowledgeSources)
 		agents.DELETE("/:id/knowledge-sources/:notebook_id", s.AgentHandler.RemoveKnowledgeSource)
-		
+
 		// Agent execution
 		agents.POST("/:id/execute", s.AgentHandler.ExecuteAgent)
 	}
@@ -385,6 +410,44 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 
 		// Analytics
 		ml.GET("/analytics", s.MLHandler.GetAnalytics)
+	}
+
+	// Compliance routes - DLP violations from AudiModal
+	compliance := api.Group("/compliance")
+	compliance.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	compliance.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		compliance.GET("/violations", s.ComplianceHandler.GetViolations)
+		compliance.GET("/violations/:id", s.ComplianceHandler.GetViolation)
+		compliance.GET("/summary", s.ComplianceHandler.GetSummary)
+		compliance.POST("/violations/:id/acknowledge", s.ComplianceHandler.AcknowledgeViolation)
+		compliance.POST("/violations/acknowledge-bulk", s.ComplianceHandler.BulkAcknowledgeViolations)
+	}
+
+	// Security routes - threat detection events and policies
+	security := api.Group("/security")
+	security.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	{
+		// Security events
+		security.GET("/events", s.SecurityHandler.GetSecurityEvents)
+		security.GET("/events/:id", s.SecurityHandler.GetSecurityEvent)
+		security.PUT("/events/:id/review", s.SecurityHandler.ReviewSecurityEvent)
+
+		// Security summary/dashboard
+		security.GET("/summary", s.SecurityHandler.GetSecuritySummary)
+
+		// Security policies
+		security.GET("/policies", s.SecurityHandler.GetSecurityPolicies)
+		security.PUT("/policies/:id", s.SecurityHandler.UpdateSecurityPolicy)
+	}
+
+	// Data Sources routes - URL probing and web scraping via Crawl4AI
+	dataSources := api.Group("/data-sources")
+	{
+		dataSources.GET("/health", s.DataSourceHandler.GetCrawl4AIHealth)
+		dataSources.GET("/scrapers", s.DataSourceHandler.GetScraperTypes)
+		dataSources.POST("/probe-url", s.DataSourceHandler.ProbeURL)
+		dataSources.POST("/scrape-url", s.DataSourceHandler.ScrapeURL)
 	}
 
 	// Workflow automation routes

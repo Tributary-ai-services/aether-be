@@ -58,6 +58,11 @@ const (
 	EventProcessingStarted   EventType = "processing.started"
 	EventProcessingCompleted EventType = "processing.completed"
 	EventProcessingFailed    EventType = "processing.failed"
+
+	// Security events
+	EventSecurityThreatDetected EventType = "security.threat_detected"
+	EventSecurityReviewCompleted EventType = "security.review_completed"
+	EventSecurityPolicyViolation EventType = "security.policy_violation"
 )
 
 // Event represents a domain event
@@ -388,21 +393,24 @@ func (k *KafkaService) HealthCheck(ctx context.Context) error {
 func (k *KafkaService) getTopicForEvent(eventType EventType) string {
 	// Map event types to topics
 	topicMap := map[EventType]string{
-		EventUserCreated:         "users",
-		EventUserUpdated:         "users",
-		EventUserDeleted:         "users",
-		EventUserLoggedIn:        "users",
-		EventNotebookCreated:     "notebooks",
-		EventNotebookUpdated:     "notebooks",
-		EventNotebookDeleted:     "notebooks",
-		EventNotebookShared:      "notebooks",
-		EventDocumentUploaded:    "documents",
-		EventDocumentProcessed:   "documents",
-		EventDocumentFailed:      "documents",
-		EventDocumentDeleted:     "documents",
-		EventProcessingStarted:   "processing",
-		EventProcessingCompleted: "processing",
-		EventProcessingFailed:    "processing",
+		EventUserCreated:            "users",
+		EventUserUpdated:            "users",
+		EventUserDeleted:            "users",
+		EventUserLoggedIn:           "users",
+		EventNotebookCreated:        "notebooks",
+		EventNotebookUpdated:        "notebooks",
+		EventNotebookDeleted:        "notebooks",
+		EventNotebookShared:         "notebooks",
+		EventDocumentUploaded:       "documents",
+		EventDocumentProcessed:      "documents",
+		EventDocumentFailed:         "documents",
+		EventDocumentDeleted:        "documents",
+		EventProcessingStarted:      "processing",
+		EventProcessingCompleted:    "processing",
+		EventProcessingFailed:       "processing",
+		EventSecurityThreatDetected: "security-events",
+		EventSecurityReviewCompleted: "security-events",
+		EventSecurityPolicyViolation: "security-events",
 	}
 
 	baseTopic, exists := topicMap[eventType]
@@ -497,6 +505,21 @@ func NewProcessingEvent(eventType EventType, jobID, documentID, userID string, d
 	return Event{
 		Type:    eventType,
 		Subject: jobID,
+		Data:    data,
+		UserID:  userID,
+	}
+}
+
+// NewSecurityEvent creates a new security-related event
+func NewSecurityEvent(eventType EventType, eventID, requestID, userID string, data map[string]interface{}) Event {
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+	data["request_id"] = requestID
+
+	return Event{
+		Type:    eventType,
+		Subject: eventID,
 		Data:    data,
 		UserID:  userID,
 	}
