@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -37,6 +38,9 @@ func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
 		"/api/v1/documents/upload",
 	}
 
+	// Endpoints that should skip SQL injection sanitization (because they legitimately contain SQL)
+	sqlQueryEndpointPattern := regexp.MustCompile(`^/api/v1/databases/[^/]+/query$`)
+
 	// isExactMultipartPath checks if a path exactly matches a multipart upload path
 	// (not just starts with it, to avoid matching upload-base64)
 	isExactMultipartPath := func(path string) bool {
@@ -47,6 +51,11 @@ func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
 			}
 		}
 		return false
+	}
+
+	// isSQLQueryEndpoint checks if the path is a database query endpoint
+	isSQLQueryEndpoint := func(path string) bool {
+		return sqlQueryEndpointPattern.MatchString(path)
 	}
 
 	// Create threat detector
@@ -182,8 +191,18 @@ func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
 			}
 		}
 
-		// Detect threats and sanitize the JSON data (metadata fields)
-		sanitizedData := sanitizeJSONValueWithThreatDetection(jsonData, "", threatDetector, &allThreats)
+		// For SQL query endpoints, skip threat detection/sanitization since SQL is legitimate
+		// DBHub enforces read-only mode as a safeguard
+		var sanitizedData interface{}
+		if isSQLQueryEndpoint(c.Request.URL.Path) {
+			log.Debug("Skipping SQL injection sanitization for database query endpoint",
+				zap.String("path", c.Request.URL.Path),
+			)
+			sanitizedData = jsonData // Pass through without sanitization
+		} else {
+			// Detect threats and sanitize the JSON data (metadata fields)
+			sanitizedData = sanitizeJSONValueWithThreatDetection(jsonData, "", threatDetector, &allThreats)
+		}
 
 		// Check if we should reject the request (critical severity)
 		highestSeverity := validation.GetHighestSeverity(allThreats)

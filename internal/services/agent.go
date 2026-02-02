@@ -353,20 +353,37 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 	if err := json.Unmarshal(bodyBytes, &builderResp); err != nil {
 		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
 	}
-	
+
+	// DEBUG: Log raw response from agent-builder
+	s.logger.Info("DEBUG: Raw agent-builder response", zap.String("response", string(bodyBytes)))
+
 	// Convert agent-builder response to aether-be format
 	agentsList, ok := builderResp["agents"].([]interface{})
 	if !ok {
 		return nil, errors.ExternalService("Invalid agent-builder response format", nil)
 	}
-	
+
 	agents := make([]*models.AgentResponse, 0, len(agentsList))
 	for _, agentData := range agentsList {
 		agentMap, ok := agentData.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		
+
+		// DEBUG: Log all keys in agentMap to see what fields are present
+		keys := make([]string, 0, len(agentMap))
+		for k := range agentMap {
+			keys = append(keys, k)
+		}
+		s.logger.Info("DEBUG: Agent map keys", zap.Strings("keys", keys))
+
+		// DEBUG: Log type field specifically
+		if typeVal, exists := agentMap["type"]; exists {
+			s.logger.Info("DEBUG: Type field value", zap.Any("type", typeVal), zap.String("type_go_type", fmt.Sprintf("%T", typeVal)))
+		} else {
+			s.logger.Info("DEBUG: Type field NOT FOUND in agent map")
+		}
+
 		// Safe string extraction helper
 		safeString := func(key string) string {
 			if val, ok := agentMap[key]; ok && val != nil {
@@ -396,12 +413,16 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			updatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		}
 		
+		// DEBUG: Log what safeString returns for type
+		typeStr := safeString("type")
+		s.logger.Info("DEBUG: safeString(type) result", zap.String("type_value", typeStr), zap.String("agent_name", safeString("name")))
+
 		agent := &models.AgentResponse{
 			ID:           safeString("id"),
 			Name:         safeString("name"),
 			Description:  safeString("description"),
 			Status:       models.AgentStatus(safeString("status")),
-			Type:         models.AgentType(safeString("type")),
+			Type:         models.AgentType(typeStr),
 			OwnerID:      safeString("owner_id"),
 			SpaceID:      safeString("space_id"),
 			IsPublic:     safeBool("is_public"),
@@ -410,6 +431,9 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
 		}
+
+		// DEBUG: Log the created agent's type
+		s.logger.Info("DEBUG: Created AgentResponse", zap.String("agent_id", agent.ID), zap.String("agent_type", string(agent.Type)))
 
 		// Extract llm_config if present
 		if llmConfig, ok := agentMap["llm_config"].(map[string]interface{}); ok {

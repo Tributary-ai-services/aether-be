@@ -38,6 +38,9 @@ type APIServer struct {
 	ComplianceHandler    *ComplianceHandler
 	DataSourceHandler    *DataSourceHandler
 	SecurityHandler      *SecurityHandler
+	DatabaseHandler      *DatabaseHandler
+	SavedQueryHandler    *SavedQueryHandler
+	AIPlaygroundHandler  *AIPlaygroundHandler
 	SpaceService         *services.SpaceContextService
 	Metrics              *metrics.Metrics
 	logger               *logger.Logger
@@ -129,6 +132,19 @@ func NewAPIServer(
 	securityEventService := services.NewSecurityEventService(kafkaService, postgresDB, log)
 	securityHandler := NewSecurityHandler(securityEventService, log)
 
+	// Initialize DBHub and Database service and handler
+	dbhubService := services.NewDBHubService(&cfg.DBHub, log)
+	databaseService := services.NewDatabaseService(neo4j, dbhubService, log)
+	databaseHandler := NewDatabaseHandler(databaseService, userService, log)
+
+	// Initialize SavedQuery service and handler
+	savedQueryService := services.NewSavedQueryService(neo4j, databaseService, log)
+	savedQueryHandler := NewSavedQueryHandler(savedQueryService, userService, teamService, log)
+
+	// Initialize AI Playground service and handler
+	aiPlaygroundService := services.NewAIPlaygroundService(neo4j, &cfg.Router, agentService, workflowService, log)
+	aiPlaygroundHandler := NewAIPlaygroundHandler(aiPlaygroundService, userService, teamService, log)
+
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
 	if err != nil {
@@ -173,6 +189,9 @@ func NewAPIServer(
 		ComplianceHandler:    complianceHandler,
 		DataSourceHandler:    dataSourceHandler,
 		SecurityHandler:      securityHandler,
+		DatabaseHandler:      databaseHandler,
+		SavedQueryHandler:    savedQueryHandler,
+		AIPlaygroundHandler:  aiPlaygroundHandler,
 		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
@@ -448,6 +467,71 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		dataSources.GET("/scrapers", s.DataSourceHandler.GetScraperTypes)
 		dataSources.POST("/probe-url", s.DataSourceHandler.ProbeURL)
 		dataSources.POST("/scrape-url", s.DataSourceHandler.ScrapeURL)
+	}
+
+	// Database connection management routes
+	databases := api.Group("/databases")
+	databases.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	databases.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		// Database connection CRUD
+		databases.POST("", s.DatabaseHandler.CreateDatabase)
+		databases.GET("", s.DatabaseHandler.ListDatabases)
+		databases.GET("/:id", s.DatabaseHandler.GetDatabase)
+		databases.PUT("/:id", s.DatabaseHandler.UpdateDatabase)
+		databases.DELETE("/:id", s.DatabaseHandler.DeleteDatabase)
+
+		// Connection testing
+		databases.POST("/:id/test", s.DatabaseHandler.TestConnection)
+
+		// Query execution
+		databases.POST("/:id/query", s.DatabaseHandler.ExecuteQuery)
+
+		// Schema introspection
+		databases.GET("/:id/schema", s.DatabaseHandler.GetSchema)
+		databases.GET("/:id/tables", s.DatabaseHandler.GetTables)
+		databases.GET("/:id/tables/:table/columns", s.DatabaseHandler.GetTableColumns)
+	}
+
+	// Saved Queries routes - for developer tools
+	savedQueries := api.Group("/saved-queries")
+	savedQueries.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	savedQueries.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		savedQueries.POST("", s.SavedQueryHandler.CreateSavedQuery)
+		savedQueries.GET("", s.SavedQueryHandler.ListSavedQueries)
+		savedQueries.GET("/:id", s.SavedQueryHandler.GetSavedQuery)
+		savedQueries.PUT("/:id", s.SavedQueryHandler.UpdateSavedQuery)
+		savedQueries.DELETE("/:id", s.SavedQueryHandler.DeleteSavedQuery)
+		savedQueries.POST("/:id/execute", s.SavedQueryHandler.ExecuteSavedQuery)
+		savedQueries.POST("/:id/duplicate", s.SavedQueryHandler.DuplicateSavedQuery)
+	}
+
+	// AI Playground routes - for developer tools
+	aiPlayground := api.Group("/developer-tools/ai")
+	aiPlayground.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	aiPlayground.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		// LLM endpoints
+		aiPlayground.GET("/providers", s.AIPlaygroundHandler.ListProviders)
+		aiPlayground.GET("/providers/:provider/models", s.AIPlaygroundHandler.ListModels)
+		aiPlayground.POST("/llm/completions", s.AIPlaygroundHandler.CreateCompletion)
+		aiPlayground.POST("/llm/completions/compare", s.AIPlaygroundHandler.CompareCompletions)
+
+		// Agent testing endpoints
+		aiPlayground.GET("/agents", s.AIPlaygroundHandler.ListAgents)
+		aiPlayground.POST("/agents/:id/test", s.AIPlaygroundHandler.TestAgent)
+
+		// Workflow testing endpoints
+		aiPlayground.GET("/workflows", s.AIPlaygroundHandler.ListWorkflows)
+		aiPlayground.POST("/workflows/:id/test", s.AIPlaygroundHandler.TestWorkflow)
+
+		// Saved prompts endpoints
+		aiPlayground.GET("/prompts", s.AIPlaygroundHandler.ListSavedPrompts)
+		aiPlayground.POST("/prompts", s.AIPlaygroundHandler.CreateSavedPrompt)
+		aiPlayground.GET("/prompts/:id", s.AIPlaygroundHandler.GetSavedPrompt)
+		aiPlayground.PUT("/prompts/:id", s.AIPlaygroundHandler.UpdateSavedPrompt)
+		aiPlayground.DELETE("/prompts/:id", s.AIPlaygroundHandler.DeleteSavedPrompt)
 	}
 
 	// Workflow automation routes

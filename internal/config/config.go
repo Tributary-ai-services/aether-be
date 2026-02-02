@@ -27,6 +27,7 @@ type Config struct {
 	Compliance ComplianceConfig
 	Router     RouterConfig
 	Crawl4AI   Crawl4AIConfig
+	DBHub      DBHubConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -219,6 +220,13 @@ type Crawl4AIConfig struct {
 	MaxRetries     int    `json:"max_retries"`
 }
 
+// DBHubConfig holds DBHub MCP server configuration
+type DBHubConfig struct {
+	BaseURL        string `json:"base_url"`
+	Enabled        bool   `json:"enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
@@ -363,6 +371,11 @@ func Load() (*Config, error) {
 			Enabled:        getEnvBool("CRAWL4AI_ENABLED", true),
 			TimeoutSeconds: getEnvInt("CRAWL4AI_TIMEOUT_SECONDS", 60),
 			MaxRetries:     getEnvInt("CRAWL4AI_MAX_RETRIES", 3),
+		},
+		DBHub: DBHubConfig{
+			BaseURL:        getEnv("DBHUB_BASE_URL", "http://dbhub.tas-mcp-servers.svc.cluster.local:8080"),
+			Enabled:        getEnvBool("DBHUB_ENABLED", true),
+			TimeoutSeconds: getEnvInt("DBHUB_TIMEOUT_SECONDS", 30),
 		},
 	}
 
