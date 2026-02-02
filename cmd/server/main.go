@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/lib/pq" // PostgreSQL driver
 	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
@@ -92,6 +94,40 @@ func main() {
 		}
 	}
 
+	// Initialize PostgreSQL connection for security events
+	var postgresDB *sql.DB
+	if cfg.Postgres.Enabled {
+		postgresDB, err = sql.Open("postgres", cfg.Postgres.DSN())
+		if err != nil {
+			appLogger.Error("Failed to open PostgreSQL connection", zap.Error(err))
+			// Don't fail startup, security events will just be logged to stdout/Kafka
+		} else {
+			// Set connection pool settings
+			postgresDB.SetMaxOpenConns(cfg.Postgres.MaxConns)
+			postgresDB.SetMaxIdleConns(cfg.Postgres.MaxIdleConns)
+			postgresDB.SetConnMaxLifetime(time.Hour)
+
+			// Test the connection
+			if err := postgresDB.Ping(); err != nil {
+				appLogger.Error("Failed to connect to PostgreSQL", zap.Error(err))
+				postgresDB.Close()
+				postgresDB = nil
+			} else {
+				appLogger.Info("PostgreSQL connection initialized successfully",
+					zap.String("database", cfg.Postgres.Database),
+					zap.String("host", cfg.Postgres.Host),
+				)
+			}
+		}
+	} else {
+		appLogger.Info("PostgreSQL disabled - security events will only be logged to stdout/Kafka")
+	}
+	defer func() {
+		if postgresDB != nil {
+			postgresDB.Close()
+		}
+	}()
+
 	var audiModalService *services.AudiModalService
 	if cfg.AudiModal.Enabled {
 		audiModalService = services.NewAudiModalService(cfg.AudiModal.BaseURL, cfg.AudiModal.APIKey, &cfg.AudiModal, appLogger)
@@ -114,6 +150,7 @@ func main() {
 	apiServer := handlers.NewAPIServer(
 		cfg,
 		neo4jClient,
+		postgresDB,
 		keycloakClient,
 		storageService,
 		kafkaService,

@@ -145,35 +145,104 @@ func (s *AgentService) canUserModifyAgent(ctx context.Context, agent *models.Age
 
 // UpdateAgent updates an agent by updating both agent-builder and Neo4j
 func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, req models.AgentUpdateRequest, userID string, authToken string) (*models.AgentResponse, error) {
-	// Get existing agent
+	// Step 1: Always try to update in agent-builder first
+	// Agent-builder handles its own permission checks via the auth token
+	// This ensures the update works even if Neo4j is out of sync
+	if err := s.updateAgentInBuilder(ctx, agentID, req, authToken); err != nil {
+		s.logger.Error("Failed to update agent in agent-builder",
+			zap.String("agent_id", agentID),
+			zap.Error(err))
+		return nil, err
+	}
+
+	s.logger.Info("Successfully updated agent in agent-builder",
+		zap.String("agent_id", agentID))
+
+	// Step 2: Try to update in Neo4j if the agent exists there
+	// This is best-effort - we don't fail if Neo4j update fails since agent-builder is authoritative
 	agent, err := s.getAgentFromNeo4j(ctx, agentID)
 	if err != nil {
-		return nil, err
+		if errors.IsNotFound(err) {
+			s.logger.Info("Agent not found in Neo4j, skipping Neo4j update",
+				zap.String("agent_id", agentID))
+
+			// Return a response with the updated data
+			response := &models.AgentResponse{
+				ID:        agentID,
+				UpdatedAt: time.Now(),
+			}
+
+			// Populate response with update request fields
+			if req.Name != nil {
+				response.Name = *req.Name
+			}
+			if req.Description != nil {
+				response.Description = *req.Description
+			}
+			if req.Type != nil {
+				response.Type = *req.Type
+			}
+			if req.Status != nil {
+				response.Status = models.AgentStatus(*req.Status)
+			}
+			if req.IsPublic != nil {
+				response.IsPublic = *req.IsPublic
+			}
+			if req.IsTemplate != nil {
+				response.IsTemplate = *req.IsTemplate
+			}
+			if req.SystemPrompt != nil {
+				response.SystemPrompt = *req.SystemPrompt
+			}
+			if req.LLMConfig != nil {
+				response.LLMConfig = req.LLMConfig
+			}
+
+			return response, nil
+		}
+		// Log but don't fail - agent-builder update already succeeded
+		s.logger.Warn("Failed to get agent from Neo4j for update",
+			zap.String("agent_id", agentID),
+			zap.Error(err))
 	}
 
-	// Check if user can modify this agent (owner or team admin)
-	canModify, err := s.canUserModifyAgent(ctx, agent, userID)
-	if err != nil {
-		return nil, err
-	}
-	if !canModify {
-		return nil, errors.Forbidden("Insufficient permissions to update agent")
-	}
-
-	// Step 1: Update agent in agent-builder
-	if err := s.updateAgentInBuilder(ctx, agent.AgentBuilderID, req, authToken); err != nil {
-		s.logger.Error("Failed to update agent in agent-builder", zap.Error(err))
-		return nil, err
-	}
-
-	// Step 2: Update agent metadata in Neo4j
-	agent.Update(req)
-	if err := s.updateAgentInNeo4j(ctx, agent); err != nil {
-		s.logger.Error("Failed to update agent in Neo4j", zap.Error(err))
-		return nil, err
+	// If we found the agent in Neo4j, update it there too
+	if agent != nil {
+		agent.Update(req)
+		if err := s.updateAgentInNeo4j(ctx, agent); err != nil {
+			// Log but don't fail - agent-builder update already succeeded
+			s.logger.Warn("Failed to update agent in Neo4j",
+				zap.String("agent_id", agentID),
+				zap.Error(err))
+		} else {
+			s.logger.Info("Successfully updated agent in Neo4j",
+				zap.String("agent_id", agentID))
+		}
+		return s.buildAgentResponse(ctx, agent)
 	}
 
-	return s.buildAgentResponse(ctx, agent)
+	// Fallback response if Neo4j agent was nil
+	response := &models.AgentResponse{
+		ID:        agentID,
+		UpdatedAt: time.Now(),
+	}
+	if req.Name != nil {
+		response.Name = *req.Name
+	}
+	if req.Description != nil {
+		response.Description = *req.Description
+	}
+	if req.Type != nil {
+		response.Type = *req.Type
+	}
+	if req.SystemPrompt != nil {
+		response.SystemPrompt = *req.SystemPrompt
+	}
+	if req.LLMConfig != nil {
+		response.LLMConfig = req.LLMConfig
+	}
+
+	return response, nil
 }
 
 // DeleteAgent deletes an agent from both agent-builder and Neo4j
@@ -284,20 +353,37 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 	if err := json.Unmarshal(bodyBytes, &builderResp); err != nil {
 		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
 	}
-	
+
+	// DEBUG: Log raw response from agent-builder
+	s.logger.Info("DEBUG: Raw agent-builder response", zap.String("response", string(bodyBytes)))
+
 	// Convert agent-builder response to aether-be format
 	agentsList, ok := builderResp["agents"].([]interface{})
 	if !ok {
 		return nil, errors.ExternalService("Invalid agent-builder response format", nil)
 	}
-	
+
 	agents := make([]*models.AgentResponse, 0, len(agentsList))
 	for _, agentData := range agentsList {
 		agentMap, ok := agentData.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		
+
+		// DEBUG: Log all keys in agentMap to see what fields are present
+		keys := make([]string, 0, len(agentMap))
+		for k := range agentMap {
+			keys = append(keys, k)
+		}
+		s.logger.Info("DEBUG: Agent map keys", zap.Strings("keys", keys))
+
+		// DEBUG: Log type field specifically
+		if typeVal, exists := agentMap["type"]; exists {
+			s.logger.Info("DEBUG: Type field value", zap.Any("type", typeVal), zap.String("type_go_type", fmt.Sprintf("%T", typeVal)))
+		} else {
+			s.logger.Info("DEBUG: Type field NOT FOUND in agent map")
+		}
+
 		// Safe string extraction helper
 		safeString := func(key string) string {
 			if val, ok := agentMap[key]; ok && val != nil {
@@ -327,17 +413,33 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			updatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		}
 		
+		// DEBUG: Log what safeString returns for type
+		typeStr := safeString("type")
+		s.logger.Info("DEBUG: safeString(type) result", zap.String("type_value", typeStr), zap.String("agent_name", safeString("name")))
+
 		agent := &models.AgentResponse{
 			ID:           safeString("id"),
 			Name:         safeString("name"),
 			Description:  safeString("description"),
 			Status:       models.AgentStatus(safeString("status")),
+			Type:         models.AgentType(typeStr),
+			OwnerID:      safeString("owner_id"),
+			SpaceID:      safeString("space_id"),
 			IsPublic:     safeBool("is_public"),
 			IsTemplate:   safeBool("is_template"),
+			SystemPrompt: safeString("system_prompt"),
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
 		}
-		
+
+		// DEBUG: Log the created agent's type
+		s.logger.Info("DEBUG: Created AgentResponse", zap.String("agent_id", agent.ID), zap.String("agent_type", string(agent.Type)))
+
+		// Extract llm_config if present
+		if llmConfig, ok := agentMap["llm_config"].(map[string]interface{}); ok {
+			agent.LLMConfig = llmConfig
+		}
+
 		agents = append(agents, agent)
 	}
 	
@@ -513,10 +615,30 @@ func (s *AgentService) GetAgentKnowledgeSources(ctx context.Context, agentID, us
 
 // ExecuteAgent executes an agent with the provided input and handles type-specific logic
 func (s *AgentService) ExecuteAgent(ctx context.Context, agentID string, req models.AgentExecuteRequest, userID string, userTeams []string, authToken string) (*models.AgentExecuteResponse, error) {
-	// Get agent from agent-builder service (where agents actually live)
-	agent, err := s.getAgentFromBuilder(ctx, agentID, authToken)
+	// First get agent from Neo4j to get the agent_builder_id mapping
+	neo4jAgent, err := s.getAgentFromNeo4j(ctx, agentID)
+	if err != nil {
+		s.logger.Warn("Agent not found in Neo4j, trying direct agent-builder lookup",
+			zap.String("agent_id", agentID),
+			zap.Error(err))
+		// Fall back to using agentID directly for backwards compatibility
+		neo4jAgent = &models.Agent{AgentBuilderID: agentID}
+	}
+
+	// Use agent_builder_id to get full agent details from agent-builder
+	builderID := neo4jAgent.AgentBuilderID
+	if builderID == "" {
+		builderID = agentID // Fallback if no agent_builder_id set
+	}
+
+	agent, err := s.getAgentFromBuilder(ctx, builderID, authToken)
 	if err != nil {
 		return nil, errors.NotFound("Agent not found")
+	}
+
+	// Preserve Neo4j metadata (type, etc.) if available
+	if neo4jAgent != nil && neo4jAgent.Type != "" {
+		agent.Type = neo4jAgent.Type
 	}
 
 	// Check access permissions based on space and ownership
@@ -634,12 +756,21 @@ func (s *AgentService) deleteAgentInBuilder(ctx context.Context, agentBuilderID 
 func (s *AgentService) makeAgentBuilderRequest(ctx context.Context, method, path string, body interface{}, authToken string) (map[string]interface{}, error) {
 	url := s.agentBuilderURL + path
 
+	s.logger.Info("Making agent-builder request",
+		zap.String("method", method),
+		zap.String("url", url),
+		zap.String("path", path),
+	)
+
 	var bodyReader io.Reader
 	if body != nil {
 		bodyBytes, err := json.Marshal(body)
 		if err != nil {
 			return nil, errors.InternalWithCause("Failed to marshal request body", err)
 		}
+		s.logger.Debug("Agent-builder request body",
+			zap.String("body", string(bodyBytes)),
+		)
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
 
@@ -653,12 +784,21 @@ func (s *AgentService) makeAgentBuilderRequest(ctx context.Context, method, path
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		s.logger.Error("Agent-builder request failed",
+			zap.String("url", url),
+			zap.Error(err),
+		)
 		return nil, errors.ExternalService("Agent-builder service unavailable", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		s.logger.Error("Agent-builder returned error",
+			zap.String("url", url),
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(bodyBytes)),
+		)
 		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder error: %s", string(bodyBytes)), nil)
 	}
 
@@ -787,8 +927,11 @@ func (s *AgentService) deleteAgentInNeo4j(ctx context.Context, agentID string) e
 }
 
 func (s *AgentService) getAgentFromNeo4j(ctx context.Context, agentID string) (*models.Agent, error) {
+	// First try to find by id, then by agent_builder_id
+	// This handles the case where ListAgents returns agent-builder IDs
 	query := `
-		MATCH (a:Agent {id: $agentId})
+		MATCH (a:Agent)
+		WHERE a.id = $agentId OR a.agent_builder_id = $agentId
 		RETURN a
 	`
 

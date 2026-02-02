@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -61,30 +63,77 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 		return
 	}
 
+	// DEBUG: Read and log raw body to investigate truncation issue
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		h.logger.Error("Failed to read request body", zap.Error(err))
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Failed to read request body"))
+		return
+	}
+
+	// Log raw body size and look for NUL bytes
+	h.logger.Debug("CreateDocument raw body received",
+		zap.Int("raw_body_length", len(bodyBytes)),
+		zap.Int("nul_byte_count", countNulBytes(bodyBytes)),
+		zap.String("first_100_chars", safeString(bodyBytes, 100)),
+		zap.String("last_100_chars", safeStringEnd(bodyBytes, 100)))
+
+	// Restore the body for JSON binding
+	c.Request.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
 	var req models.DocumentCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("JSON binding failed",
+			zap.Error(err),
+			zap.Int("body_length", len(bodyBytes)))
 		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request body", err))
 		return
 	}
 
-	// Create FileInfo from the request data (for documents already uploaded to AudiModal)
+	// Use Title as Name if Name is empty (for web scraping compatibility)
+	if req.Name == "" && req.Title != "" {
+		req.Name = req.Title
+	}
+
+	// Ensure we have a name
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Document name or title is required", nil))
+		return
+	}
+
+	// Determine mime type - prefer ContentType field, then metadata
 	var mimeType string
-	var sizeBytes int64
-	
-	if mt, ok := req.Metadata["mime_type"].(string); ok {
+	if req.ContentType != "" {
+		mimeType = req.ContentType
+	} else if mt, ok := req.Metadata["mime_type"].(string); ok {
 		mimeType = mt
 	}
-	if sb, ok := req.Metadata["size_bytes"].(float64); ok {
+
+	// Get size from content or metadata
+	var sizeBytes int64
+	if req.Content != "" {
+		sizeBytes = int64(len(req.Content))
+	} else if sb, ok := req.Metadata["size_bytes"].(float64); ok {
 		sizeBytes = int64(sb)
 	} else if sb, ok := req.Metadata["size_bytes"].(int64); ok {
 		sizeBytes = sb
 	}
-	
+
+	// Debug logging for content size tracking
+	h.logger.Info("CreateDocument request details",
+		zap.String("name", req.Name),
+		zap.String("title", req.Title),
+		zap.String("source_type", req.SourceType),
+		zap.Int("content_length", len(req.Content)),
+		zap.Int64("calculated_size_bytes", sizeBytes),
+		zap.String("content_type", req.ContentType),
+		zap.String("notebook_id", req.NotebookID))
+
 	fileInfo := models.FileInfo{
 		OriginalName: req.Name,
 		MimeType:     mimeType,
 		SizeBytes:    sizeBytes,
-		Checksum:     "", // Not available for AudiModal uploads
+		Checksum:     "", // Not available for inline content
 	}
 
 	// Create the document
@@ -93,6 +142,79 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 		h.logger.Error("Failed to create document", zap.Error(err))
 		handleServiceError(c, err)
 		return
+	}
+
+	// For inline content (web scraping, text input), submit to AudiModal for compliance and ML processing
+	if req.Content != "" && h.audiModalService != nil {
+		h.logger.Info("Submitting inline content to AudiModal for processing",
+			zap.String("document_id", document.ID),
+			zap.String("source_type", req.SourceType),
+			zap.Int("content_length", len(req.Content)))
+
+		// Determine filename for processing
+		filename := req.Name
+		if !strings.Contains(filename, ".") {
+			// Add extension based on content type
+			if mimeType == "text/markdown" {
+				filename += ".md"
+			} else {
+				filename += ".txt"
+			}
+		}
+
+		// Use text/markdown or text/plain for inline content
+		processingMimeType := mimeType
+		if processingMimeType == "" {
+			processingMimeType = "text/plain"
+		}
+
+		// Build processing config
+		processingConfig := map[string]interface{}{
+			"extract_text":     true,
+			"extract_metadata": true,
+			"file_data":        []byte(req.Content),
+			"filename":         filename,
+			"mime_type":        processingMimeType,
+			"source_type":      req.SourceType,
+			"source_url":       req.SourceURL,
+		}
+
+		// Capture values for the goroutine (request context will be cancelled after response)
+		docID := document.ID
+		tenantID := spaceContext.TenantID
+		docService := h.documentService
+		audiService := h.audiModalService
+		log := h.logger
+
+		// Submit processing job asynchronously with a background context
+		go func() {
+			// Use a background context with timeout since the request context will be cancelled
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			log.Info("Goroutine started - submitting to AudiModal",
+				zap.String("document_id", docID),
+				zap.String("tenant_id", tenantID))
+
+			job, err := audiService.SubmitProcessingJob(ctx, tenantID, docID, "extract", processingConfig)
+			if err != nil {
+				log.Error("Failed to submit inline content for processing",
+					zap.String("document_id", docID),
+					zap.Error(err))
+				// Update document status to failed
+				if updateErr := docService.UpdateProcessingResult(ctx, docID, "failed", nil, "Processing submission failed: "+err.Error()); updateErr != nil {
+					log.Error("Failed to update document status after processing failure",
+						zap.String("document_id", docID),
+						zap.Error(updateErr))
+				}
+				return
+			}
+
+			log.Info("Inline content submitted for processing",
+				zap.String("document_id", docID),
+				zap.String("job_id", job.ID),
+				zap.String("job_status", job.Status))
+		}()
 	}
 
 	c.JSON(http.StatusCreated, document.ToResponse())
@@ -324,7 +446,14 @@ func (h *DocumentHandler) UploadDocumentBase64(c *gin.Context) {
 			NotebookID:  req.NotebookID,
 			Tags:        req.Tags,
 		},
-		FileData: fileData,
+		FileData:           fileData,
+		ComplianceSettings: req.ComplianceSettings,
+	}
+
+	// Log compliance settings if provided
+	if req.ComplianceSettings != nil {
+		h.logger.Info("Document upload includes compliance settings",
+			zap.Any("compliance_settings", req.ComplianceSettings))
 	}
 
 	// Create file info with proper MIME type from frontend
@@ -1193,4 +1322,38 @@ func (h *DocumentHandler) GetDocumentExtractedText(c *gin.Context) {
 		"extracted_text": extractedText,
 		"text_length":    len(extractedText),
 	})
+}
+
+// Helper functions for debugging content truncation
+func countNulBytes(data []byte) int {
+	count := 0
+	for _, b := range data {
+		if b == 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func safeString(data []byte, maxLen int) string {
+	if len(data) < maxLen {
+		maxLen = len(data)
+	}
+	// Replace non-printable characters for safe logging
+	result := make([]byte, maxLen)
+	for i := 0; i < maxLen; i++ {
+		if data[i] >= 32 && data[i] < 127 {
+			result[i] = data[i]
+		} else {
+			result[i] = '.'
+		}
+	}
+	return string(result)
+}
+
+func safeStringEnd(data []byte, maxLen int) string {
+	if len(data) < maxLen {
+		return safeString(data, len(data))
+	}
+	return safeString(data[len(data)-maxLen:], maxLen)
 }

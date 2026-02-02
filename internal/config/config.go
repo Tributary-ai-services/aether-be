@@ -13,6 +13,7 @@ import (
 type Config struct {
 	Server     ServerConfig
 	Neo4j      DatabaseConfig
+	Postgres   PostgresConfig
 	Redis      RedisConfig
 	Keycloak   KeycloakConfig
 	Storage    StorageConfig
@@ -25,6 +26,8 @@ type Config struct {
 	OpenAI     OpenAIConfig
 	Compliance ComplianceConfig
 	Router     RouterConfig
+	Crawl4AI   Crawl4AIConfig
+	DBHub      DBHubConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -47,6 +50,25 @@ type DatabaseConfig struct {
 	Database    string
 	MaxConns    int
 	TLSInsecure bool
+}
+
+// PostgresConfig holds PostgreSQL database configuration
+type PostgresConfig struct {
+	Enabled      bool
+	Host         string
+	Port         int
+	Username     string
+	Password     string
+	Database     string
+	SSLMode      string
+	MaxConns     int
+	MaxIdleConns int
+}
+
+// DSN returns the PostgreSQL connection string
+func (p *PostgresConfig) DSN() string {
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		p.Host, p.Port, p.Username, p.Password, p.Database, p.SSLMode)
 }
 
 // RedisConfig holds Redis configuration
@@ -190,6 +212,21 @@ type ProxyRoute struct {
 	Methods []string `json:"methods"`
 }
 
+// Crawl4AIConfig holds Crawl4AI web scraping service configuration
+type Crawl4AIConfig struct {
+	BaseURL        string `json:"base_url"`
+	Enabled        bool   `json:"enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	MaxRetries     int    `json:"max_retries"`
+}
+
+// DBHubConfig holds DBHub MCP server configuration
+type DBHubConfig struct {
+	BaseURL        string `json:"base_url"`
+	Enabled        bool   `json:"enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
@@ -213,6 +250,17 @@ func Load() (*Config, error) {
 			Database:    getEnv("NEO4J_DATABASE", "aether"),
 			MaxConns:    getEnvInt("NEO4J_MAX_CONNS", 50),
 			TLSInsecure: getEnvBool("NEO4J_TLS_INSECURE", false),
+		},
+		Postgres: PostgresConfig{
+			Enabled:      getEnvBool("POSTGRES_ENABLED", false),
+			Host:         getEnv("POSTGRES_HOST", "localhost"),
+			Port:         getEnvInt("POSTGRES_PORT", 5432),
+			Username:     getEnv("POSTGRES_USERNAME", "tasuser"),
+			Password:     getEnv("POSTGRES_PASSWORD", ""),
+			Database:     getEnv("POSTGRES_DATABASE", "tas_shared"),
+			SSLMode:      getEnv("POSTGRES_SSL_MODE", "disable"),
+			MaxConns:     getEnvInt("POSTGRES_MAX_CONNS", 25),
+			MaxIdleConns: getEnvInt("POSTGRES_MAX_IDLE_CONNS", 5),
 		},
 		Redis: RedisConfig{
 			Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
@@ -317,6 +365,17 @@ func Load() (*Config, error) {
 				Messages:        getEnv("ROUTER_ENDPOINT_MESSAGES", "/v1/messages"),
 			},
 			ProxyRoutes: getDefaultProxyRoutes(),
+		},
+		Crawl4AI: Crawl4AIConfig{
+			BaseURL:        getEnv("CRAWL4AI_BASE_URL", "http://crawl4ai.tas-mcp-servers.svc.cluster.local:11235"),
+			Enabled:        getEnvBool("CRAWL4AI_ENABLED", true),
+			TimeoutSeconds: getEnvInt("CRAWL4AI_TIMEOUT_SECONDS", 60),
+			MaxRetries:     getEnvInt("CRAWL4AI_MAX_RETRIES", 3),
+		},
+		DBHub: DBHubConfig{
+			BaseURL:        getEnv("DBHUB_BASE_URL", "http://dbhub.tas-mcp-servers.svc.cluster.local:8080"),
+			Enabled:        getEnvBool("DBHUB_ENABLED", true),
+			TimeoutSeconds: getEnvInt("DBHUB_TIMEOUT_SECONDS", 30),
 		},
 	}
 

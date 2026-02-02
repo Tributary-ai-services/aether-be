@@ -32,6 +32,9 @@ const (
 	ErrDatabaseError    = "DATABASE_ERROR"
 	ErrExternalService  = "EXTERNAL_SERVICE_ERROR"
 
+	// Security errors
+	ErrSecurityBlocked = "SECURITY_BLOCKED"
+
 	// Chunk processing errors
 	ErrChunkNotFound        = "CHUNK_NOT_FOUND"
 	ErrChunkProcessing      = "CHUNK_PROCESSING_ERROR"
@@ -102,7 +105,7 @@ func GetHTTPStatusCodeFromErrorCode(code string) int {
 		return http.StatusBadRequest
 	case ErrUnauthorized, ErrAuthentication:
 		return http.StatusUnauthorized
-	case ErrForbidden, ErrAuthorization:
+	case ErrForbidden, ErrAuthorization, ErrSecurityBlocked:
 		return http.StatusForbidden
 	case ErrNotFound, ErrResourceNotFound, ErrChunkNotFound, ErrStrategyNotFound, ErrFileNotProcessed:
 		return http.StatusNotFound
@@ -177,6 +180,15 @@ func Unauthorized(message string) *APIError {
 // Forbidden creates a forbidden error
 func Forbidden(message string) *APIError {
 	return NewAPIError(ErrForbidden, message, nil)
+}
+
+// SecurityBlocked creates a security blocked error for threat detection
+func SecurityBlocked(message string, threatTypes []string, severity string) *APIError {
+	details := map[string]interface{}{
+		"threat_types": threatTypes,
+		"severity":     severity,
+	}
+	return NewAPIError(ErrSecurityBlocked, message, details)
 }
 
 // NotFound creates a not found error

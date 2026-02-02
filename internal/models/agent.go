@@ -114,18 +114,22 @@ type AgentResponse struct {
 	IsPublic       bool        `json:"is_public"`
 	IsTemplate     bool        `json:"is_template"`
 	Tags           []string    `json:"tags,omitempty"`
-	
+
+	// Agent configuration (from agent-builder)
+	SystemPrompt string                 `json:"system_prompt,omitempty"`
+	LLMConfig    map[string]interface{} `json:"llm_config,omitempty"`
+
 	// Statistics
 	TotalExecutions   int        `json:"total_executions"`
 	TotalCostUSD      float64    `json:"total_cost_usd"`
 	AvgResponseTimeMs int        `json:"avg_response_time_ms"`
 	LastExecutedAt    *time.Time `json:"last_executed_at,omitempty"`
-	
+
 	// Timestamps
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	SyncedAt  *time.Time `json:"synced_at,omitempty"`
-	
+
 	// Optional related data
 	Owner            *PublicUserResponse `json:"owner,omitempty"`
 	Team             *TeamResponse       `json:"team,omitempty"`

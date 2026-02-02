@@ -176,21 +176,28 @@ func validateNoSQL(fl validator.FieldLevel) bool {
 func validateSafeString(fl validator.FieldLevel) bool {
 	str := fl.Field().String()
 
-	// Check for HTML
-	if strings.Contains(str, "<") || strings.Contains(str, ">") {
+	// Check for HTML tags (but allow < and > in mathematical/comparison contexts)
+	if regexp.MustCompile(`<[a-zA-Z/]`).MatchString(str) {
 		return false
 	}
 
-	// Check for SQL injection patterns (removed single quotes to allow them)
-	dangerous := []string{
-		"\"", ";", "--", "/*", "*/", "xp_", "sp_",
-		"exec", "execute", "select", "insert", "update", "delete",
-		"drop", "create", "alter", "union", "script",
+	// Check for actual SQL injection patterns (not common English words)
+	// These patterns are more specific to actual SQL injection attempts
+	dangerousPatterns := []string{
+		`"`,           // Double quotes (common in SQL)
+		`;`,           // Statement terminator
+		`--`,          // SQL comment
+		`/\*`,         // Multi-line comment start
+		`\*/`,         // Multi-line comment end
+		`xp_`,         // SQL Server extended procedures
+		`sp_`,         // SQL Server stored procedures
+		`\bexec\s+`,   // EXEC followed by whitespace (SQL execution)
+		`\bexecute\s+\(`, // EXECUTE() function call
 	}
 
 	lowerStr := strings.ToLower(str)
-	for _, pattern := range dangerous {
-		if strings.Contains(lowerStr, pattern) {
+	for _, pattern := range dangerousPatterns {
+		if matched, _ := regexp.MatchString(pattern, lowerStr); matched {
 			return false
 		}
 	}

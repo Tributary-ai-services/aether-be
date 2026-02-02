@@ -14,6 +14,9 @@ type Document struct {
 	Type        string `json:"type" validate:"required"`
 	Status      string `json:"status" validate:"required,oneof=uploading processing processed failed archived deleted"`
 
+	// Security status for threat-isolated content
+	SecurityStatus DocumentSecurityStatus `json:"security_status,omitempty" validate:"omitempty,oneof=approved pending_security_review security_rejected"`
+
 	// File information
 	OriginalName string `json:"original_name" validate:"required"`
 	MimeType     string `json:"mime_type" validate:"required"`
@@ -59,17 +62,23 @@ type Document struct {
 
 // DocumentCreateRequest represents a request to create a document
 type DocumentCreateRequest struct {
-	Name        string                 `json:"name" validate:"required,filename,min=1,max=255"`
-	Description string                 `json:"description,omitempty" validate:"safe_string,max=1000"`
+	Name        string                 `json:"name" validate:"omitempty,filename,min=1,max=255"`
+	Title       string                 `json:"title" validate:"omitempty,min=1,max=255"` // Alternative to Name for web content
+	Description string                 `json:"description,omitempty" validate:"max=1000"` // Note: Security middleware handles threat detection
 	NotebookID  string                 `json:"notebook_id" validate:"required,uuid"`
 	Tags        []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	// Fields for inline content (web scraping, text input)
+	Content     string `json:"content,omitempty"`      // Inline text content
+	ContentType string `json:"content_type,omitempty"` // MIME type (e.g., text/markdown, text/plain)
+	SourceType  string `json:"source_type,omitempty"`  // Source type: web_scraping, text_input, file_upload
+	SourceURL   string `json:"source_url,omitempty"`   // Original URL for web scraping
 }
 
 // DocumentUpdateRequest represents a request to update a document
 type DocumentUpdateRequest struct {
 	Name        *string                `json:"name,omitempty" validate:"omitempty,filename,min=1,max=255"`
-	Description *string                `json:"description,omitempty" validate:"omitempty,safe_string,max=1000"`
+	Description *string                `json:"description,omitempty" validate:"omitempty,max=1000"` // Note: Security middleware handles threat detection
 	Status      *string                `json:"status,omitempty" validate:"omitempty,oneof=uploading processing processed failed archived deleted"`
 	Tags        []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
@@ -82,6 +91,7 @@ type DocumentResponse struct {
 	Description      string                 `json:"description,omitempty"`
 	Type             string                 `json:"type"`
 	Status           string                 `json:"status"`
+	SecurityStatus   DocumentSecurityStatus `json:"security_status,omitempty"`
 	OriginalName     string                 `json:"original_name"`
 	MimeType         string                 `json:"mime_type"`
 	SizeBytes        int64                  `json:"size_bytes"`
@@ -131,15 +141,17 @@ type DocumentSearchRequest struct {
 // DocumentUploadRequest represents a document upload request
 type DocumentUploadRequest struct {
 	DocumentCreateRequest
-	FileData []byte `json:"-"` // File content (not included in JSON)
+	FileData           []byte                 `json:"-"`                               // File content (not included in JSON)
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`   // DLP and compliance settings
 }
 
 // DocumentBase64UploadRequest represents a base64 encoded document upload request
 type DocumentBase64UploadRequest struct {
 	DocumentCreateRequest
-	FileContent string `json:"file_content" validate:"required,base64"` // Base64 encoded file content
-	FileName    string `json:"file_name" validate:"required,filename"`  // Original filename
-	MimeType    string `json:"mime_type" validate:"required"`           // MIME type of the file
+	FileContent        string                 `json:"file_content" validate:"required,base64"` // Base64 encoded file content
+	FileName           string                 `json:"file_name" validate:"required,filename"`  // Original filename
+	MimeType           string                 `json:"mime_type" validate:"required"`           // MIME type of the file
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`           // DLP and compliance settings
 }
 
 
@@ -155,26 +167,49 @@ type DocumentStats struct {
 // NewDocument creates a new document with default values
 func NewDocument(req DocumentCreateRequest, ownerID string, fileInfo FileInfo, spaceCtx *SpaceContext) *Document {
 	now := time.Now()
+
+	// Determine status based on content type
+	// Inline content (web scraping, text input) needs to go through AudiModal for compliance/ML processing
+	status := "uploading"
+	extractedText := ""
+	if req.Content != "" {
+		status = "processing" // Will be sent to AudiModal for compliance and ML analysis
+		extractedText = req.Content
+	}
+
+	// Enrich metadata with source information
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+	if req.SourceType != "" {
+		metadata["source_type"] = req.SourceType
+	}
+	if req.SourceURL != "" {
+		metadata["source_url"] = req.SourceURL
+	}
+
 	return &Document{
-		ID:           uuid.New().String(),
-		Name:         req.Name,
-		Description:  req.Description,
-		Type:         determineDocumentType(fileInfo.MimeType),
-		Status:       "uploading",
-		OriginalName: fileInfo.OriginalName,
-		MimeType:     fileInfo.MimeType,
-		SizeBytes:    fileInfo.SizeBytes,
-		Checksum:     fileInfo.Checksum,
-		NotebookID:   req.NotebookID,
-		OwnerID:      ownerID,
-		SpaceType:    spaceCtx.SpaceType,
-		SpaceID:      spaceCtx.SpaceID,
-		TenantID:     spaceCtx.TenantID,
-		Tags:         req.Tags,
-		Metadata:     req.Metadata,
-		SearchText:   buildSearchText(req.Name, req.Description, req.Tags),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:            uuid.New().String(),
+		Name:          req.Name,
+		Description:   req.Description,
+		Type:          determineDocumentType(fileInfo.MimeType),
+		Status:        status,
+		OriginalName:  fileInfo.OriginalName,
+		MimeType:      fileInfo.MimeType,
+		SizeBytes:     fileInfo.SizeBytes,
+		Checksum:      fileInfo.Checksum,
+		ExtractedText: extractedText,
+		NotebookID:    req.NotebookID,
+		OwnerID:       ownerID,
+		SpaceType:     spaceCtx.SpaceType,
+		SpaceID:       spaceCtx.SpaceID,
+		TenantID:      spaceCtx.TenantID,
+		Tags:          req.Tags,
+		Metadata:      metadata,
+		SearchText:    buildSearchText(req.Name, req.Description, req.Tags),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 }
 
@@ -354,11 +389,13 @@ func determineDocumentType(mimeType string) string {
 		return "json"
 	case mimeType == "application/xml" || mimeType == "text/xml":
 		return "xml"
-	case mimeType[:5] == "image":
+	case mimeType == "text/markdown":
+		return "markdown"
+	case len(mimeType) >= 5 && mimeType[:5] == "image":
 		return "image"
-	case mimeType[:5] == "video":
+	case len(mimeType) >= 5 && mimeType[:5] == "video":
 		return "video"
-	case mimeType[:5] == "audio":
+	case len(mimeType) >= 5 && mimeType[:5] == "audio":
 		return "audio"
 	default:
 		return "unknown"
