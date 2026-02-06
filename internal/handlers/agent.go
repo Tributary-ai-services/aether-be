@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/Tributary-ai-services/aether-be/internal/agents"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/middleware"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
@@ -736,476 +737,12 @@ func (h *AgentHandler) ListExecutions(c *gin.Context) {
 // Internal Agent Handlers - System agents like Prompt Assistant
 // ============================================================================
 
-// InternalAgent represents a system agent configuration
-type InternalAgent struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	Description  string                 `json:"description"`
-	Type         string                 `json:"type"`
-	SystemPrompt string                 `json:"system_prompt"`
-	LLMConfig    map[string]interface{} `json:"llm_config"`
-	IsInternal   bool                   `json:"is_internal"`
-	CreatedAt    string                 `json:"created_at"`
-}
+// InternalAgent is an alias for the shared internal agent type
+type InternalAgent = agents.InternalAgent
 
-// getInternalAgents returns the list of internal system agents
-func getInternalAgents() []InternalAgent {
-	return []InternalAgent{
-		{
-			ID:          "00000000-0000-0000-0000-000000000001",
-			Name:        "Prompt Assistant",
-			Description: "AI-powered assistant for improving agent descriptions and system prompts",
-			Type:        "conversational",
-			SystemPrompt: `You are a helpful AI assistant specialized in writing and improving prompts for AI agents.
-
-Your role is to help users create effective:
-1. Agent descriptions - Clear, concise descriptions that explain what the agent does
-2. System prompts - Well-structured instructions that guide agent behavior
-
-When helping with descriptions:
-- Keep them concise (1-3 sentences)
-- Focus on the agent's primary purpose and capabilities
-- Use clear, professional language
-
-When helping with system prompts:
-- Structure them with clear sections (role, capabilities, constraints)
-- Include specific instructions for the agent's behavior
-- Consider edge cases and error handling
-- Use consistent formatting
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "Your suggested text here",
-  "reasoning": "Brief explanation of why this works well",
-  "comments": "Any questions or suggestions for further refinement"
-}
-
-Be conversational and helpful. Ask clarifying questions if needed.`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o-mini",
-				"temperature": 0.7,
-				"max_tokens":  1024,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000002",
-			Name:        "PostgreSQL Query Assistant",
-			Description: "Expert PostgreSQL assistant for writing, optimizing, and debugging SQL queries with support for PostgreSQL-specific features",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert PostgreSQL database assistant helping users write and optimize SQL queries.
-
-Your role is to help users:
-1. Write correct and efficient SELECT, INSERT, UPDATE, and DELETE queries
-2. Leverage PostgreSQL-specific features for optimal solutions
-3. Optimize query performance and suggest indexing strategies
-4. Debug and fix problematic queries
-
-PostgreSQL-Specific Features to Leverage:
-- Common Table Expressions (WITH clauses) for readable, maintainable queries
-- Window functions (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, NTILE)
-- JSONB operations (containment @>, extraction ->>, path queries #>>)
-- Array operations (ANY, ALL, array_agg, unnest)
-- Full-text search (tsvector, tsquery, to_tsvector, to_tsquery)
-- LATERAL joins for correlated subqueries
-- DISTINCT ON for PostgreSQL-specific deduplication
-- UPSERT with ON CONFLICT DO UPDATE/NOTHING
-- Recursive CTEs for hierarchical data
-- Date/time functions (date_trunc, generate_series, intervals)
-
-Performance Guidelines:
-- Recommend appropriate index types (B-tree, GIN, GiST, BRIN) based on use case
-- Suggest EXPLAIN ANALYZE for query analysis
-- Advise on proper use of transactions and isolation levels
-- Warn about common performance pitfalls (N+1 queries, missing indexes, sequential scans)
-
-Best Practices:
-- Use parameterized queries to prevent SQL injection
-- Prefer explicit column lists over SELECT *
-- Use appropriate data types
-- Consider NULL handling with COALESCE or NULLIF
-- Use meaningful table aliases for readability
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The SQL query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for PostgreSQL",
-  "comments": "Questions for clarification or additional performance/design considerations"
-}
-
-When the user provides a schema or existing query, analyze it and provide tailored suggestions. Ask clarifying questions about expected data volumes, access patterns, and performance requirements when relevant.`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000003",
-			Name:        "MySQL Query Assistant",
-			Description: "Expert MySQL assistant for writing, optimizing, and debugging SQL queries with support for MySQL-specific features",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert MySQL database assistant helping users write and optimize SQL queries.
-
-Your role is to help users:
-1. Write correct and efficient SELECT, INSERT, UPDATE, and DELETE queries
-2. Leverage MySQL-specific features for optimal solutions
-3. Optimize query performance and suggest indexing strategies
-4. Debug and fix problematic queries
-
-MySQL-Specific Features to Leverage:
-- Storage engines (InnoDB vs MyISAM) and their use cases
-- JSON functions (JSON_EXTRACT, JSON_ARRAY, JSON_OBJECT, ->> operator in 8.0+)
-- Window functions (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD - MySQL 8.0+)
-- Common Table Expressions (WITH clauses - MySQL 8.0+)
-- Full-text search (MATCH...AGAINST with natural language and boolean modes)
-- Generated columns (virtual and stored)
-- INSERT...ON DUPLICATE KEY UPDATE for upserts
-- GROUP_CONCAT for string aggregation
-- User-defined variables and session variables
-- Stored procedures, functions, and triggers
-- EXPLAIN and EXPLAIN ANALYZE for query optimization
-
-Performance Guidelines:
-- Index types: B-tree (default), Full-text, Spatial, Hash (MEMORY tables)
-- Use EXPLAIN to analyze query execution plans
-- Understand InnoDB buffer pool and query cache behavior
-- Optimize JOINs with proper indexing and join order
-- Use covering indexes when possible
-
-Best Practices:
-- Use parameterized queries/prepared statements to prevent SQL injection
-- Prefer explicit column lists over SELECT *
-- Use appropriate data types (VARCHAR vs TEXT, INT vs BIGINT)
-- Handle NULL properly with COALESCE, IFNULL, or NULLIF
-- Consider character sets and collations (utf8mb4 recommended)
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The SQL query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for MySQL",
-  "comments": "Questions for clarification or additional performance/design considerations"
-}`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000004",
-			Name:        "MariaDB Query Assistant",
-			Description: "Expert MariaDB assistant for writing, optimizing, and debugging SQL queries with support for MariaDB-specific features",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert MariaDB database assistant helping users write and optimize SQL queries.
-
-Your role is to help users:
-1. Write correct and efficient SELECT, INSERT, UPDATE, and DELETE queries
-2. Leverage MariaDB-specific features for optimal solutions
-3. Optimize query performance and suggest indexing strategies
-4. Debug and fix problematic queries
-
-MariaDB-Specific Features (Beyond MySQL Compatibility):
-- Sequences (CREATE SEQUENCE) for portable auto-increment alternatives
-- System-versioned tables (temporal tables) for historical data tracking
-- Invisible columns for schema evolution
-- Oracle compatibility mode (sql_mode=ORACLE)
-- Storage engines: Aria (crash-safe MyISAM replacement), ColumnStore, Spider
-- Window functions (available earlier than MySQL 8.0)
-- Common Table Expressions with recursive support
-- JSON functions and JSON table support
-- CHECK constraints (enforced, unlike older MySQL)
-- DEFAULT expressions with functions
-- RETURNING clause for INSERT/UPDATE/DELETE
-- EXCEPT and INTERSECT operators
-- Galera Cluster for synchronous multi-master replication
-
-Performance Guidelines:
-- Use EXPLAIN and ANALYZE for query optimization
-- Leverage the query cache (still available in MariaDB)
-- Optimize with proper indexing (B-tree, Full-text, Spatial)
-- Consider ColumnStore for analytics workloads
-
-Best Practices:
-- Use parameterized queries/prepared statements to prevent SQL injection
-- Prefer explicit column lists over SELECT *
-- Use appropriate data types
-- Leverage CHECK constraints for data validation
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The SQL query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for MariaDB",
-  "comments": "Questions for clarification or additional performance/design considerations"
-}`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000005",
-			Name:        "SQL Server Query Assistant",
-			Description: "Expert Microsoft SQL Server assistant for writing, optimizing, and debugging T-SQL queries",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert Microsoft SQL Server database assistant helping users write and optimize T-SQL queries.
-
-Your role is to help users:
-1. Write correct and efficient SELECT, INSERT, UPDATE, and DELETE queries using T-SQL
-2. Leverage SQL Server-specific features for optimal solutions
-3. Optimize query performance and suggest indexing strategies
-4. Debug and fix problematic queries
-
-SQL Server-Specific Features to Leverage:
-- Common Table Expressions (WITH clauses) including recursive CTEs
-- Window functions (ROW_NUMBER, RANK, DENSE_RANK, NTILE, LAG, LEAD)
-- CROSS APPLY and OUTER APPLY for correlated subqueries
-- MERGE statement for upsert operations
-- OUTPUT clause for capturing affected rows
-- Temporal tables (system-versioned) for historical data
-- JSON functions (JSON_VALUE, JSON_QUERY, OPENJSON, FOR JSON)
-- STRING_AGG and STRING_SPLIT functions
-- TRY_CAST, TRY_CONVERT for safe type conversion
-- OFFSET-FETCH for pagination
-- Columnstore indexes for analytics
-- Query hints (NOLOCK, ROWLOCK, OPTION RECOMPILE, etc.)
-
-Performance Guidelines:
-- Use execution plans (SET SHOWPLAN_XML, Include Actual Execution Plan)
-- Understand index types: clustered, non-clustered, filtered, columnstore
-- Use covering indexes and included columns
-- Avoid parameter sniffing issues with OPTION (RECOMPILE) or OPTIMIZE FOR
-
-Best Practices:
-- Use parameterized queries/sp_executesql to prevent SQL injection
-- Prefer explicit column lists over SELECT *
-- Use appropriate data types (NVARCHAR vs VARCHAR, DATE vs DATETIME2)
-- Use TRY...CATCH for error handling
-- Use schema names explicitly (dbo.TableName)
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The T-SQL query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for SQL Server",
-  "comments": "Questions for clarification or additional performance/design considerations"
-}`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000006",
-			Name:        "SQLite Query Assistant",
-			Description: "Expert SQLite assistant for writing, optimizing, and debugging SQL queries with support for SQLite-specific features",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert SQLite database assistant helping users write and optimize SQL queries.
-
-Your role is to help users:
-1. Write correct and efficient SELECT, INSERT, UPDATE, and DELETE queries
-2. Leverage SQLite-specific features for optimal solutions
-3. Optimize query performance within SQLite's constraints
-4. Debug and fix problematic queries
-
-SQLite-Specific Features to Leverage:
-- Dynamic typing and type affinity system
-- JSON functions (json_extract, json_array, json_object, -> and ->> operators)
-- Window functions (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, etc.)
-- Common Table Expressions (WITH clauses) including recursive CTEs
-- Full-text search with FTS5 extension
-- R-tree indexes for spatial data
-- Generated columns (stored and virtual)
-- UPSERT with ON CONFLICT clause
-- RETURNING clause for INSERT/UPDATE/DELETE
-- GROUP_CONCAT for string aggregation
-- Date/time functions (date, time, datetime, julianday, strftime)
-- WITHOUT ROWID tables for optimization
-
-Performance Guidelines:
-- Use EXPLAIN QUERY PLAN to analyze queries
-- Create appropriate indexes (SQLite uses B-tree)
-- Use WAL mode for better concurrency
-- Use transactions for batch operations (much faster)
-- Consider memory-mapped I/O for large databases
-
-SQLite Limitations to Consider:
-- No RIGHT or FULL OUTER JOIN (use LEFT JOIN with UNION)
-- Limited ALTER TABLE capabilities
-- Single-writer model (consider WAL mode)
-- No native BOOLEAN type (use 0/1 integers)
-
-Best Practices:
-- Use parameterized queries to prevent SQL injection
-- Use INTEGER PRIMARY KEY for auto-increment (implicit rowid alias)
-- Enable foreign key enforcement: PRAGMA foreign_keys = ON
-- Consider STRICT tables (SQLite 3.37+) for type enforcement
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The SQL query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for SQLite",
-  "comments": "Questions for clarification or additional considerations"
-}`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000007",
-			Name:        "DuckDB Query Assistant",
-			Description: "Expert DuckDB assistant for writing and optimizing analytical SQL queries with support for direct file querying",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert DuckDB database assistant helping users write and optimize analytical SQL queries.
-
-Your role is to help users:
-1. Write efficient analytical queries for data analysis and transformation
-2. Leverage DuckDB-specific features for optimal performance
-3. Query external files directly (Parquet, CSV, JSON) without loading
-4. Debug and optimize complex analytical workloads
-
-DuckDB-Specific Features to Leverage:
-- Direct file querying: read_parquet(), read_csv(), read_json()
-- Glob patterns for multiple files: read_parquet('data/*.parquet')
-- Remote file access: read_parquet('s3://bucket/file.parquet')
-- COPY TO for exporting to various formats
-- Columnar storage with automatic compression
-- Parallel query execution
-- Window functions with full SQL:2003 support
-- QUALIFY clause for filtering window function results
-- SAMPLE clause for random sampling
-- ASOF joins for time-series data
-- LIST and STRUCT types for nested data
-- UNNEST for working with arrays
-- PIVOT and UNPIVOT operations
-- Friendly SQL extensions (EXCLUDE, REPLACE, COLUMNS expressions)
-
-Performance Guidelines:
-- DuckDB automatically parallelizes queries - no hints needed
-- Use Parquet format for best performance
-- Leverage predicate pushdown with partitioned data
-- Use EXPLAIN ANALYZE to understand query plans
-
-Analytical Query Patterns:
-- Time-series analysis with window functions
-- ROLLUP, CUBE, GROUPING SETS for multi-level aggregation
-- Percentiles with PERCENTILE_CONT and PERCENTILE_DISC
-- Moving averages and running totals
-
-Best Practices:
-- Use parameterized queries for security
-- Prefer column projection (list needed columns)
-- Use CTEs for readable complex queries
-- Leverage QUALIFY instead of subqueries for window filtering
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The SQL query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for DuckDB analytics",
-  "comments": "Questions for clarification or additional performance/design considerations"
-}`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-		{
-			ID:          "00000000-0000-0000-0000-000000000008",
-			Name:        "Neo4j Query Assistant",
-			Description: "Expert Neo4j assistant for writing, optimizing, and debugging Cypher queries for graph databases",
-			Type:        "conversational",
-			SystemPrompt: `You are an expert Neo4j graph database assistant helping users write and optimize Cypher queries.
-
-Your role is to help users:
-1. Write correct and efficient Cypher queries for graph operations
-2. Model data effectively as nodes and relationships
-3. Leverage Neo4j-specific features for optimal solutions
-4. Optimize query performance with proper indexing and patterns
-
-Cypher Query Fundamentals:
-- MATCH patterns: (n:Label)-[r:REL_TYPE]->(m:Label)
-- CREATE, MERGE, SET, DELETE, REMOVE for mutations
-- WHERE clauses with property filters and pattern predicates
-- RETURN with aggregations and projections
-- WITH for query chaining and intermediate results
-- OPTIONAL MATCH for outer-join-like behavior
-- UNWIND for working with lists
-
-Advanced Cypher Features:
-- Variable-length paths: (a)-[*1..5]->(b)
-- Shortest path: shortestPath((a)-[*]-(b))
-- Pattern comprehensions: [(n)-->(m) | m.name]
-- List comprehensions: [x IN list WHERE x > 0 | x * 2]
-- COLLECT, REDUCE, and list functions
-- EXISTS and COUNT subqueries
-- CALL subqueries for complex logic
-- Map projections: node {.prop1, .prop2, newProp: expr}
-
-APOC Procedures (Common):
-- apoc.periodic.iterate for batch operations
-- apoc.load.json, apoc.load.csv for data import
-- apoc.path.expand for advanced path finding
-
-Graph Data Science (GDS):
-- Centrality algorithms: PageRank, Betweenness, Degree
-- Community detection: Louvain, Label Propagation
-- Path finding: Dijkstra, A*, Yen's K-shortest
-
-Performance Guidelines:
-- Create indexes on frequently queried properties
-- Use node labels to limit scans
-- Profile queries with PROFILE prefix
-- Avoid cartesian products (multiple unconnected patterns)
-- Use parameters instead of literals
-- Limit variable-length path depth
-
-Best Practices:
-- Use meaningful node labels (PascalCase) and relationship types (UPPER_SNAKE_CASE)
-- Use parameterized queries: $paramName
-- Create constraints for uniqueness (also creates index)
-- Design for your most common traversals
-
-Always respond with a JSON object in this format:
-{
-  "recommendation": "The Cypher query with proper formatting and comments",
-  "reasoning": "Brief explanation of why this approach works well for Neo4j",
-  "comments": "Questions for clarification or additional considerations"
-}`,
-			LLMConfig: map[string]interface{}{
-				"provider":    "openai",
-				"model":       "gpt-4o",
-				"temperature": 0.7,
-				"max_tokens":  1000,
-			},
-			IsInternal: true,
-			CreatedAt:  "2024-01-01T00:00:00Z",
-		},
-	}
-}
+// NotebookChatAssistantID is the ID of the internal notebook chat agent
+// Using the constant from the shared agents package
+const NotebookChatAssistantID = agents.NotebookChatAssistantID
 
 // ListInternalAgents lists all internal system agents
 // @Summary List internal agents
@@ -1217,7 +754,20 @@ Always respond with a JSON object in this format:
 // @Failure 401 {object} errors.APIError
 // @Router /api/v1/agents/internal [get]
 func (h *AgentHandler) ListInternalAgents(c *gin.Context) {
-	agents := getInternalAgents()
+	authToken := extractAuthToken(c)
+	if authToken == "" {
+		h.logger.Warn("No authorization token provided for listing internal agents")
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
+		return
+	}
+
+	agents, err := h.agentService.GetInternalAgents(c.Request.Context(), authToken)
+	if err != nil {
+		h.logger.Error("Failed to fetch internal agents from agent-builder", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to fetch internal agents"))
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"agents": agents,
 		"total":  len(agents),
@@ -1242,15 +792,29 @@ func (h *AgentHandler) GetInternalAgent(c *gin.Context) {
 		return
 	}
 
-	agents := getInternalAgents()
-	for _, agent := range agents {
-		if agent.ID == agentID {
-			c.JSON(http.StatusOK, agent)
-			return
-		}
+	authToken := extractAuthToken(c)
+	if authToken == "" {
+		h.logger.Warn("No authorization token provided for getting internal agent")
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
+		return
 	}
 
-	c.JSON(http.StatusNotFound, errors.NotFound("Internal agent not found"))
+	agent, err := h.agentService.GetInternalAgentByID(c.Request.Context(), agentID, authToken)
+	if err != nil {
+		h.logger.Error("Failed to fetch internal agent from agent-builder",
+			zap.Error(err),
+			zap.String("agent_id", agentID),
+		)
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to fetch internal agent"))
+		return
+	}
+
+	if agent == nil {
+		c.JSON(http.StatusNotFound, errors.NotFound("Internal agent not found"))
+		return
+	}
+
+	c.JSON(http.StatusOK, agent)
 }
 
 // InternalAgentExecuteRequest represents a request to execute an internal agent
@@ -1303,33 +867,15 @@ func (h *AgentHandler) ExecuteInternalAgent(c *gin.Context) {
 		return
 	}
 
-	// Find the internal agent
-	var targetAgent *InternalAgent
-	agents := getInternalAgents()
-	h.logger.Debug("Available internal agents",
-		zap.Int("count", len(agents)),
-	)
-
-	for _, agent := range agents {
-		if agent.ID == agentID {
-			targetAgent = &agent
-			break
-		}
-	}
-
-	if targetAgent == nil {
-		h.logger.Warn("Internal agent not found",
-			zap.String("requested_id", agentID),
-		)
-		c.JSON(http.StatusNotFound, errors.NotFound("Internal agent not found"))
+	// Get auth token for agent-builder
+	authToken := extractAuthToken(c)
+	if authToken == "" {
+		h.logger.Warn("No authorization token provided")
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
 		return
 	}
 
-	h.logger.Info("Found internal agent",
-		zap.String("agent_id", targetAgent.ID),
-		zap.String("agent_name", targetAgent.Name),
-	)
-
+	// Parse the request body
 	var req InternalAgentExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Error("Invalid request payload", zap.Error(err))
@@ -1342,59 +888,49 @@ func (h *AgentHandler) ExecuteInternalAgent(c *gin.Context) {
 		zap.Int("history_length", len(req.History)),
 	)
 
-	// Get auth token for LLM router
-	authToken := extractAuthToken(c)
-	if authToken == "" {
-		h.logger.Warn("No authorization token provided")
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
-		return
+	// Build service request with conversation history support
+	serviceReq := services.InternalAgentExecuteRequest{
+		Input:     req.Input,
+		SessionID: req.SessionID,
+		Context:   req.Context,
 	}
 
-	// Build messages for LLM
-	messages := []map[string]string{
-		{
-			"role":    "system",
-			"content": targetAgent.SystemPrompt,
-		},
-	}
-
-	// Add conversation history
+	// Convert conversation history
 	for _, msg := range req.History {
-		messages = append(messages, map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
+		serviceReq.History = append(serviceReq.History, services.ConversationMessage{
+			Role:      msg.Role,
+			Content:   msg.Content,
+			Timestamp: msg.Timestamp,
 		})
 	}
 
-	// Add current user message
-	messages = append(messages, map[string]string{
-		"role":    "user",
-		"content": req.Input,
-	})
-
-	// Execute via LLM router
-	output, err := h.executeLLMRequest(c.Request.Context(), messages, targetAgent.LLMConfig, authToken)
+	// Execute via agent-builder service
+	response, err := h.agentService.ExecuteInternalAgent(c.Request.Context(), agentID, serviceReq, authToken)
 	if err != nil {
-		h.logger.Error("Failed to execute internal agent", zap.Error(err))
+		h.logger.Error("Failed to execute internal agent via agent-builder",
+			zap.Error(err),
+			zap.String("agent_id", agentID),
+		)
+		// Check if it's a not found error
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+			c.JSON(http.StatusNotFound, errors.NotFound("Internal agent not found"))
+			return
+		}
 		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to execute agent"))
 		return
 	}
 
-	response := InternalAgentExecuteResponse{
-		Output:         output,
-		ConversationID: req.SessionID,
-		Metadata: map[string]interface{}{
-			"agent_id":   targetAgent.ID,
-			"agent_name": targetAgent.Name,
-		},
-	}
-
-	h.logger.Info("Internal agent executed successfully",
+	h.logger.Info("Internal agent executed successfully via agent-builder",
 		zap.String("agent_id", agentID),
-		zap.String("agent_name", targetAgent.Name),
+		zap.String("execution_id", response.ExecutionID),
 	)
 
-	c.JSON(http.StatusOK, response)
+	// Return response in the format expected by the frontend
+	c.JSON(http.StatusOK, InternalAgentExecuteResponse{
+		Output:         response.Output,
+		ConversationID: response.ConversationID,
+		Metadata:       response.Metadata,
+	})
 }
 
 // executeLLMRequest sends a request to the LLM router
