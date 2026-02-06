@@ -425,3 +425,176 @@ func (h *NotebookHandler) ShareNotebook(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Notebook shared successfully"})
 }
+
+// ============================================================================
+// Internal API handlers for service-to-service communication
+// These handlers bypass space context middleware for internal service calls
+// ============================================================================
+
+// GetNotebookHierarchy gets notebook hierarchy including sub-notebooks
+// @Summary Get notebook hierarchy
+// @Description Get notebook with recursive sub-notebook hierarchy
+// @Tags internal-notebooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Param tenant_id query string true "Tenant ID"
+// @Success 200 {object} models.NotebookHierarchyResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/internal/notebooks/{id}/hierarchy [get]
+func (h *NotebookHandler) GetNotebookHierarchy(c *gin.Context) {
+	notebookID := c.Param("id")
+	if notebookID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID is required", nil))
+		return
+	}
+
+	tenantID := c.Query("tenant_id")
+	if tenantID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
+		return
+	}
+
+	hierarchy, err := h.notebookService.GetNotebookHierarchy(c.Request.Context(), notebookID, tenantID)
+	if err != nil {
+		h.logger.Error("Failed to get notebook hierarchy",
+			zap.String("notebook_id", notebookID),
+			zap.String("tenant_id", tenantID),
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, hierarchy)
+}
+
+// GetDocumentsRecursive gets all documents from notebook and sub-notebooks
+// @Summary Get documents recursively
+// @Description Get all documents from notebook and all sub-notebooks
+// @Tags internal-notebooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Param tenant_id query string true "Tenant ID"
+// @Success 200 {object} models.NotebookDocumentsResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/internal/notebooks/{id}/documents/recursive [get]
+func (h *NotebookHandler) GetDocumentsRecursive(c *gin.Context) {
+	notebookID := c.Param("id")
+	if notebookID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID is required", nil))
+		return
+	}
+
+	tenantID := c.Query("tenant_id")
+	if tenantID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
+		return
+	}
+
+	documents, err := h.notebookService.GetDocumentsRecursive(c.Request.Context(), notebookID, tenantID)
+	if err != nil {
+		h.logger.Error("Failed to get documents recursively",
+			zap.String("notebook_id", notebookID),
+			zap.String("tenant_id", tenantID),
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"notebook_id": notebookID,
+		"documents":   documents,
+		"total":       len(documents),
+	})
+}
+
+// GetSubNotebooks gets sub-notebook IDs for a parent notebook
+// @Summary Get sub-notebooks
+// @Description Get IDs of all sub-notebooks for a parent notebook
+// @Tags internal-notebooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Parent Notebook ID"
+// @Param tenant_id query string true "Tenant ID"
+// @Success 200 {object} models.SubNotebooksResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/internal/notebooks/{id}/sub-notebooks [get]
+func (h *NotebookHandler) GetSubNotebooks(c *gin.Context) {
+	notebookID := c.Param("id")
+	if notebookID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID is required", nil))
+		return
+	}
+
+	tenantID := c.Query("tenant_id")
+	if tenantID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
+		return
+	}
+
+	subNotebookIDs, err := h.notebookService.GetSubNotebookIDs(c.Request.Context(), notebookID, tenantID)
+	if err != nil {
+		h.logger.Error("Failed to get sub-notebooks",
+			zap.String("notebook_id", notebookID),
+			zap.String("tenant_id", tenantID),
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"parent_notebook_id": notebookID,
+		"sub_notebook_ids":   subNotebookIDs,
+		"total":              len(subNotebookIDs),
+	})
+}
+
+// GetNotebookDocuments gets documents for a specific notebook (non-recursive)
+// @Summary Get notebook documents
+// @Description Get documents for a specific notebook (flat, no recursion)
+// @Tags internal-notebooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Param tenant_id query string true "Tenant ID"
+// @Success 200 {object} models.NotebookDocumentsResponse
+// @Failure 400 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/internal/notebooks/{id}/documents [get]
+func (h *NotebookHandler) GetNotebookDocuments(c *gin.Context) {
+	notebookID := c.Param("id")
+	if notebookID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID is required", nil))
+		return
+	}
+
+	tenantID := c.Query("tenant_id")
+	if tenantID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
+		return
+	}
+
+	documents, err := h.notebookService.GetNotebookDocuments(c.Request.Context(), notebookID, tenantID)
+	if err != nil {
+		h.logger.Error("Failed to get notebook documents",
+			zap.String("notebook_id", notebookID),
+			zap.String("tenant_id", tenantID),
+			zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"notebook_id": notebookID,
+		"documents":   documents,
+		"total":       len(documents),
+	})
+}

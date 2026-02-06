@@ -15,6 +15,7 @@ import (
 
 	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	"github.com/Tributary-ai-services/aether-be/internal/validation"
 )
 
 // Crawl4AIService provides web scraping capabilities via Crawl4AI
@@ -266,6 +267,24 @@ var aiUserAgents = []string{
 	"diffbot",
 	"facebookbot",
 	"google-extended",
+}
+
+// DefaultExcludedTags are HTML tags to exclude at crawl time to prevent XSS and reduce noise
+// These are stripped by Crawl4AI before markdown/content extraction
+var DefaultExcludedTags = []string{
+	"script",
+	"style",
+	"noscript",
+	"iframe",
+	"object",
+	"embed",
+	"applet",
+	"form",
+	"input",
+	"button",
+	"select",
+	"textarea",
+	"svg", // SVG can contain embedded scripts
 }
 
 // ============================================================================
@@ -747,6 +766,16 @@ func (s *Crawl4AIService) ScrapeURL(ctx context.Context, targetURL string, scrap
 		return result, nil
 	}
 
+	// Apply content sanitization if enabled (defense-in-depth after excluded_tags)
+	// Check for option override first, then fall back to config
+	sanitize := s.config.SanitizeContent
+	if optSanitize, ok := options["sanitize_content"].(bool); ok {
+		sanitize = optSanitize
+	}
+	if sanitize {
+		s.SanitizeScrapeResult(result)
+	}
+
 	result.Success = true
 	return result, nil
 }
@@ -756,6 +785,9 @@ func (s *Crawl4AIService) scrapeWithCrawl4AI(ctx context.Context, targetURL stri
 	crawlReq := Crawl4AIRequest{
 		URLs:               []string{targetURL},
 		WordCountThreshold: 10,
+		ExcludedTags:       DefaultExcludedTags, // Always exclude dangerous tags
+		ExcludeExternalLinks: false,
+		ExcludeExternalImages: false,
 	}
 
 	// Apply options
@@ -764,6 +796,14 @@ func (s *Crawl4AIService) scrapeWithCrawl4AI(ctx context.Context, targetURL stri
 	}
 	if screenshot, ok := options["screenshot"].(bool); ok {
 		crawlReq.Screenshot = screenshot
+	}
+	// Allow overriding excluded tags if explicitly provided
+	if excludedTags, ok := options["excluded_tags"].([]string); ok {
+		crawlReq.ExcludedTags = excludedTags
+	}
+	// Allow adding additional excluded tags
+	if additionalTags, ok := options["additional_excluded_tags"].([]string); ok {
+		crawlReq.ExcludedTags = append(crawlReq.ExcludedTags, additionalTags...)
 	}
 
 	reqBody, err := json.Marshal(crawlReq)
@@ -928,6 +968,131 @@ func (s *Crawl4AIService) scrapeArchiveOrg(ctx context.Context, targetURL, archi
 
 	// Fetch from archive.org using Crawl4AI for JS rendering
 	return s.scrapeWithCrawl4AI(ctx, archiveURL, nil, result)
+}
+
+// ============================================================================
+// Content Sanitization
+// ============================================================================
+
+// SanitizeScrapeResult sanitizes all content in a scrape result to prevent XSS
+// This provides defense-in-depth after excluded_tags filtering at crawl time
+func (s *Crawl4AIService) SanitizeScrapeResult(result *ScrapeResult) {
+	if result == nil {
+		return
+	}
+
+	// Get sanitization options
+	htmlOptions := validation.DefaultWebContentSanitizationOptions()
+	mdOptions := validation.DefaultWebContentSanitizationOptions()
+	mdOptions.PreserveMarkdown = true
+
+	// Sanitize main content
+	if result.Content != "" {
+		if result.ContentType == "text/markdown" {
+			result.Content = validation.SanitizeMarkdownContent(result.Content, mdOptions)
+		} else {
+			result.Content = validation.SanitizeWebContent(result.Content, htmlOptions)
+		}
+	}
+
+	// Sanitize HTML
+	if result.HTML != "" {
+		result.HTML = validation.SanitizeWebContent(result.HTML, htmlOptions)
+	}
+
+	// Sanitize Markdown
+	if result.Markdown != "" {
+		result.Markdown = validation.SanitizeMarkdownContent(result.Markdown, mdOptions)
+	}
+
+	// Sanitize title
+	if result.Title != "" {
+		result.Title = validation.SanitizeTitle(result.Title)
+	}
+
+	// Sanitize metadata
+	if result.Metadata != nil {
+		for key, value := range result.Metadata {
+			result.Metadata[key] = validation.SanitizeDescription(value)
+		}
+	}
+
+	// Sanitize media URLs
+	if result.Media != nil {
+		s.sanitizeMedia(result.Media)
+	}
+
+	// Sanitize link URLs
+	if result.Links != nil {
+		s.sanitizeLinks(result.Links)
+	}
+
+	s.log.Debug("Sanitized scrape result",
+		zap.String("url", result.URL),
+		zap.Int("content_length", len(result.Content)),
+		zap.Int("html_length", len(result.HTML)),
+		zap.Int("markdown_length", len(result.Markdown)))
+}
+
+// sanitizeMedia sanitizes all media URLs in a Crawl4AIMedia struct
+func (s *Crawl4AIService) sanitizeMedia(media *Crawl4AIMedia) {
+	if media == nil {
+		return
+	}
+
+	// Sanitize image URLs
+	for i := range media.Images {
+		media.Images[i].Src = validation.SanitizeMediaURL(media.Images[i].Src)
+		media.Images[i].Alt = validation.SanitizeTitle(media.Images[i].Alt)
+	}
+
+	// Sanitize video URLs
+	for i := range media.Videos {
+		media.Videos[i].Src = validation.SanitizeMediaURL(media.Videos[i].Src)
+		media.Videos[i].Poster = validation.SanitizeMediaURL(media.Videos[i].Poster)
+	}
+
+	// Sanitize audio URLs
+	for i := range media.Audios {
+		media.Audios[i].Src = validation.SanitizeMediaURL(media.Audios[i].Src)
+	}
+}
+
+// sanitizeLinks sanitizes all URLs in a Crawl4AILinks struct
+func (s *Crawl4AIService) sanitizeLinks(links *Crawl4AILinks) {
+	if links == nil {
+		return
+	}
+
+	// Sanitize internal links
+	sanitizedInternal := make([]Crawl4AILink, 0, len(links.Internal))
+	for _, link := range links.Internal {
+		sanitizedHref := validation.SanitizeURL(link.Href)
+		if sanitizedHref != "" { // Only keep links with valid URLs
+			sanitizedInternal = append(sanitizedInternal, Crawl4AILink{
+				Href:       sanitizedHref,
+				Text:       validation.SanitizeTitle(link.Text),
+				Title:      validation.SanitizeTitle(link.Title),
+				BaseDomain: link.BaseDomain,
+			})
+		}
+	}
+	links.Internal = sanitizedInternal
+
+	// Sanitize external links
+	sanitizedExternal := make([]Crawl4AILink, 0, len(links.External))
+	for _, link := range links.External {
+		sanitizedHref := validation.SanitizeURL(link.Href)
+		if sanitizedHref != "" { // Only keep links with valid URLs
+			sanitizedExternal = append(sanitizedExternal, Crawl4AILink{
+				Href:       sanitizedHref,
+				Text:       validation.SanitizeTitle(link.Text),
+				Title:      validation.SanitizeTitle(link.Title),
+				BaseDomain: link.BaseDomain,
+			})
+		}
+	}
+	links.External = sanitizedExternal
 }
 
 // ============================================================================

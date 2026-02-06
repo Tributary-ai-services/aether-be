@@ -347,3 +347,252 @@ func SanitizeURL(url string) string {
 
 	return SanitizeString(url, options)
 }
+
+// ============================================================================
+// Web Content Sanitization (for Crawl4AI and web scraping)
+// ============================================================================
+
+var (
+	// Script block removal (including content)
+	scriptBlockRegex = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+
+	// Style block removal (including content)
+	styleBlockRegex = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+
+	// Noscript block removal
+	noscriptBlockRegex = regexp.MustCompile(`(?is)<noscript[^>]*>.*?</noscript>`)
+
+	// Event handlers (onclick, onerror, onload, onmouseover, onfocus, etc.)
+	eventHandlerRegex = regexp.MustCompile(`(?i)\s+on\w+\s*=\s*["'][^"']*["']`)
+	eventHandlerUnquotedRegex = regexp.MustCompile(`(?i)\s+on\w+\s*=\s*[^\s>]+`)
+
+	// JavaScript URLs
+	jsURLRegex = regexp.MustCompile(`(?i)javascript\s*:`)
+
+	// VBScript URLs
+	vbURLRegex = regexp.MustCompile(`(?i)vbscript\s*:`)
+
+	// Data URLs (can be used for XSS)
+	dataURLXSSRegex = regexp.MustCompile(`(?i)data\s*:\s*text/html`)
+
+	// Dangerous tags (complete removal including content for some)
+	iframeRegex  = regexp.MustCompile(`(?is)<iframe[^>]*>.*?</iframe>|<iframe[^>]*/>|<iframe[^>]*>`)
+	objectRegex  = regexp.MustCompile(`(?is)<object[^>]*>.*?</object>|<object[^>]*/>|<object[^>]*>`)
+	embedRegex   = regexp.MustCompile(`(?i)<embed[^>]*>`)  // embed is typically self-closing
+	appletRegex  = regexp.MustCompile(`(?is)<applet[^>]*>.*?</applet>`)
+	formRegex    = regexp.MustCompile(`(?is)<form[^>]*>.*?</form>`)
+	inputRegex   = regexp.MustCompile(`(?i)<input[^>]*>`)
+	buttonRegex  = regexp.MustCompile(`(?is)<button[^>]*>.*?</button>|<button[^>]*/>|<button[^>]*>`)
+	svgScriptRegex = regexp.MustCompile(`(?is)<svg[^>]*>.*?</svg>`)
+
+	// Base tag (can redirect resources)
+	baseTagRegex = regexp.MustCompile(`(?i)<base[^>]*>`)
+
+	// Meta refresh (can redirect)
+	metaRefreshRegex = regexp.MustCompile(`(?i)<meta[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>`)
+
+	// Link tags with javascript
+	linkJSRegex = regexp.MustCompile(`(?i)<link[^>]*href\s*=\s*["']?javascript:[^>]*>`)
+)
+
+// WebContentSanitizationOptions controls how web content is sanitized
+type WebContentSanitizationOptions struct {
+	// RemoveScripts removes <script> tags and their content
+	RemoveScripts bool
+
+	// RemoveStyles removes <style> tags and their content
+	RemoveStyles bool
+
+	// RemoveEventHandlers removes onclick, onerror, onload, etc.
+	RemoveEventHandlers bool
+
+	// RemoveJavaScriptURLs removes javascript: URLs
+	RemoveJavaScriptURLs bool
+
+	// RemoveDangerousTags removes iframe, object, embed, applet, form, etc.
+	RemoveDangerousTags bool
+
+	// RemoveBaseTag removes <base> tags that can redirect resources
+	RemoveBaseTag bool
+
+	// RemoveMetaRefresh removes meta refresh redirects
+	RemoveMetaRefresh bool
+
+	// PreserveMarkdown keeps markdown formatting intact (don't strip as HTML)
+	PreserveMarkdown bool
+
+	// MaxContentLength limits content size (0 = no limit)
+	MaxContentLength int
+}
+
+// DefaultWebContentSanitizationOptions returns sensible defaults for web scraping
+func DefaultWebContentSanitizationOptions() WebContentSanitizationOptions {
+	return WebContentSanitizationOptions{
+		RemoveScripts:        true,
+		RemoveStyles:         true,
+		RemoveEventHandlers:  true,
+		RemoveJavaScriptURLs: true,
+		RemoveDangerousTags:  true,
+		RemoveBaseTag:        true,
+		RemoveMetaRefresh:    true,
+		PreserveMarkdown:     false,
+		MaxContentLength:     0, // No limit by default
+	}
+}
+
+// StrictWebContentSanitizationOptions returns strict options for high-security contexts
+func StrictWebContentSanitizationOptions() WebContentSanitizationOptions {
+	return WebContentSanitizationOptions{
+		RemoveScripts:        true,
+		RemoveStyles:         true,
+		RemoveEventHandlers:  true,
+		RemoveJavaScriptURLs: true,
+		RemoveDangerousTags:  true,
+		RemoveBaseTag:        true,
+		RemoveMetaRefresh:    true,
+		PreserveMarkdown:     false,
+		MaxContentLength:     10 * 1024 * 1024, // 10MB limit
+	}
+}
+
+// SanitizeWebContent sanitizes HTML/web content from crawlers to prevent XSS
+// This is designed for large web content and preserves text structure while
+// removing potentially dangerous elements
+func SanitizeWebContent(content string, options WebContentSanitizationOptions) string {
+	if content == "" {
+		return content
+	}
+
+	result := content
+
+	// Remove script blocks (including content) - most critical
+	if options.RemoveScripts {
+		result = scriptBlockRegex.ReplaceAllString(result, "")
+		result = noscriptBlockRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove style blocks
+	if options.RemoveStyles {
+		result = styleBlockRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove dangerous tags
+	if options.RemoveDangerousTags {
+		result = iframeRegex.ReplaceAllString(result, "")
+		result = objectRegex.ReplaceAllString(result, "")
+		result = embedRegex.ReplaceAllString(result, "")
+		result = appletRegex.ReplaceAllString(result, "")
+		result = formRegex.ReplaceAllString(result, "")
+		result = inputRegex.ReplaceAllString(result, "")
+		result = buttonRegex.ReplaceAllString(result, "")
+		result = svgScriptRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove event handlers from remaining tags
+	if options.RemoveEventHandlers {
+		result = eventHandlerRegex.ReplaceAllString(result, "")
+		result = eventHandlerUnquotedRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove JavaScript URLs
+	if options.RemoveJavaScriptURLs {
+		result = jsURLRegex.ReplaceAllString(result, "")
+		result = vbURLRegex.ReplaceAllString(result, "")
+		result = dataURLXSSRegex.ReplaceAllString(result, "data:")
+	}
+
+	// Remove base tag
+	if options.RemoveBaseTag {
+		result = baseTagRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove meta refresh
+	if options.RemoveMetaRefresh {
+		result = metaRefreshRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove link tags with javascript hrefs
+	result = linkJSRegex.ReplaceAllString(result, "")
+
+	// Enforce max length if specified
+	if options.MaxContentLength > 0 && len(result) > options.MaxContentLength {
+		result = result[:options.MaxContentLength]
+	}
+
+	return result
+}
+
+// SanitizeMarkdownContent sanitizes markdown content while preserving formatting
+// This is less aggressive than HTML sanitization since markdown is text-based
+func SanitizeMarkdownContent(content string, options WebContentSanitizationOptions) string {
+	if content == "" {
+		return content
+	}
+
+	result := content
+
+	// Remove any embedded HTML script tags (sometimes markdown allows raw HTML)
+	result = scriptBlockRegex.ReplaceAllString(result, "")
+	result = styleBlockRegex.ReplaceAllString(result, "")
+
+	// Remove event handlers if any raw HTML is present
+	if options.RemoveEventHandlers {
+		result = eventHandlerRegex.ReplaceAllString(result, "")
+		result = eventHandlerUnquotedRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove JavaScript URLs from links
+	if options.RemoveJavaScriptURLs {
+		result = jsURLRegex.ReplaceAllString(result, "")
+		result = vbURLRegex.ReplaceAllString(result, "")
+	}
+
+	// Remove dangerous raw HTML tags
+	if options.RemoveDangerousTags {
+		result = iframeRegex.ReplaceAllString(result, "")
+		result = objectRegex.ReplaceAllString(result, "")
+		result = embedRegex.ReplaceAllString(result, "")
+	}
+
+	// Control characters (but preserve newlines for markdown formatting)
+	result = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`).ReplaceAllString(result, "")
+
+	// Enforce max length if specified
+	if options.MaxContentLength > 0 && len(result) > options.MaxContentLength {
+		result = result[:options.MaxContentLength]
+	}
+
+	return result
+}
+
+// SanitizeMediaURL sanitizes URLs for media resources (images, videos, etc.)
+func SanitizeMediaURL(url string) string {
+	if url == "" {
+		return url
+	}
+
+	// Check for dangerous protocols
+	lowercaseURL := strings.ToLower(strings.TrimSpace(url))
+	if strings.HasPrefix(lowercaseURL, "javascript:") ||
+		strings.HasPrefix(lowercaseURL, "vbscript:") ||
+		strings.HasPrefix(lowercaseURL, "data:text/html") {
+		return "" // Block dangerous protocols
+	}
+
+	// Allow data: URLs for images (base64 encoded images are common and safe)
+	// but block data:text/html which can execute scripts
+	if strings.HasPrefix(lowercaseURL, "data:") {
+		if strings.HasPrefix(lowercaseURL, "data:image/") {
+			return url // Allow image data URLs
+		}
+		return "" // Block other data URLs
+	}
+
+	// Remove control characters
+	result := controlCharsRegex.ReplaceAllString(url, "")
+
+	// Trim whitespace
+	result = strings.TrimSpace(result)
+
+	return result
+}

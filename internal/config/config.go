@@ -214,10 +214,11 @@ type ProxyRoute struct {
 
 // Crawl4AIConfig holds Crawl4AI web scraping service configuration
 type Crawl4AIConfig struct {
-	BaseURL        string `json:"base_url"`
-	Enabled        bool   `json:"enabled"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	MaxRetries     int    `json:"max_retries"`
+	BaseURL         string `json:"base_url"`
+	Enabled         bool   `json:"enabled"`
+	TimeoutSeconds  int    `json:"timeout_seconds"`
+	MaxRetries      int    `json:"max_retries"`
+	SanitizeContent bool   `json:"sanitize_content"` // Enable XSS/security sanitization of scraped content
 }
 
 // DBHubConfig holds DBHub MCP server configuration
@@ -367,10 +368,11 @@ func Load() (*Config, error) {
 			ProxyRoutes: getDefaultProxyRoutes(),
 		},
 		Crawl4AI: Crawl4AIConfig{
-			BaseURL:        getEnv("CRAWL4AI_BASE_URL", "http://crawl4ai.tas-mcp-servers.svc.cluster.local:11235"),
-			Enabled:        getEnvBool("CRAWL4AI_ENABLED", true),
-			TimeoutSeconds: getEnvInt("CRAWL4AI_TIMEOUT_SECONDS", 60),
-			MaxRetries:     getEnvInt("CRAWL4AI_MAX_RETRIES", 3),
+			BaseURL:         getEnv("CRAWL4AI_BASE_URL", "http://crawl4ai.tas-mcp-servers.svc.cluster.local:11235"),
+			Enabled:         getEnvBool("CRAWL4AI_ENABLED", true),
+			TimeoutSeconds:  getEnvInt("CRAWL4AI_TIMEOUT_SECONDS", 60),
+			MaxRetries:      getEnvInt("CRAWL4AI_MAX_RETRIES", 3),
+			SanitizeContent: getEnvBool("CRAWL4AI_SANITIZE_CONTENT", true), // Default to enabled for security
 		},
 		DBHub: DBHubConfig{
 			BaseURL:        getEnv("DBHUB_BASE_URL", "http://dbhub.tas-mcp-servers.svc.cluster.local:8080"),

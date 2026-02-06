@@ -1399,13 +1399,328 @@ func (s *AgentService) canUserAccessAgent(agent *models.Agent, userID string, us
 	if agent.OwnerID == userID {
 		return true
 	}
-	
+
 	// 2. Agent is public
 	if agent.IsPublic {
 		return true
 	}
-	
+
 	// For now, allow access if the user is in the same space
 	// TODO: Implement proper team-based access control
 	return true
+}
+
+// GetInternalAgents fetches internal (system) agents from agent-builder
+func (s *AgentService) GetInternalAgents(ctx context.Context, authToken string) ([]*models.AgentResponse, error) {
+	endpoint := "/agents/internal"
+	requestURL := s.agentBuilderURL + endpoint
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to create agent-builder request", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		s.logger.Error("Failed to fetch internal agents from agent-builder", zap.Error(err))
+		return nil, errors.ExternalService("Agent-builder service unavailable", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to read agent-builder response", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Error("Agent-builder returned non-OK status for internal agents",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(bodyBytes)),
+		)
+		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder error: %s", string(bodyBytes)), nil)
+	}
+
+	// Parse response - agent-builder returns {"agents": [...], "count": N}
+	var responseWrapper struct {
+		Agents []map[string]interface{} `json:"agents"`
+		Count  int                      `json:"count"`
+	}
+	if err := json.Unmarshal(bodyBytes, &responseWrapper); err != nil {
+		s.logger.Error("Failed to parse agent-builder response",
+			zap.Error(err),
+			zap.String("body", string(bodyBytes)),
+		)
+		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
+	}
+
+	agents := make([]*models.AgentResponse, 0, len(responseWrapper.Agents))
+	for _, agentMap := range responseWrapper.Agents {
+		agent := s.mapToAgentResponse(agentMap)
+		agents = append(agents, agent)
+	}
+
+	s.logger.Debug("Fetched internal agents from agent-builder",
+		zap.Int("count", len(agents)),
+	)
+
+	return agents, nil
+}
+
+// GetInternalProducerAgents fetches internal producer agents from agent-builder
+func (s *AgentService) GetInternalProducerAgents(ctx context.Context, authToken string) ([]*models.AgentResponse, error) {
+	allInternal, err := s.GetInternalAgents(ctx, authToken)
+	if err != nil {
+		return nil, err
+	}
+
+	producers := make([]*models.AgentResponse, 0)
+	for _, agent := range allInternal {
+		if agent.Type == models.AgentTypeProducer {
+			producers = append(producers, agent)
+		}
+	}
+
+	s.logger.Debug("Filtered internal producer agents",
+		zap.Int("total_internal", len(allInternal)),
+		zap.Int("producers", len(producers)),
+	)
+
+	return producers, nil
+}
+
+// GetInternalAgentByID fetches a specific internal agent from agent-builder by ID
+func (s *AgentService) GetInternalAgentByID(ctx context.Context, agentID string, authToken string) (*models.AgentResponse, error) {
+	endpoint := fmt.Sprintf("/agents/internal/%s", agentID)
+	requestURL := s.agentBuilderURL + endpoint
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to create agent-builder request", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		s.logger.Error("Failed to fetch internal agent from agent-builder", zap.Error(err), zap.String("agent_id", agentID))
+		return nil, errors.ExternalService("Agent-builder service unavailable", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // Agent not found - not an error, just not an internal agent
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to read agent-builder response", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Error("Agent-builder returned non-OK status for internal agent",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(bodyBytes)),
+			zap.String("agent_id", agentID),
+		)
+		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder error: %s", string(bodyBytes)), nil)
+	}
+
+	var agentMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &agentMap); err != nil {
+		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
+	}
+
+	agent := s.mapToAgentResponse(agentMap)
+	return agent, nil
+}
+
+// ConversationMessage represents a message in conversation history
+type ConversationMessage struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+// InternalAgentExecuteRequest represents a request to execute an internal agent
+type InternalAgentExecuteRequest struct {
+	Input             string                 `json:"input"`
+	NotebookIDs       []string               `json:"notebook_ids,omitempty"`
+	SelectedDocuments []string               `json:"selected_documents,omitempty"`
+	TenantID          string                 `json:"tenant_id,omitempty"`
+	SessionID         string                 `json:"session_id,omitempty"`
+	History           []ConversationMessage  `json:"history,omitempty"`
+	Context           map[string]interface{} `json:"context,omitempty"`
+}
+
+// InternalAgentExecuteResponse represents the response from executing an internal agent
+type InternalAgentExecuteResponse struct {
+	ExecutionID     string                 `json:"execution_id"`
+	Output          string                 `json:"output"`
+	TokensUsed      int                    `json:"tokens_used"`
+	CostUSD         float64                `json:"cost_usd"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ContextMetadata map[string]interface{} `json:"context_metadata,omitempty"`
+	ConversationID  string                 `json:"conversation_id,omitempty"`
+}
+
+// ExecuteInternalAgent executes an internal agent via agent-builder with document context
+func (s *AgentService) ExecuteInternalAgent(ctx context.Context, agentID string, req InternalAgentExecuteRequest, authToken string) (*InternalAgentExecuteResponse, error) {
+	endpoint := fmt.Sprintf("/agents/internal/%s/execute", agentID)
+	requestURL := s.agentBuilderURL + endpoint
+
+	// Build request body
+	reqBody := map[string]interface{}{
+		"input": req.Input,
+	}
+
+	if len(req.NotebookIDs) > 0 {
+		reqBody["notebook_ids"] = req.NotebookIDs
+	}
+	if len(req.SelectedDocuments) > 0 {
+		reqBody["selected_documents"] = req.SelectedDocuments
+	}
+	if req.TenantID != "" {
+		reqBody["tenant_id"] = req.TenantID
+	}
+	if req.SessionID != "" {
+		reqBody["session_id"] = req.SessionID
+	}
+	if len(req.History) > 0 {
+		reqBody["history"] = req.History
+	}
+	if req.Context != nil && len(req.Context) > 0 {
+		reqBody["context"] = req.Context
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, errors.InternalWithCause("Failed to marshal execute request", err)
+	}
+
+	s.logger.Info("Executing internal agent via agent-builder",
+		zap.String("agent_id", agentID),
+		zap.String("endpoint", endpoint),
+		zap.Int("notebook_count", len(req.NotebookIDs)),
+		zap.Int("document_count", len(req.SelectedDocuments)),
+		zap.String("tenant_id", req.TenantID),
+	)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", requestURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, errors.ExternalService("Failed to create agent-builder request", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Use longer timeout for execution requests
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		s.logger.Error("Failed to execute internal agent", zap.Error(err), zap.String("agent_id", agentID))
+		return nil, errors.ExternalService("Agent-builder service unavailable", err)
+	}
+	defer resp.Body.Close()
+
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to read agent-builder response", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Error("Agent-builder execution failed",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(respBodyBytes)),
+			zap.String("agent_id", agentID),
+		)
+		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder execution error: %s", string(respBodyBytes)), nil)
+	}
+
+	var response InternalAgentExecuteResponse
+	if err := json.Unmarshal(respBodyBytes, &response); err != nil {
+		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
+	}
+
+	s.logger.Info("Internal agent execution completed",
+		zap.String("agent_id", agentID),
+		zap.String("execution_id", response.ExecutionID),
+		zap.Int("output_length", len(response.Output)),
+		zap.Int("tokens_used", response.TokensUsed),
+	)
+
+	return &response, nil
+}
+
+// mapToAgentResponse converts a map from agent-builder to AgentResponse
+func (s *AgentService) mapToAgentResponse(agentMap map[string]interface{}) *models.AgentResponse {
+	agent := &models.AgentResponse{}
+
+	if id, ok := agentMap["id"].(string); ok {
+		agent.ID = id
+	}
+	if name, ok := agentMap["name"].(string); ok {
+		agent.Name = name
+	}
+	if description, ok := agentMap["description"].(string); ok {
+		agent.Description = description
+	}
+	if systemPrompt, ok := agentMap["system_prompt"].(string); ok {
+		agent.SystemPrompt = systemPrompt
+	}
+	if status, ok := agentMap["status"].(string); ok {
+		agent.Status = models.AgentStatus(status)
+	}
+	if agentType, ok := agentMap["type"].(string); ok {
+		agent.Type = models.AgentType(agentType)
+	}
+	if spaceType, ok := agentMap["space_type"].(string); ok {
+		agent.SpaceType = models.SpaceType(spaceType)
+	}
+	if ownerID, ok := agentMap["owner_id"].(string); ok {
+		agent.OwnerID = ownerID
+	}
+	if spaceID, ok := agentMap["space_id"].(string); ok {
+		agent.SpaceID = spaceID
+	}
+	if isPublic, ok := agentMap["is_public"].(bool); ok {
+		agent.IsPublic = isPublic
+	}
+	if isTemplate, ok := agentMap["is_template"].(bool); ok {
+		agent.IsTemplate = isTemplate
+	}
+
+	// Parse LLM config - keep as map[string]interface{} as that's what AgentResponse expects
+	if llmConfig, ok := agentMap["llm_config"].(map[string]interface{}); ok {
+		agent.LLMConfig = llmConfig
+	}
+
+	// Parse tags
+	if tags, ok := agentMap["tags"].([]interface{}); ok {
+		agent.Tags = make([]string, 0, len(tags))
+		for _, tag := range tags {
+			if tagStr, ok := tag.(string); ok {
+				agent.Tags = append(agent.Tags, tagStr)
+			}
+		}
+	}
+
+	// Parse timestamps
+	if createdAt, ok := agentMap["created_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			agent.CreatedAt = t
+		}
+	}
+	if updatedAt, ok := agentMap["updated_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+			agent.UpdatedAt = t
+		}
+	}
+
+	return agent
 }

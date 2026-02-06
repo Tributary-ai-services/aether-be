@@ -358,6 +358,13 @@ func (s *AudiModalService) getAudiModalTenantUUID(ctx context.Context, aetherTen
 	return mapping.TenantUUID, nil
 }
 
+// GetAudiModalTenantUUID is the public version of getAudiModalTenantUUID.
+// It resolves an Aether tenant ID (e.g., "tenant_1766596584" or "tenant_<UUID>") to an AudiModal UUID.
+// If the tenant doesn't exist in AudiModal, it will be created automatically.
+func (s *AudiModalService) GetAudiModalTenantUUID(ctx context.Context, aetherTenantID string) (string, error) {
+	return s.getAudiModalTenantUUID(ctx, aetherTenantID)
+}
+
 // getAudiModalMapping resolves an Aether tenant ID to an AudiModal tenant and datasource mapping.
 // If the tenant ID is already a UUID (after stripping "tenant_" prefix), it uses the default datasource.
 // If it's a numeric ID, it creates a new AudiModal tenant and datasource.

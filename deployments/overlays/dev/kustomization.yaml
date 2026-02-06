@@ -21,4 +21,5 @@ commonLabels:
 
 images:
   - name: aether-backend
+    newName: registry-api.tas.scharber.com/aether-backend
     newTag: dev

@@ -968,12 +968,236 @@ func (s *NotebookService) deserializeComplianceSettings(jsonString string) (map[
 	if jsonString == "" || jsonString == "{}" {
 		return nil, nil
 	}
-	
+
 	var settings map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonString), &settings); err != nil {
 		s.logger.Error("Failed to deserialize compliance settings", zap.String("json", jsonString), zap.Error(err))
 		return nil, errors.InternalWithCause("Failed to deserialize compliance settings", err)
 	}
-	
+
 	return settings, nil
+}
+
+// ============================================================================
+// Internal API methods for service-to-service communication
+// These methods support agent-builder and other services for document retrieval
+// ============================================================================
+
+// NotebookHierarchy represents a notebook with its sub-notebooks for hierarchy queries
+type NotebookHierarchy struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	ParentID     string              `json:"parent_id,omitempty"`
+	Documents    []NotebookDocument  `json:"documents,omitempty"`
+	SubNotebooks []NotebookHierarchy `json:"sub_notebooks,omitempty"`
+}
+
+// NotebookDocument represents a document in a notebook for internal queries
+type NotebookDocument struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	NotebookID   string `json:"notebook_id"`
+	NotebookName string `json:"notebook_name,omitempty"`
+	FileID       string `json:"file_id,omitempty"`
+	ContentType  string `json:"content_type,omitempty"`
+	SizeBytes    int64  `json:"size_bytes,omitempty"`
+	ChunkCount   int    `json:"chunk_count,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+}
+
+// GetNotebookHierarchy retrieves notebook hierarchy including sub-notebooks recursively
+func (s *NotebookService) GetNotebookHierarchy(ctx context.Context, notebookID, tenantID string) (*NotebookHierarchy, error) {
+	// First, get the main notebook
+	query := `
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})
+		RETURN n.id as id, n.name as name, n.parent_id as parent_id
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
+		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to get notebook", zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to get notebook hierarchy", err)
+	}
+
+	records := result.Records
+	if len(records) == 0 {
+		return nil, errors.NotFound("Notebook not found")
+	}
+
+	record := records[0]
+	hierarchy := &NotebookHierarchy{
+		ID:       s.getString(record.Values[0]),
+		Name:     s.getString(record.Values[1]),
+		ParentID: s.getString(record.Values[2]),
+	}
+
+	// Get documents for this notebook
+	documents, err := s.GetNotebookDocuments(ctx, notebookID, tenantID)
+	if err == nil {
+		hierarchy.Documents = documents
+	}
+
+	// Get sub-notebooks recursively
+	subNotebooks, err := s.getSubNotebooksRecursive(ctx, notebookID, tenantID)
+	if err == nil {
+		hierarchy.SubNotebooks = subNotebooks
+	}
+
+	return hierarchy, nil
+}
+
+// getSubNotebooksRecursive recursively fetches sub-notebooks
+func (s *NotebookService) getSubNotebooksRecursive(ctx context.Context, parentID, tenantID string) ([]NotebookHierarchy, error) {
+	query := `
+		MATCH (parent:Notebook {id: $parent_id, tenant_id: $tenant_id})-[:CONTAINS]->(child:Notebook {tenant_id: $tenant_id})
+		RETURN child.id as id, child.name as name, child.parent_id as parent_id
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
+		"parent_id": parentID,
+		"tenant_id": tenantID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var subNotebooks []NotebookHierarchy
+	for _, record := range result.Records {
+		subNotebook := NotebookHierarchy{
+			ID:       s.getString(record.Values[0]),
+			Name:     s.getString(record.Values[1]),
+			ParentID: s.getString(record.Values[2]),
+		}
+
+		// Get documents for this sub-notebook
+		documents, err := s.GetNotebookDocuments(ctx, subNotebook.ID, tenantID)
+		if err == nil {
+			subNotebook.Documents = documents
+		}
+
+		// Recursively get sub-notebooks
+		childNotebooks, err := s.getSubNotebooksRecursive(ctx, subNotebook.ID, tenantID)
+		if err == nil {
+			subNotebook.SubNotebooks = childNotebooks
+		}
+
+		subNotebooks = append(subNotebooks, subNotebook)
+	}
+
+	return subNotebooks, nil
+}
+
+// GetDocumentsRecursive retrieves all documents from a notebook and its sub-notebooks
+func (s *NotebookService) GetDocumentsRecursive(ctx context.Context, notebookID, tenantID string) ([]NotebookDocument, error) {
+	// Use Neo4j's variable-length relationships to get all documents recursively
+	query := `
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})
+		OPTIONAL MATCH (n)-[:CONTAINS*0..]->(sub:Notebook {tenant_id: $tenant_id})
+		OPTIONAL MATCH (n)-[:CONTAINS]->(d:Document {tenant_id: $tenant_id})
+		OPTIONAL MATCH (sub)-[:CONTAINS]->(sd:Document {tenant_id: $tenant_id})
+		WITH COLLECT(DISTINCT d) + COLLECT(DISTINCT sd) AS allDocs
+		UNWIND allDocs AS doc
+		WITH DISTINCT doc
+		WHERE doc IS NOT NULL
+		MATCH (notebook:Notebook {tenant_id: $tenant_id})-[:CONTAINS]->(doc)
+		RETURN doc.id as id, doc.name as name, doc.file_id as file_id,
+		       doc.content_type as content_type, doc.size_bytes as size_bytes,
+		       doc.chunk_count as chunk_count, doc.created_at as created_at,
+		       notebook.id as notebook_id, notebook.name as notebook_name
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
+		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to get documents recursively", zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to get documents recursively", err)
+	}
+
+	var documents []NotebookDocument
+	for _, record := range result.Records {
+		doc := NotebookDocument{
+			ID:           s.getString(record.Values[0]),
+			Name:         s.getString(record.Values[1]),
+			FileID:       s.getString(record.Values[2]),
+			ContentType:  s.getString(record.Values[3]),
+			SizeBytes:    s.getInt64(record.Values[4]),
+			ChunkCount:   s.getInt(record.Values[5]),
+			CreatedAt:    s.getString(record.Values[6]),
+			NotebookID:   s.getString(record.Values[7]),
+			NotebookName: s.getString(record.Values[8]),
+		}
+		documents = append(documents, doc)
+	}
+
+	return documents, nil
+}
+
+// GetSubNotebookIDs retrieves IDs of all sub-notebooks for a parent notebook
+func (s *NotebookService) GetSubNotebookIDs(ctx context.Context, parentNotebookID, tenantID string) ([]string, error) {
+	// Get all sub-notebooks recursively using variable-length relationships
+	query := `
+		MATCH (parent:Notebook {id: $parent_id, tenant_id: $tenant_id})-[:CONTAINS*1..]->(sub:Notebook {tenant_id: $tenant_id})
+		RETURN DISTINCT sub.id as id
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
+		"parent_id": parentNotebookID,
+		"tenant_id": tenantID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to get sub-notebook IDs", zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to get sub-notebook IDs", err)
+	}
+
+	var subNotebookIDs []string
+	for _, record := range result.Records {
+		if id := s.getString(record.Values[0]); id != "" {
+			subNotebookIDs = append(subNotebookIDs, id)
+		}
+	}
+
+	return subNotebookIDs, nil
+}
+
+// GetNotebookDocuments retrieves documents for a specific notebook (non-recursive)
+func (s *NotebookService) GetNotebookDocuments(ctx context.Context, notebookID, tenantID string) ([]NotebookDocument, error) {
+	query := `
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})-[:CONTAINS]->(d:Document {tenant_id: $tenant_id})
+		RETURN d.id as id, d.name as name, d.file_id as file_id,
+		       d.content_type as content_type, d.size_bytes as size_bytes,
+		       d.chunk_count as chunk_count, d.created_at as created_at,
+		       n.id as notebook_id, n.name as notebook_name
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
+		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to get notebook documents", zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to get notebook documents", err)
+	}
+
+	var documents []NotebookDocument
+	for _, record := range result.Records {
+		doc := NotebookDocument{
+			ID:           s.getString(record.Values[0]),
+			Name:         s.getString(record.Values[1]),
+			FileID:       s.getString(record.Values[2]),
+			ContentType:  s.getString(record.Values[3]),
+			SizeBytes:    s.getInt64(record.Values[4]),
+			ChunkCount:   s.getInt(record.Values[5]),
+			CreatedAt:    s.getString(record.Values[6]),
+			NotebookID:   s.getString(record.Values[7]),
+			NotebookName: s.getString(record.Values[8]),
+		}
+		documents = append(documents, doc)
+	}
+
+	return documents, nil
 }

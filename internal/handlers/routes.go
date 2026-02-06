@@ -41,6 +41,7 @@ type APIServer struct {
 	DatabaseHandler      *DatabaseHandler
 	SavedQueryHandler    *SavedQueryHandler
 	AIPlaygroundHandler  *AIPlaygroundHandler
+	ProductionHandler    *ProductionHandler
 	SpaceService         *services.SpaceContextService
 	Metrics              *metrics.Metrics
 	logger               *logger.Logger
@@ -145,6 +146,10 @@ func NewAPIServer(
 	aiPlaygroundService := services.NewAIPlaygroundService(neo4j, &cfg.Router, agentService, workflowService, log)
 	aiPlaygroundHandler := NewAIPlaygroundHandler(aiPlaygroundService, userService, teamService, log)
 
+	// Initialize Production service and handler
+	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, log)
+	productionHandler := NewProductionHandler(productionService, userService, teamService, log)
+
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
 	if err != nil {
@@ -192,6 +197,7 @@ func NewAPIServer(
 		DatabaseHandler:      databaseHandler,
 		SavedQueryHandler:    savedQueryHandler,
 		AIPlaygroundHandler:  aiPlaygroundHandler,
+		ProductionHandler:    productionHandler,
 		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
@@ -235,6 +241,10 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		users.DELETE("/me/onboarding", s.UserHandler.ResetTutorial)
 		users.GET("/search", s.UserHandler.SearchUsers)
 		users.GET("/:id", s.UserHandler.GetUserByID)
+
+		// Producer preferences
+		users.GET("/me/preferences/producers", s.ProductionHandler.GetProducerPreferences)
+		users.PATCH("/me/preferences/producers", s.ProductionHandler.UpdateProducerPreferences)
 	}
 
 	// Notebook routes
@@ -257,6 +267,16 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		notebooks.POST("/:id/vector-search/text", s.VectorSearchHandler.TextSearch)
 		notebooks.POST("/:id/vector-search/hybrid", s.VectorSearchHandler.HybridSearch)
 		notebooks.GET("/:id/vector-search/info", s.VectorSearchHandler.GetVectorSearchInfo)
+
+		// Producer agents for notebook
+		notebooks.GET("/:id/producers", s.ProductionHandler.GetNotebookProducers)
+		notebooks.POST("/:id/producers/:agent_id/execute", s.ProductionHandler.ExecuteProducer)
+
+		// Notebook chat - uses internal Notebook Chat Assistant agent
+		notebooks.POST("/:id/chat", s.ProductionHandler.NotebookChat)
+
+		// Productions (artifacts) within notebook
+		notebooks.GET("/:id/productions", s.ProductionHandler.ListNotebookProductions)
 	}
 
 	// Document routes
@@ -279,6 +299,17 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		documents.GET("/:id/url", s.DocumentHandler.GetDocumentURL)
 		documents.GET("/:id/analysis", s.DocumentHandler.GetDocumentAnalysis)
 		documents.GET("/:id/text", s.DocumentHandler.GetDocumentExtractedText)
+	}
+
+	// Production routes - standalone CRUD for productions
+	productions := api.Group("/productions")
+	productions.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	productions.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		productions.GET("/:id", s.ProductionHandler.GetProduction)
+		productions.GET("/:id/content", s.ProductionHandler.GetProductionContent)
+		productions.DELETE("/:id", s.ProductionHandler.DeleteProduction)
+		productions.POST("/bulk-delete", s.ProductionHandler.BulkDeleteProductions)
 	}
 
 	// Chunk routes - file-specific chunks
@@ -353,6 +384,20 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		internalAgents.GET("", s.AgentHandler.ListInternalAgents)
 		internalAgents.GET("/:id", s.AgentHandler.GetInternalAgent)
 		internalAgents.POST("/:id/execute", s.AgentHandler.ExecuteInternalAgent)
+	}
+
+	// Internal notebook routes - for service-to-service communication (agent-builder, etc.)
+	// These routes bypass space context middleware for internal service calls
+	internalNotebooks := api.Group("/internal/notebooks")
+	{
+		// Get notebook hierarchy with optional sub-notebooks
+		internalNotebooks.GET("/:id/hierarchy", s.NotebookHandler.GetNotebookHierarchy)
+		// Get all documents recursively from notebook and sub-notebooks
+		internalNotebooks.GET("/:id/documents/recursive", s.NotebookHandler.GetDocumentsRecursive)
+		// Get sub-notebook IDs for a parent notebook
+		internalNotebooks.GET("/:id/sub-notebooks", s.NotebookHandler.GetSubNotebooks)
+		// Get documents for specific notebook (flat, no recursion)
+		internalNotebooks.GET("/:id/documents", s.NotebookHandler.GetNotebookDocuments)
 	}
 
 	// Agent routes - with space context for multi-tenancy
