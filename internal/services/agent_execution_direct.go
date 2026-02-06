@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,10 +9,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/Tributary-ai-services/aether-be/pkg/errors"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
+	"github.com/Tributary-ai-services/aether-be/pkg/errors"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -125,6 +127,7 @@ func (s *AgentService) buildLLMRequest(agent *models.Agent, req models.AgentExec
 		"temperature": 0.7,
 		"max_tokens":  500,
 		"provider":    "openai",
+		"stream":      true, // Enable streaming to avoid timeouts on large outputs
 	}
 }
 
@@ -135,9 +138,56 @@ type LLMResponse struct {
 	Provider   string
 }
 
+// ExecuteLLMRequest executes an LLM request with the provided messages and config
+// This is a public method that can be called from other services
+func (s *AgentService) ExecuteLLMRequest(ctx context.Context, messages []map[string]string, llmConfig map[string]interface{}, authToken string) (string, error) {
+	// Extract config values with defaults
+	provider := "openai"
+	model := "gpt-4o-mini"
+	temperature := 0.7
+	maxTokens := 2048
+
+	if p, ok := llmConfig["provider"].(string); ok {
+		provider = p
+	}
+	if m, ok := llmConfig["model"].(string); ok {
+		model = m
+	}
+	if t, ok := llmConfig["temperature"].(float64); ok {
+		temperature = t
+	}
+	if mt, ok := llmConfig["max_tokens"].(int); ok {
+		maxTokens = mt
+	}
+
+	// Build the request body with streaming enabled to avoid timeouts
+	request := map[string]interface{}{
+		"messages":    messages,
+		"model":       model,
+		"provider":    provider,
+		"temperature": temperature,
+		"max_tokens":  maxTokens,
+		"stream":      true,
+	}
+
+	response, err := s.callRouterService(ctx, request, authToken)
+	if err != nil {
+		s.logger.Error("LLM request failed", zap.Error(err))
+		return "", err
+	}
+
+	return response.Content, nil
+}
+
 func (s *AgentService) callRouterService(ctx context.Context, request map[string]interface{}, authToken string) (*LLMResponse, error) {
 	// Use the router service URL from environment or default
 	routerURL := s.getRouterServiceURL()
+
+	// Check if streaming is enabled
+	isStreaming := false
+	if stream, ok := request["stream"].(bool); ok && stream {
+		isStreaming = true
+	}
 
 	jsonData, err := json.Marshal(request)
 	if err != nil {
@@ -155,7 +205,9 @@ func (s *AgentService) callRouterService(ctx context.Context, request map[string
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Use a longer timeout for LLM requests
+	// With streaming, this is mostly for initial connection; chunks keep the connection alive
+	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -167,23 +219,140 @@ func (s *AgentService) callRouterService(ctx context.Context, request map[string
 		return nil, fmt.Errorf("router service error: %s", string(body))
 	}
 
+	// Handle streaming vs non-streaming responses
+	if isStreaming {
+		return s.handleStreamingResponse(resp, request)
+	}
+
+	return s.handleNonStreamingResponse(resp, request)
+}
+
+// handleStreamingResponse parses SSE streaming response and accumulates content
+func (s *AgentService) handleStreamingResponse(resp *http.Response, request map[string]interface{}) (*LLMResponse, error) {
+	var contentBuilder strings.Builder
+	var totalTokens int
+	var model, provider string
+
+	// Extract model and provider from request for response
+	if m, ok := request["model"].(string); ok {
+		model = m
+	}
+	if p, ok := request["provider"].(string); ok {
+		provider = p
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	// Increase buffer size for potentially large chunks
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// SSE format: "data: {...}" or "data: [DONE]"
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for stream end signal
+		if data == "[DONE]" {
+			break
+		}
+
+		// Parse the JSON chunk
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			s.logger.Warn("Failed to parse streaming chunk", zap.String("data", data), zap.Error(err))
+			continue
+		}
+
+		// Extract content from delta
+		if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]interface{}); ok {
+				// Streaming uses "delta" instead of "message"
+				if delta, ok := choice["delta"].(map[string]interface{}); ok {
+					if content, ok := delta["content"].(string); ok {
+						contentBuilder.WriteString(content)
+					}
+				}
+			}
+		}
+
+		// Extract usage from final chunk (if provided)
+		if usage, ok := chunk["usage"].(map[string]interface{}); ok {
+			if tokens, ok := usage["total_tokens"].(float64); ok {
+				totalTokens = int(tokens)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading streaming response: %w", err)
+	}
+
+	content := contentBuilder.String()
+	if content == "" {
+		return nil, fmt.Errorf("no content received from streaming response")
+	}
+
+	// Estimate tokens if not provided (rough estimate: ~4 chars per token)
+	if totalTokens == 0 {
+		totalTokens = len(content) / 4
+	}
+
+	s.logger.Info("Streaming response completed",
+		zap.Int("content_length", len(content)),
+		zap.Int("estimated_tokens", totalTokens))
+
+	return &LLMResponse{
+		Content:    content,
+		TokensUsed: totalTokens,
+		Model:      model,
+		Provider:   provider,
+	}, nil
+}
+
+// handleNonStreamingResponse parses standard JSON response
+func (s *AgentService) handleNonStreamingResponse(resp *http.Response, request map[string]interface{}) (*LLMResponse, error) {
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
 	// Extract response from OpenAI-compatible format
-	choices := result["choices"].([]interface{})
-	if len(choices) == 0 {
+	choices, ok := result["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
 		return nil, fmt.Errorf("no response from LLM")
 	}
 
-	choice := choices[0].(map[string]interface{})
-	message := choice["message"].(map[string]interface{})
-	content := message["content"].(string)
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid choice format in LLM response")
+	}
 
-	usage := result["usage"].(map[string]interface{})
-	totalTokens := int(usage["total_tokens"].(float64))
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid message format in LLM response")
+	}
+
+	content, ok := message["content"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid content format in LLM response")
+	}
+
+	var totalTokens int
+	if usage, ok := result["usage"].(map[string]interface{}); ok {
+		if tokens, ok := usage["total_tokens"].(float64); ok {
+			totalTokens = int(tokens)
+		}
+	}
 
 	return &LLMResponse{
 		Content:    content,
@@ -265,11 +434,14 @@ func truncate(s string, maxLen int) string {
 
 // getRouterServiceURL returns the router service URL from environment or default
 func (s *AgentService) getRouterServiceURL() string {
-	// Try to get from environment variables
+	// Try to get from environment variables - check both naming conventions
+	if url := os.Getenv("ROUTER_SERVICE_BASE_URL"); url != "" {
+		return url + "/v1/chat/completions"
+	}
 	if url := os.Getenv("ROUTER_SERVICE_URL"); url != "" {
 		return url + "/v1/chat/completions"
 	}
-	
+
 	// Default to localhost for development
 	return "http://localhost:8086/v1/chat/completions"
 }
