@@ -427,6 +427,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			SpaceID:      safeString("space_id"),
 			IsPublic:     safeBool("is_public"),
 			IsTemplate:   safeBool("is_template"),
+			IsInternal:   safeBool("is_internal"),
 			SystemPrompt: safeString("system_prompt"),
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
@@ -469,6 +470,17 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 		size = req.Limit // default to request limit
 	}
 	
+	// If IncludeInternal is requested, fetch internal agents and append them
+	if req.IncludeInternal {
+		internalAgents, err := s.GetInternalAgents(ctx, authToken)
+		if err != nil {
+			s.logger.Warn("Failed to fetch internal agents, continuing with user agents only", zap.Error(err))
+		} else {
+			agents = append(agents, internalAgents...)
+			total += len(internalAgents)
+		}
+	}
+
 	return &models.AgentListResponse{
 		Agents:  agents,
 		Total:   total,
@@ -832,6 +844,7 @@ func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Age
 			team_id: $teamId,
 			is_public: $isPublic,
 			is_template: $isTemplate,
+			is_internal: $isInternal,
 			tags: $tags,
 			search_text: $searchText,
 			total_executions: $totalExecutions,
@@ -856,6 +869,7 @@ func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Age
 		"teamId":             agent.TeamID,
 		"isPublic":           agent.IsPublic,
 		"isTemplate":         agent.IsTemplate,
+		"isInternal":         agent.IsInternal,
 		"tags":               agent.Tags,
 		"searchText":         agent.SearchText,
 		"totalExecutions":    agent.TotalExecutions,
@@ -882,6 +896,7 @@ func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Age
 		    a.type = $type,
 		    a.is_public = $isPublic,
 		    a.is_template = $isTemplate,
+		    a.is_internal = $isInternal,
 		    a.tags = $tags,
 		    a.search_text = $searchText,
 		    a.updated_at = datetime($updatedAt)
@@ -895,6 +910,7 @@ func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Age
 		"type":        string(agent.Type),
 		"isPublic":    agent.IsPublic,
 		"isTemplate":  agent.IsTemplate,
+		"isInternal":  agent.IsInternal,
 		"tags":        agent.Tags,
 		"searchText":  agent.SearchText,
 		"updatedAt":   agent.UpdatedAt.Format(time.RFC3339),
@@ -1017,9 +1033,15 @@ func (s *AgentService) recordToAgent(record neo4j.Record) (*models.Agent, error)
 		IsPublic:       props["is_public"].(bool),
 		IsTemplate:     props["is_template"].(bool),
 		SearchText:     props["search_text"].(string),
-		TotalExecutions: int(props["total_executions"].(int64)),
-		TotalCostUSD:   props["total_cost_usd"].(float64),
-		AvgResponseTimeMs: int(props["avg_response_time_ms"].(int64)),
+	}
+
+	agent.TotalExecutions = int(props["total_executions"].(int64))
+	agent.TotalCostUSD = props["total_cost_usd"].(float64)
+	agent.AvgResponseTimeMs = int(props["avg_response_time_ms"].(int64))
+
+	// is_internal may not exist on older nodes
+	if isInternal, ok := props["is_internal"].(bool); ok {
+		agent.IsInternal = isInternal
 	}
 
 	if teamID, ok := props["team_id"].(string); ok {
@@ -1693,6 +1715,9 @@ func (s *AgentService) mapToAgentResponse(agentMap map[string]interface{}) *mode
 	}
 	if isTemplate, ok := agentMap["is_template"].(bool); ok {
 		agent.IsTemplate = isTemplate
+	}
+	if isInternal, ok := agentMap["is_internal"].(bool); ok {
+		agent.IsInternal = isInternal
 	}
 
 	// Parse LLM config - keep as map[string]interface{} as that's what AgentResponse expects

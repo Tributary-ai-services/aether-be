@@ -51,6 +51,7 @@ type Agent struct {
 	// Visibility and sharing
 	IsPublic   bool `json:"is_public"`
 	IsTemplate bool `json:"is_template"`
+	IsInternal bool `json:"is_internal"` // System agents available to all users
 	
 	// Metadata and search
 	Tags       []string `json:"tags,omitempty"`
@@ -113,6 +114,7 @@ type AgentResponse struct {
 	TeamID         string      `json:"team_id,omitempty"`
 	IsPublic       bool        `json:"is_public"`
 	IsTemplate     bool        `json:"is_template"`
+	IsInternal     bool        `json:"is_internal"`
 	Tags           []string    `json:"tags,omitempty"`
 
 	// Agent configuration (from agent-builder)
@@ -154,11 +156,12 @@ type AgentSearchRequest struct {
 	TeamID     string      `json:"team_id,omitempty" validate:"omitempty,uuid"`
 	Status     AgentStatus `json:"status,omitempty" validate:"omitempty,oneof=draft published disabled"`
 	SpaceType  SpaceType   `json:"space_type,omitempty" validate:"omitempty,oneof=personal organization"`
-	IsPublic   *bool       `json:"is_public,omitempty"`
-	IsTemplate *bool       `json:"is_template,omitempty"`
-	Tags       []string    `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
-	Limit      int         `json:"limit,omitempty" validate:"omitempty,min=1,max=100"`
-	Offset     int         `json:"offset,omitempty" validate:"omitempty,min=0"`
+	IsPublic        *bool       `json:"is_public,omitempty"`
+	IsTemplate      *bool       `json:"is_template,omitempty"`
+	IncludeInternal bool        `json:"include_internal,omitempty"`
+	Tags            []string    `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
+	Limit           int         `json:"limit,omitempty" validate:"omitempty,min=1,max=100"`
+	Offset          int         `json:"offset,omitempty" validate:"omitempty,min=0"`
 }
 
 // VectorSearchConfig represents agent's vector search configuration
@@ -208,6 +211,7 @@ func NewAgent(req AgentCreateRequest, ownerID string, spaceCtx *SpaceContext) *A
 		TeamID:         req.TeamID,
 		IsPublic:       req.IsPublic,
 		IsTemplate:     req.IsTemplate,
+		IsInternal:     false, // User-created agents are never internal
 		Tags:           req.Tags,
 		SearchText:     buildAgentSearchText(req.Name, req.Description, req.Tags),
 		TotalExecutions: 0,
@@ -235,6 +239,7 @@ func (a *Agent) ToResponse() *AgentResponse {
 		TeamID:            a.TeamID,
 		IsPublic:          a.IsPublic,
 		IsTemplate:        a.IsTemplate,
+		IsInternal:        a.IsInternal,
 		Tags:              a.Tags,
 		TotalExecutions:   a.TotalExecutions,
 		TotalCostUSD:      a.TotalCostUSD,

@@ -344,6 +344,12 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 		}
 	}
 
+	if includeInternal := c.Query("include_internal"); includeInternal != "" {
+		if val, err := strconv.ParseBool(includeInternal); err == nil {
+			req.IncludeInternal = val
+		}
+	}
+
 	// Parse tags
 	if tags := c.Query("tags"); tags != "" {
 		req.Tags = strings.Split(tags, ",")
@@ -754,6 +760,12 @@ const NotebookChatAssistantID = agents.NotebookChatAssistantID
 // @Failure 401 {object} errors.APIError
 // @Router /api/v1/agents/internal [get]
 func (h *AgentHandler) ListInternalAgents(c *gin.Context) {
+	// Deprecated: Use GET /api/v1/agents?include_internal=true instead
+	c.Header("Deprecation", "true")
+	c.Header("Sunset", "2026-06-01")
+	c.Header("Link", `</api/v1/agents?include_internal=true>; rel="successor-version"`)
+	h.logger.Warn("Deprecated endpoint called: GET /api/v1/agents/internal — use GET /api/v1/agents?include_internal=true instead")
+
 	authToken := extractAuthToken(c)
 	if authToken == "" {
 		h.logger.Warn("No authorization token provided for listing internal agents")
@@ -786,6 +798,11 @@ func (h *AgentHandler) ListInternalAgents(c *gin.Context) {
 // @Failure 404 {object} errors.APIError
 // @Router /api/v1/agents/internal/{id} [get]
 func (h *AgentHandler) GetInternalAgent(c *gin.Context) {
+	// Deprecated: Use GET /api/v1/agents?include_internal=true instead
+	c.Header("Deprecation", "true")
+	c.Header("Sunset", "2026-06-01")
+	h.logger.Warn("Deprecated endpoint called: GET /api/v1/agents/internal/:id — use GET /api/v1/agents?include_internal=true instead")
+
 	agentID := c.Param("id")
 	if agentID == "" {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Agent ID is required"))
