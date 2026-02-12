@@ -197,6 +197,9 @@ func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, req mode
 			if req.LLMConfig != nil {
 				response.LLMConfig = req.LLMConfig
 			}
+			if req.Skills != nil {
+				response.Skills = req.Skills
+			}
 
 			return response, nil
 		}
@@ -240,6 +243,9 @@ func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, req mode
 	}
 	if req.LLMConfig != nil {
 		response.LLMConfig = req.LLMConfig
+	}
+	if req.Skills != nil {
+		response.Skills = req.Skills
 	}
 
 	return response, nil
@@ -439,6 +445,26 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 		// Extract llm_config if present
 		if llmConfig, ok := agentMap["llm_config"].(map[string]interface{}); ok {
 			agent.LLMConfig = llmConfig
+		}
+
+		// Extract tags if present
+		if tags, ok := agentMap["tags"].([]interface{}); ok {
+			agent.Tags = make([]string, 0, len(tags))
+			for _, tag := range tags {
+				if tagStr, ok := tag.(string); ok {
+					agent.Tags = append(agent.Tags, tagStr)
+				}
+			}
+		}
+
+		// Extract skills if present
+		if skills, ok := agentMap["skills"].([]interface{}); ok {
+			agent.Skills = make([]string, 0, len(skills))
+			for _, skill := range skills {
+				if skillStr, ok := skill.(string); ok {
+					agent.Skills = append(agent.Skills, skillStr)
+				}
+			}
 		}
 
 		agents = append(agents, agent)
@@ -719,6 +745,7 @@ func (s *AgentService) createAgentInBuilder(ctx context.Context, req models.Agen
 		"is_public":     req.IsPublic,
 		"is_template":   req.IsTemplate,
 		"tags":          req.Tags,
+		"skills":        req.Skills,
 	}
 
 	return s.makeAgentBuilderRequest(ctx, "POST", "/agents", builderReq, authToken)
@@ -748,6 +775,9 @@ func (s *AgentService) updateAgentInBuilder(ctx context.Context, agentBuilderID 
 	}
 	if req.Tags != nil {
 		builderReq["tags"] = req.Tags
+	}
+	if req.Skills != nil {
+		builderReq["skills"] = req.Skills
 	}
 	if req.SystemPrompt != nil {
 		builderReq["system_prompt"] = *req.SystemPrompt
@@ -1731,6 +1761,16 @@ func (s *AgentService) mapToAgentResponse(agentMap map[string]interface{}) *mode
 		for _, tag := range tags {
 			if tagStr, ok := tag.(string); ok {
 				agent.Tags = append(agent.Tags, tagStr)
+			}
+		}
+	}
+
+	// Parse skills
+	if skills, ok := agentMap["skills"].([]interface{}); ok {
+		agent.Skills = make([]string, 0, len(skills))
+		for _, skill := range skills {
+			if skillStr, ok := skill.(string); ok {
+				agent.Skills = append(agent.Skills, skillStr)
 			}
 		}
 	}

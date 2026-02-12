@@ -116,6 +116,31 @@ func (m *MockStorageService) GetFileURL(ctx context.Context, key string, expirat
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockStorageService) UploadFileToTenantBucket(ctx context.Context, tenantID, key string, data []byte, contentType string) (string, error) {
+	args := m.Called(ctx, tenantID, key, data, contentType)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockStorageService) DownloadFileFromTenantBucket(ctx context.Context, tenantID, key string) ([]byte, error) {
+	args := m.Called(ctx, tenantID, key)
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockStorageService) DeleteFileFromTenantBucket(ctx context.Context, tenantID, key string) error {
+	args := m.Called(ctx, tenantID, key)
+	return args.Error(0)
+}
+
+func (m *MockStorageService) UploadFileToBucket(ctx context.Context, bucket, key string, data []byte, contentType string) (string, error) {
+	args := m.Called(ctx, bucket, key, data, contentType)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockStorageService) DeleteFileFromBucket(ctx context.Context, bucket, key string) error {
+	args := m.Called(ctx, bucket, key)
+	return args.Error(0)
+}
+
 // setupTestLogger creates a test logger with minimal output
 func setupTestLogger(t *testing.T) *logger.Logger {
 	loggerConfig := logger.Config{

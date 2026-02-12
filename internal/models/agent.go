@@ -79,7 +79,8 @@ type AgentCreateRequest struct {
 	IsPublic    bool      `json:"is_public"`
 	IsTemplate  bool      `json:"is_template"`
 	Tags        []string  `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
-	
+	Skills      []string  `json:"skills,omitempty"`
+
 	// Agent-builder specific configuration (passed through)
 	SystemPrompt string                 `json:"system_prompt" validate:"required,min=1"`
 	LLMConfig    map[string]interface{} `json:"llm_config" validate:"required"`
@@ -94,7 +95,8 @@ type AgentUpdateRequest struct {
 	IsPublic    *bool      `json:"is_public,omitempty"`
 	IsTemplate  *bool      `json:"is_template,omitempty"`
 	Tags        []string   `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
-	
+	Skills      []string   `json:"skills,omitempty"`
+
 	// Agent-builder specific updates (passed through)
 	SystemPrompt *string                `json:"system_prompt,omitempty" validate:"omitempty,min=1"`
 	LLMConfig    map[string]interface{} `json:"llm_config,omitempty"`
@@ -116,6 +118,7 @@ type AgentResponse struct {
 	IsTemplate     bool        `json:"is_template"`
 	IsInternal     bool        `json:"is_internal"`
 	Tags           []string    `json:"tags,omitempty"`
+	Skills         []string    `json:"skills,omitempty"`
 
 	// Agent configuration (from agent-builder)
 	SystemPrompt string                 `json:"system_prompt,omitempty"`

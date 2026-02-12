@@ -752,6 +752,91 @@ func (s *S3StorageService) DeleteFileFromTenantBucket(ctx context.Context, tenan
 	return nil
 }
 
+// UploadFileToBucket uploads a file to a specific S3 bucket (used for unified upload buckets).
+func (s *S3StorageService) UploadFileToBucket(ctx context.Context, bucket, key string, data []byte, contentType string) (string, error) {
+	start := time.Now()
+
+	s.logger.Info("Starting bucket file upload",
+		zap.String("bucket", bucket),
+		zap.String("key", key),
+		zap.String("content_type", contentType),
+		zap.Int("file_size", len(data)))
+
+	// Ensure bucket exists
+	if err := s.ensureBucketExists(ctx, bucket); err != nil {
+		s.logger.Error("Failed to ensure bucket exists",
+			zap.String("bucket", bucket),
+			zap.Error(err))
+		return "", fmt.Errorf("failed to ensure bucket exists: %w", err)
+	}
+
+	input := &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(data),
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(int64(len(data))),
+		Metadata: map[string]string{
+			"uploaded-by": "aether-backend",
+			"upload-time": time.Now().Format(time.RFC3339),
+		},
+	}
+
+	_, err := s.client.PutObject(ctx, input)
+	duration := time.Since(start).Seconds() * 1000
+
+	if err != nil {
+		s.logger.Error("Failed to upload file to bucket",
+			zap.String("key", key),
+			zap.String("bucket", bucket),
+			zap.Int("size_bytes", len(data)),
+			zap.Float64("duration_ms", duration),
+			zap.Error(err))
+		return "", fmt.Errorf("failed to upload file: %w", err)
+	}
+
+	s.logger.Info("File uploaded to bucket successfully",
+		zap.String("key", key),
+		zap.String("bucket", bucket),
+		zap.Int("size_bytes", len(data)),
+		zap.Float64("duration_ms", duration))
+
+	return fmt.Sprintf("%s:%s", bucket, key), nil
+}
+
+// DeleteFileFromBucket deletes a file from a specific S3 bucket.
+func (s *S3StorageService) DeleteFileFromBucket(ctx context.Context, bucket, key string) error {
+	start := time.Now()
+
+	s.logger.Info("Starting bucket file deletion",
+		zap.String("bucket", bucket),
+		zap.String("key", key))
+
+	input := &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}
+
+	_, err := s.client.DeleteObject(ctx, input)
+	duration := time.Since(start).Seconds() * 1000
+
+	if err != nil {
+		s.logger.Error("Failed to delete file from bucket",
+			zap.String("key", key),
+			zap.String("bucket", bucket),
+			zap.Float64("duration_ms", duration),
+			zap.Error(err))
+		return fmt.Errorf("failed to delete file from bucket: %w", err)
+	}
+
+	s.logger.Info("File deleted from bucket successfully",
+		zap.String("key", key),
+		zap.String("bucket", bucket),
+		zap.Float64("duration_ms", duration))
+
+	return nil
+}
+
 // ensureBucketExists creates a bucket if it doesn't exist
 func (s *S3StorageService) ensureBucketExists(ctx context.Context, bucketName string) error {
 	// Log the bucket check
@@ -842,4 +927,34 @@ func extractTenantSuffix(tenantID string) string {
 func buildTenantStorageKey(spaceType, notebookID, documentID, originalFilename string) string {
 	return fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s",
 		spaceType, notebookID, documentID, originalFilename)
+}
+
+// GetUploadBucketForTenant returns the unified upload bucket name for a tenant.
+// This matches AudiModal's bucket naming: upload-{short_id}
+// where short_id is derived from the AudiModal tenant UUID (first 10 chars, no hyphens).
+func GetUploadBucketForTenant(audiModalTenantUUID string) string {
+	shortID := getAudiModalShortID(audiModalTenantUUID)
+	return fmt.Sprintf("upload-%s", shortID)
+}
+
+// GetUnifiedFileKey returns the S3 key for a file in the unified upload bucket.
+// Format: {file_id}/{filename} — matches AudiModal's convention.
+func GetUnifiedFileKey(fileID, filename string) string {
+	return fmt.Sprintf("%s/%s", fileID, filename)
+}
+
+// getAudiModalShortID extracts a short ID from an AudiModal tenant UUID.
+// Mirrors audimodal/internal/services/s3_uploader.go GetTenantShortID().
+func getAudiModalShortID(tenantUUID string) string {
+	// If it looks like a UUID, use first 10 chars sans hyphens
+	if len(tenantUUID) >= 36 && tenantUUID[8] == '-' {
+		return strings.ReplaceAll(tenantUUID[:10], "-", "")
+	}
+	// Fallback: clean and truncate
+	cleaned := strings.ReplaceAll(tenantUUID, " ", "-")
+	cleaned = strings.ToLower(cleaned)
+	if len(cleaned) > 20 {
+		cleaned = cleaned[:20]
+	}
+	return cleaned
 }
