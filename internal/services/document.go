@@ -34,10 +34,12 @@ type DocumentService struct {
 type StorageService interface {
 	UploadFile(ctx context.Context, key string, data []byte, contentType string) (string, error)
 	UploadFileToTenantBucket(ctx context.Context, tenantID, key string, data []byte, contentType string) (string, error)
+	UploadFileToBucket(ctx context.Context, bucket, key string, data []byte, contentType string) (string, error)
 	DownloadFile(ctx context.Context, key string) ([]byte, error)
 	DownloadFileFromTenantBucket(ctx context.Context, tenantID, key string) ([]byte, error)
 	DeleteFile(ctx context.Context, key string) error
 	DeleteFileFromTenantBucket(ctx context.Context, tenantID, key string) error
+	DeleteFileFromBucket(ctx context.Context, bucket, key string) error
 	GetFileURL(ctx context.Context, key string, expiration time.Duration) (string, error)
 }
 
@@ -46,6 +48,8 @@ type ProcessingService interface {
 	SubmitProcessingJob(ctx context.Context, tenantID string, documentID string, jobType string, config map[string]interface{}) (*models.ProcessingJob, error)
 	GetProcessingJob(ctx context.Context, jobID string) (*models.ProcessingJob, error)
 	CancelProcessingJob(ctx context.Context, jobID string) error
+	// GetAudiModalTenantUUID resolves the aether tenant ID to an AudiModal tenant UUID
+	GetAudiModalTenantUUID(ctx context.Context, aetherTenantID string) (string, error)
 }
 
 // NewDocumentService creates a new document service
@@ -197,27 +201,43 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 		return nil, err
 	}
 
-	// Upload file to tenant-scoped storage
-	// Build tenant storage key: spaces/{space_type}/notebooks/{notebook_id}/documents/{document_id}/{original_filename}
-	storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s", 
-		spaceCtx.SpaceType, document.NotebookID, document.ID, document.OriginalName)
-	
-	s.logger.Info("About to upload to storage", 
+	// Upload file to unified upload bucket (shared with AudiModal)
+	// Resolve AudiModal tenant UUID to compute the unified bucket name
+	var bucketName, keyPath string
+	if s.processingService != nil {
+		audiModalTenantUUID, err := s.processingService.GetAudiModalTenantUUID(ctx, spaceCtx.TenantID)
+		if err != nil {
+			s.logger.Error("Failed to resolve AudiModal tenant UUID",
+				zap.String("tenant_id", spaceCtx.TenantID),
+				zap.Error(err))
+			if statusErr := s.updateDocumentStatus(ctx, document.ID, "failed", nil, "Failed to resolve tenant"); statusErr != nil {
+				s.logger.Error("Failed to update document status", zap.Error(statusErr))
+			}
+			return nil, errors.ExternalService("Failed to resolve tenant for storage", err)
+		}
+		bucketName = GetUploadBucketForTenant(audiModalTenantUUID)
+		keyPath = GetUnifiedFileKey(document.ID, document.OriginalName)
+	} else {
+		// Fallback to legacy bucket naming if no processing service
+		bucketName = fmt.Sprintf("aether-%s", extractTenantSuffix(spaceCtx.TenantID))
+		keyPath = fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s",
+			spaceCtx.SpaceType, document.NotebookID, document.ID, document.OriginalName)
+	}
+
+	s.logger.Info("Uploading to unified bucket",
 		zap.String("tenant_id", spaceCtx.TenantID),
-		zap.String("storage_key", storageKey),
-		zap.String("space_type", string(spaceCtx.SpaceType)),
-		zap.String("notebook_id", document.NotebookID),
+		zap.String("bucket", bucketName),
+		zap.String("key", keyPath),
 		zap.String("document_id", document.ID),
 		zap.String("original_name", document.OriginalName),
 		zap.String("mime_type", document.MimeType),
 		zap.Int("file_size", len(req.FileData)))
-	
-	s.logger.Info("=== CALLING STORAGE SERVICE ===")
-	storagePath, err := s.storageService.UploadFileToTenantBucket(ctx, spaceCtx.TenantID, storageKey, req.FileData, document.MimeType)
-	s.logger.Info("=== STORAGE SERVICE CALL COMPLETED ===", zap.Bool("has_error", err != nil))
+
+	_, err = s.storageService.UploadFileToBucket(ctx, bucketName, keyPath, req.FileData, document.MimeType)
 	if err != nil {
 		s.logger.Error("Failed to upload file to storage",
 			zap.String("document_id", document.ID),
+			zap.String("bucket", bucketName),
 			zap.Error(err))
 
 		// Update document status to failed
@@ -227,22 +247,10 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 		return nil, errors.ExternalService("Failed to upload file", err)
 	}
 
-	// Parse storage path (format: "bucketName:key") 
-	parts := strings.SplitN(storagePath, ":", 2)
-	var bucketName, keyPath string
-	if len(parts) == 2 {
-		bucketName = parts[0]
-		keyPath = parts[1]
-	} else {
-		// Fallback if format is unexpected
-		bucketName = fmt.Sprintf("aether-%s", extractTenantSuffix(spaceCtx.TenantID))
-		keyPath = storagePath
-	}
-
-	// Update document with tenant-scoped storage information
+	// Update document with storage information
 	document.UpdateStorageInfo(keyPath, bucketName)
 	if err := s.updateDocumentStorage(ctx, document.ID, keyPath, bucketName); err != nil {
-		s.logger.Error("Failed to update document storage info", 
+		s.logger.Error("Failed to update document storage info",
 			zap.String("document_id", document.ID),
 			zap.String("bucket", bucketName),
 			zap.String("key", keyPath),
@@ -251,12 +259,16 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 
 	// Submit for processing if processing service is available
 	if s.processingService != nil {
+		s3URL := fmt.Sprintf("s3://%s/%s", bucketName, keyPath)
 		processingConfig := map[string]interface{}{
 			"extract_text":     true,
 			"extract_metadata": true,
-			"file_data":        req.FileData,
+			"s3_bucket":        bucketName,
+			"s3_key":           keyPath,
+			"s3_url":           s3URL,
 			"filename":         document.OriginalName,
 			"mime_type":        document.MimeType,
+			"file_size":        int64(len(req.FileData)),
 		}
 
 		// Include compliance settings for DLP scanning and redaction
@@ -273,19 +285,20 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 				zap.Error(err))
 			
 			// Clean up: delete the uploaded file from storage
-			if deleteErr := s.storageService.DeleteFileFromTenantBucket(ctx, spaceCtx.TenantID, keyPath); deleteErr != nil {
+			if deleteErr := s.storageService.DeleteFileFromBucket(ctx, bucketName, keyPath); deleteErr != nil {
 				s.logger.Error("Failed to clean up file after processing failure",
+					zap.String("bucket", bucketName),
 					zap.String("key", keyPath),
 					zap.Error(deleteErr))
 			}
-			
+
 			// Clean up: delete the document record from database
 			if deleteErr := s.deleteDocumentRecord(ctx, document.ID); deleteErr != nil {
 				s.logger.Error("Failed to clean up document record after processing failure",
 					zap.String("document_id", document.ID),
 					zap.Error(deleteErr))
 			}
-			
+
 			return nil, errors.ServiceUnavailable("Document processing service is currently unavailable. Please try again later.")
 		} else {
 			document.ProcessingJobID = job.ID
@@ -351,8 +364,9 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 			zap.String("document_id", document.ID))
 		
 		// Clean up: delete the uploaded file from storage
-		if deleteErr := s.storageService.DeleteFileFromTenantBucket(ctx, spaceCtx.TenantID, keyPath); deleteErr != nil {
+		if deleteErr := s.storageService.DeleteFileFromBucket(ctx, bucketName, keyPath); deleteErr != nil {
 			s.logger.Error("Failed to clean up file after processing service unavailable",
+				zap.String("bucket", bucketName),
 				zap.String("key", keyPath),
 				zap.Error(deleteErr))
 		}
@@ -369,7 +383,8 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 
 	s.logger.Info("Document uploaded successfully",
 		zap.String("document_id", document.ID),
-		zap.String("storage_path", storagePath),
+		zap.String("bucket", bucketName),
+		zap.String("key", keyPath),
 	)
 
 	return document, nil
@@ -582,40 +597,47 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string,
 
 	// Delete the actual file from storage if it exists and storage service is available
 	if s.storageService != nil && document.StoragePath != "" {
-		// Extract the key from storage path (supports both "bucket:key" and legacy "key" formats)
-		var key string
-		if strings.Contains(document.StoragePath, ":") {
-			// New format: "bucket:key"
-			parts := strings.SplitN(document.StoragePath, ":", 2)
-			if len(parts) == 2 {
-				key = parts[1]
-			} else {
-				s.logger.Error("Invalid storage path format during deletion", 
+		bucket := document.StorageBucket
+		key := document.StoragePath
+
+		// If bucket is stored, use DeleteFileFromBucket directly
+		// Otherwise fall back to legacy tenant bucket deletion
+		if bucket != "" {
+			s.logger.Info("Deleting file from storage",
+				zap.String("document_id", documentID),
+				zap.String("bucket", bucket),
+				zap.String("key", key))
+
+			if err := s.storageService.DeleteFileFromBucket(ctx, bucket, key); err != nil {
+				s.logger.Error("Failed to delete file from storage (database record already deleted)",
 					zap.String("document_id", documentID),
-					zap.String("storage_path", document.StoragePath))
-				key = document.StoragePath // fallback to full path
+					zap.String("bucket", bucket),
+					zap.String("key", key),
+					zap.Error(err))
+			} else {
+				s.logger.Info("File deleted from storage successfully",
+					zap.String("document_id", documentID),
+					zap.String("bucket", bucket),
+					zap.String("key", key))
 			}
 		} else {
-			// Legacy format: just the key
-			key = document.StoragePath
-		}
-
-		s.logger.Info("Deleting file from storage",
-			zap.String("document_id", documentID),
-			zap.String("tenant_id", spaceCtx.TenantID),
-			zap.String("key", key))
-
-		if err := s.storageService.DeleteFileFromTenantBucket(ctx, spaceCtx.TenantID, key); err != nil {
-			// Log the error but don't fail the entire delete operation since the database record is already marked as deleted
-			s.logger.Error("Failed to delete file from storage (database record already deleted)",
+			// Legacy fallback: use tenant-based bucket naming
+			s.logger.Info("Deleting file from legacy tenant storage",
 				zap.String("document_id", documentID),
 				zap.String("tenant_id", spaceCtx.TenantID),
-				zap.String("key", key),
-				zap.Error(err))
-		} else {
-			s.logger.Info("File deleted from storage successfully",
-				zap.String("document_id", documentID),
 				zap.String("key", key))
+
+			if err := s.storageService.DeleteFileFromTenantBucket(ctx, spaceCtx.TenantID, key); err != nil {
+				s.logger.Error("Failed to delete file from storage (database record already deleted)",
+					zap.String("document_id", documentID),
+					zap.String("tenant_id", spaceCtx.TenantID),
+					zap.String("key", key),
+					zap.Error(err))
+			} else {
+				s.logger.Info("File deleted from storage successfully",
+					zap.String("document_id", documentID),
+					zap.String("key", key))
+			}
 		}
 	} else if document.StoragePath != "" {
 		s.logger.Warn("Storage service not available, cannot delete file from storage",

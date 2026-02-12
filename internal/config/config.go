@@ -28,6 +28,7 @@ type Config struct {
 	Router     RouterConfig
 	Crawl4AI   Crawl4AIConfig
 	DBHub      DBHubConfig
+	Napkin     NapkinConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -228,6 +229,13 @@ type DBHubConfig struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
+// NapkinConfig holds Napkin AI MCP server configuration
+type NapkinConfig struct {
+	BaseURL        string `json:"base_url"`
+	Enabled        bool   `json:"enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
@@ -378,6 +386,11 @@ func Load() (*Config, error) {
 			BaseURL:        getEnv("DBHUB_BASE_URL", "http://dbhub.tas-mcp-servers.svc.cluster.local:8080"),
 			Enabled:        getEnvBool("DBHUB_ENABLED", true),
 			TimeoutSeconds: getEnvInt("DBHUB_TIMEOUT_SECONDS", 30),
+		},
+		Napkin: NapkinConfig{
+			BaseURL:        getEnv("NAPKIN_MCP_BASE_URL", "http://napkin-mcp.tas-mcp-servers.svc.cluster.local:8087"),
+			Enabled:        getEnvBool("NAPKIN_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("NAPKIN_MCP_TIMEOUT_SECONDS", 120),
 		},
 	}
 

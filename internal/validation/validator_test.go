@@ -281,7 +281,7 @@ func TestCustomValidators(t *testing.T) {
 			{"String with \"double quotes\"", false}, // contains quotes
 			{"<script>alert('xss')</script>", false}, // contains HTML
 			{"'; DROP TABLE users; --", false},       // SQL injection
-			{"String with < and >", false},           // contains angle brackets
+			{"String with < and >", true},            // bare angle brackets allowed in math/comparison contexts
 		}
 
 		for _, tc := range testCases {

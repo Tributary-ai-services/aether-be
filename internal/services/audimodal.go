@@ -547,10 +547,12 @@ func (s *AudiModalService) makeRequest(ctx context.Context, method, path string,
 
 // SubmitProcessingJob submits a document processing job to AudiModal
 func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID string, documentID string, jobType string, config map[string]interface{}) (*models.ProcessingJob, error) {
-	// Extract file data from config if provided
+	// Extract S3 location or file data from config
+	s3URL, hasS3URL := config["s3_url"].(string)
 	fileData, hasFileData := config["file_data"].([]byte)
 	filename, _ := config["filename"].(string)
 	mimeType, _ := config["mime_type"].(string)
+	fileSize, _ := config["file_size"].(int64)
 
 	// Create a processing job
 	job := &models.ProcessingJob{
@@ -575,88 +577,98 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID str
 		zap.String("job_type", jobType),
 		zap.String("tenant_id", tenantID))
 
-	// If we have file data, use the new ProcessFile method
-	if hasFileData && len(fileData) > 0 {
-		result, err := s.ProcessFile(ctx, tenantID, fileData, filename, mimeType, documentID)
-		if err != nil {
-			s.logger.Error("Failed to process file with AudiModal", 
+	// Prefer S3 URL reference (unified bucket) over re-uploading file data
+	var processResult *ProcessFileResponse
+	var processErr error
+
+	if hasS3URL && s3URL != "" {
+		s.logger.Info("Using S3 URL reference for AudiModal (unified bucket)",
+			zap.String("s3_url", s3URL),
+			zap.String("document_id", documentID))
+		processResult, processErr = s.RegisterFileFromS3(ctx, tenantID, s3URL, filename, mimeType, documentID, fileSize)
+		if processErr != nil && hasFileData && len(fileData) > 0 {
+			// Fall back to multipart upload if S3 registration fails
+			s.logger.Warn("S3 URL registration failed, falling back to multipart upload",
 				zap.String("document_id", documentID),
-				zap.Error(err))
+				zap.Error(processErr))
+			processResult, processErr = s.ProcessFile(ctx, tenantID, fileData, filename, mimeType, documentID)
+		}
+	} else if hasFileData && len(fileData) > 0 {
+		processResult, processErr = s.ProcessFile(ctx, tenantID, fileData, filename, mimeType, documentID)
+	}
+
+	if processResult != nil {
+		if processErr != nil {
+			s.logger.Error("Failed to process file with AudiModal",
+				zap.String("document_id", documentID),
+				zap.Error(processErr))
 			job.Status = "failed"
-			job.Error = err.Error()
+			job.Error = processErr.Error()
 			completedAt := time.Now()
 			job.CompletedAt = &completedAt
-			return job, fmt.Errorf("failed to process file with AudiModal: %w", err)
+			return job, fmt.Errorf("failed to process file with AudiModal: %w", processErr)
 		}
-		
+
 		// Update job with real AudiModal response data
-		// Only mark as "completed" if AudiModal has finished processing (status = "processed")
-		// "discovered" means file is uploaded but text extraction is still pending
-		if result.Data.Status == "processed" {
+		if processResult.Data.Status == "processed" {
 			job.Status = "completed"
 			job.Progress = 100
 			completedAt := time.Now()
 			job.CompletedAt = &completedAt
 		} else {
-			// File is uploaded but processing hasn't completed yet
 			job.Status = "processing"
 			job.Progress = 50
 		}
 
 		// Build result with AudiModal data
-		// Don't set extracted_text until actual processing is complete
 		job.Result = map[string]interface{}{
-			"file_id":           result.Data.ID,
-			"audimodal_status":  result.Data.Status,
-			"chunk_count":       result.Data.ChunkCount,
-			"pii_detected":      result.Data.PIIDetected,
-			"file_size":         result.Data.Size,
-			"content_type":      result.Data.ContentType,
-			"extension":         result.Data.Extension,
-			"created_at":        result.Data.CreatedAt,
-			"updated_at":        result.Data.UpdatedAt,
+			"file_id":           processResult.Data.ID,
+			"audimodal_status":  processResult.Data.Status,
+			"chunk_count":       processResult.Data.ChunkCount,
+			"pii_detected":      processResult.Data.PIIDetected,
+			"file_size":         processResult.Data.Size,
+			"content_type":      processResult.Data.ContentType,
+			"extension":         processResult.Data.Extension,
+			"created_at":        processResult.Data.CreatedAt,
+			"updated_at":        processResult.Data.UpdatedAt,
 			"language":          "en",
 			"language_confidence": 0.95,
 			"word_count":        0,
 			"quality_score":     0.95,
-			"content_category":  getContentCategory(result.Data.ContentType),
+			"content_category":  getContentCategory(processResult.Data.ContentType),
 			"chunking_strategy": "pending",
 			"classifications": map[string]interface{}{
 				"confidence": 0.95,
-				"categories": []string{result.Data.Extension, "document"},
+				"categories": []string{processResult.Data.Extension, "document"},
 			},
 		}
 
 		// Only set extracted_text if processing is complete
-		if result.Data.Status == "processed" {
-			// Try to fetch actual text content from AudiModal chunks
-			if extractedText, err := s.GetFileContent(ctx, result.Data.TenantID, result.Data.ID); err == nil && extractedText != "" {
+		if processResult.Data.Status == "processed" {
+			if extractedText, err := s.GetFileContent(ctx, processResult.Data.TenantID, processResult.Data.ID); err == nil && extractedText != "" {
 				job.Result["extracted_text"] = extractedText
 				job.Result["processing_time"] = int64(150 + len(extractedText)/10)
 				job.Result["confidence_score"] = 0.95
 			} else {
-				// Processing marked complete but no content available yet - keep as processing
 				job.Status = "processing"
 				job.Progress = 75
 				s.logger.Info("AudiModal status is processed but no content available yet",
-					zap.String("file_id", result.Data.ID))
+					zap.String("file_id", processResult.Data.ID))
 			}
 		}
-		
+
 		// Store the AudiModal file ID and metadata for future reference
-		job.Config["audimodal_file_id"] = result.Data.ID
-		job.Config["audimodal_tenant_id"] = result.Data.TenantID
-		job.Config["audimodal_datasource_id"] = result.Data.DataSourceID
+		job.Config["audimodal_file_id"] = processResult.Data.ID
+		job.Config["audimodal_tenant_id"] = processResult.Data.TenantID
+		job.Config["audimodal_datasource_id"] = processResult.Data.DataSourceID
 
 		// After file upload succeeds, trigger text extraction processing
-		// AudiModal requires a separate API call to start processing after upload
-		if result.Data.Status == "discovered" {
-			// Extract compliance settings from config to pass DLP/redaction options
+		if processResult.Data.Status == "discovered" {
 			var procOptions *ProcessingOptions
 			if complianceSettings, ok := config["compliance_settings"].(map[string]interface{}); ok {
 				procOptions = &ProcessingOptions{
-					DLPScanEnabled: true, // Default to enabled
-					RedactionMode:  "mask", // Default to mask
+					DLPScanEnabled: true,
+					RedactionMode:  "mask",
 				}
 				if dlpEnabled, ok := complianceSettings["dlp_scan_enabled"].(bool); ok {
 					procOptions.DLPScanEnabled = dlpEnabled
@@ -664,23 +676,28 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID str
 				if redactionMode, ok := complianceSettings["redaction_mode"].(string); ok && redactionMode != "" {
 					procOptions.RedactionMode = redactionMode
 				}
-				s.logger.Info("Using compliance settings for file processing",
-					zap.Bool("dlp_scan_enabled", procOptions.DLPScanEnabled),
-					zap.String("redaction_mode", procOptions.RedactionMode))
 			}
 
-			s.logger.Info("File uploaded, triggering text extraction",
-				zap.String("file_id", result.Data.ID),
-				zap.String("tenant_id", result.Data.TenantID))
+			s.logger.Info("File registered, triggering text extraction",
+				zap.String("file_id", processResult.Data.ID),
+				zap.String("tenant_id", processResult.Data.TenantID))
 
-			if err := s.TriggerFileProcessingWithOptions(ctx, result.Data.TenantID, result.Data.ID, procOptions); err != nil {
-				s.logger.Warn("Failed to trigger file processing - file uploaded but extraction not started",
-					zap.String("file_id", result.Data.ID),
+			if err := s.TriggerFileProcessingWithOptions(ctx, processResult.Data.TenantID, processResult.Data.ID, procOptions); err != nil {
+				s.logger.Warn("Failed to trigger file processing - file registered but extraction not started",
+					zap.String("file_id", processResult.Data.ID),
 					zap.Error(err))
-				// Don't fail the upload - file is stored, processing can be retried
 			}
 		}
 
+	} else if processErr != nil {
+		s.logger.Error("Failed to process file with AudiModal",
+			zap.String("document_id", documentID),
+			zap.Error(processErr))
+		job.Status = "failed"
+		job.Error = processErr.Error()
+		completedAt := time.Now()
+		job.CompletedAt = &completedAt
+		return job, fmt.Errorf("failed to process file with AudiModal: %w", processErr)
 	} else {
 		// Fallback to old method if no file data provided
 		if err := s.submitToAudiModal(ctx, documentID, job.ID, config); err != nil {
@@ -834,7 +851,10 @@ type ChunkData struct {
 	FileID          string                 `json:"file_id"`
 	ChunkNumber     int                    `json:"chunk_number"`
 	ChunkType       string                 `json:"chunk_type"`
-	Content         string                 `json:"content"`
+	Content         string                 `json:"content,omitempty"`
+	ContentPreview  string                 `json:"content_preview,omitempty"`
+	S3Bucket        string                 `json:"s3_bucket,omitempty"`
+	S3Key           string                 `json:"s3_key,omitempty"`
 	ContentHash     string                 `json:"content_hash"`
 	SizeBytes       int64                  `json:"size_bytes"`
 	StartPosition   *int64                 `json:"start_position,omitempty"`
@@ -901,6 +921,79 @@ type ProcessingOptions struct {
 }
 
 // ProcessFile submits a file to AudiModal for processing
+// RegisterFileFromS3 registers an existing S3 file with AudiModal using the JSON endpoint.
+// This avoids re-uploading file data when the file is already in the unified upload bucket.
+func (s *AudiModalService) RegisterFileFromS3(ctx context.Context, tenantID string, s3URL string, filename string, mimeType string, documentID string, fileSize int64) (*ProcessFileResponse, error) {
+	mapping, err := s.getAudiModalMapping(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve tenant mapping: %w", err)
+	}
+
+	// Build the JSON request body for AudiModal's file creation endpoint
+	reqBody := map[string]interface{}{
+		"url":            s3URL,
+		"filename":       filename,
+		"content_type":   mimeType,
+		"document_id":    documentID,
+		"data_source_id": mapping.DataSourceUUID,
+		"size":           fileSize,
+	}
+
+	bodyJSON, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := s.baseURL + "/api/v1/tenants/" + mapping.TenantUUID + "/files"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	apiKey := s.apiKey
+	if apiKey == "" {
+		apiKey = "default-api-key"
+	}
+	req.Header.Set("X-API-Key", apiKey)
+
+	s.logger.Info("Registering S3 file with AudiModal",
+		zap.String("document_id", documentID),
+		zap.String("s3_url", s3URL),
+		zap.String("filename", filename),
+		zap.String("mime_type", mimeType))
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request to AudiModal: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusCreated {
+		s.logger.Error("AudiModal S3 file registration failed",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(body)))
+		return nil, fmt.Errorf("AudiModal S3 file registration failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result ProcessFileResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse AudiModal response: %w", err)
+	}
+
+	s.logger.Info("File registered with AudiModal via S3 URL",
+		zap.String("document_id", documentID),
+		zap.String("file_id", result.Data.ID),
+		zap.String("status", result.Data.Status))
+
+	return &result, nil
+}
+
 func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fileData []byte, filename string, mimeType string, documentID string) (*ProcessFileResponse, error) {
 	// First, resolve the tenant mapping to get both tenant UUID and datasource UUID
 	mapping, err := s.getAudiModalMapping(ctx, tenantID)
@@ -1137,35 +1230,35 @@ func (s *AudiModalService) GetFileContent(ctx context.Context, tenantID string, 
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve tenant UUID: %w", err)
 	}
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks", s.baseURL, tenantUUID, fileID)
-	
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/chunks?file_id=%s&limit=500&include_content=true", s.baseURL, tenantUUID, fileID)
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	apiKey := s.apiKey
 	if apiKey == "" {
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Fetching file content from AudiModal",
 		zap.String("file_id", fileID))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to get file content from AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Warn("Could not fetch file content from AudiModal",
@@ -1176,11 +1269,13 @@ func (s *AudiModalService) GetFileContent(ctx context.Context, tenantID string, 
 		return "", nil
 	}
 
-	// Parse chunks response
+	// Parse chunks response - prefer full content (S3-hydrated), fall back to content_preview
 	var chunksResponse struct {
 		Success bool `json:"success"`
 		Data    []struct {
-			Content string `json:"content"`
+			Content        string `json:"content"`
+			ContentPreview string `json:"content_preview"`
+			ChunkNumber    int    `json:"chunk_number"`
 		} `json:"data"`
 	}
 
@@ -1190,10 +1285,16 @@ func (s *AudiModalService) GetFileContent(ctx context.Context, tenantID string, 
 		return "", nil
 	}
 
-	// Combine all chunk content
+	// Combine all chunk content — prefer full content, fall back to content_preview
 	var content string
 	for _, chunk := range chunksResponse.Data {
-		content += chunk.Content + "\n"
+		text := chunk.Content
+		if text == "" {
+			text = chunk.ContentPreview
+		}
+		if text != "" {
+			content += text + "\n"
+		}
 	}
 
 	if content == "" {
@@ -1202,7 +1303,7 @@ func (s *AudiModalService) GetFileContent(ctx context.Context, tenantID string, 
 		// Return empty string - no content in chunks
 		return "", nil
 	}
-	
+
 	return content, nil
 }
 
@@ -1308,15 +1409,16 @@ func (s *AudiModalService) GetFileChunks(ctx context.Context, tenantID string, f
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve tenant UUID: %w", err)
 	}
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks", s.baseURL, tenantUUID, fileID)
-	
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/chunks", s.baseURL, tenantUUID)
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Add query parameters
 	q := req.URL.Query()
+	q.Add("file_id", fileID)
 	if limit > 0 {
 		q.Add("limit", fmt.Sprintf("%d", limit))
 	}
@@ -1379,7 +1481,7 @@ func (s *AudiModalService) GetChunk(ctx context.Context, tenantID string, fileID
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve tenant UUID: %w", err)
 	}
-	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/chunks/%s", s.baseURL, tenantUUID, fileID, chunkID)
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/chunks/%s", s.baseURL, tenantUUID, chunkID)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

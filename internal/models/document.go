@@ -64,7 +64,7 @@ type Document struct {
 type DocumentCreateRequest struct {
 	Name        string                 `json:"name" validate:"omitempty,filename,min=1,max=255"`
 	Title       string                 `json:"title" validate:"omitempty,min=1,max=255"` // Alternative to Name for web content
-	Description string                 `json:"description,omitempty" validate:"max=1000"` // Note: Security middleware handles threat detection
+	Description string                 `json:"description,omitempty" validate:"omitempty,safe_string,max=1000"`
 	NotebookID  string                 `json:"notebook_id" validate:"required,uuid"`
 	Tags        []string               `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
