@@ -29,10 +29,18 @@ type Config struct {
 	Crawl4AI   Crawl4AIConfig
 	DBHub      DBHubConfig
 	Napkin     NapkinConfig
-	Neo4jMCP   MCPServerConfig
-	MinIOMCP   MCPServerConfig
-	KafkaMCP   MCPServerConfig
-	GrafanaMCP MCPServerConfig
+	Neo4jMCP              MCPServerConfig
+	MinIOMCP              MCPServerConfig
+	KafkaMCP              MCPServerConfig
+	GrafanaMCP            MCPServerConfig
+	BraveSearchMCP        MCPServerConfig
+	FirecrawlMCP          MCPServerConfig
+	AtlassianMCP          MCPServerConfig
+	Context7MCP           MCPServerConfig
+	SequentialThinkingMCP MCPServerConfig
+	PerplexityMCP         MCPServerConfig
+	SlackMCP              MCPServerConfig
+	PaperSearchMCP        MCPServerConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -422,6 +430,46 @@ func Load() (*Config, error) {
 			BaseURL:        getEnv("GRAFANA_MCP_BASE_URL", "http://grafana-mcp.tas-mcp-servers.svc.cluster.local:8000"),
 			Enabled:        getEnvBool("GRAFANA_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("GRAFANA_MCP_TIMEOUT_SECONDS", 30),
+		},
+		BraveSearchMCP: MCPServerConfig{
+			BaseURL:        getEnv("BRAVE_SEARCH_MCP_BASE_URL", "http://brave-search-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("BRAVE_SEARCH_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("BRAVE_SEARCH_MCP_TIMEOUT_SECONDS", 30),
+		},
+		FirecrawlMCP: MCPServerConfig{
+			BaseURL:        getEnv("FIRECRAWL_MCP_BASE_URL", "http://firecrawl-mcp.tas-mcp-servers.svc.cluster.local:3000"),
+			Enabled:        getEnvBool("FIRECRAWL_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("FIRECRAWL_MCP_TIMEOUT_SECONDS", 60),
+		},
+		AtlassianMCP: MCPServerConfig{
+			BaseURL:        getEnv("ATLASSIAN_MCP_BASE_URL", "http://atlassian-mcp.tas-mcp-servers.svc.cluster.local:9000"),
+			Enabled:        getEnvBool("ATLASSIAN_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("ATLASSIAN_MCP_TIMEOUT_SECONDS", 30),
+		},
+		Context7MCP: MCPServerConfig{
+			BaseURL:        getEnv("CONTEXT7_MCP_BASE_URL", "http://context7-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("CONTEXT7_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("CONTEXT7_MCP_TIMEOUT_SECONDS", 30),
+		},
+		SequentialThinkingMCP: MCPServerConfig{
+			BaseURL:        getEnv("SEQUENTIAL_THINKING_MCP_BASE_URL", "http://sequential-thinking-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("SEQUENTIAL_THINKING_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("SEQUENTIAL_THINKING_MCP_TIMEOUT_SECONDS", 60),
+		},
+		PerplexityMCP: MCPServerConfig{
+			BaseURL:        getEnv("PERPLEXITY_MCP_BASE_URL", "http://perplexity-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("PERPLEXITY_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("PERPLEXITY_MCP_TIMEOUT_SECONDS", 60),
+		},
+		SlackMCP: MCPServerConfig{
+			BaseURL:        getEnv("SLACK_MCP_BASE_URL", "http://slack-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("SLACK_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("SLACK_MCP_TIMEOUT_SECONDS", 30),
+		},
+		PaperSearchMCP: MCPServerConfig{
+			BaseURL:        getEnv("PAPER_SEARCH_MCP_BASE_URL", "http://paper-search-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("PAPER_SEARCH_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("PAPER_SEARCH_MCP_TIMEOUT_SECONDS", 30),
 		},
 	}
 

@@ -13,6 +13,8 @@ import (
 // MCPHandler handles MCP server management endpoints
 type MCPHandler struct {
 	napkinService *services.NapkinService
+	mcpClients    map[string]*services.MCPClientService
+	serverInfos   []MCPServerInfo
 	cfg           *config.Config
 	logger        *zap.Logger
 }
@@ -36,45 +38,77 @@ type MCPInvokeRequest struct {
 	Params   map[string]interface{} `json:"params"`
 }
 
-// NewMCPHandler creates a new MCP handler
+// mcpServerDef defines a server to register
+type mcpServerDef struct {
+	id          string
+	name        string
+	description string
+	serverType  string
+	tags        []string
+	cfgGetter   func(*config.Config) *config.MCPServerConfig
+}
+
+// NewMCPHandler creates a new MCP handler with all configured MCP server clients
 func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, log *logger.Logger) *MCPHandler {
-	return &MCPHandler{
+	h := &MCPHandler{
 		napkinService: napkinService,
+		mcpClients:    make(map[string]*services.MCPClientService),
 		cfg:           cfg,
 		logger:        log.Logger,
 	}
+
+	// Static servers (always present)
+	h.serverInfos = []MCPServerInfo{
+		{ID: "mcp-postgres", Name: "PostgreSQL MCP", Description: "PostgreSQL database tools", Status: "connected", Type: "database", Version: "1.0.0"},
+		{ID: "mcp-filesystem", Name: "Filesystem MCP", Description: "File system operations", Status: "connected", Type: "filesystem", Version: "1.0.0"},
+		{ID: "mcp-memory", Name: "Memory MCP", Description: "Knowledge graph storage", Status: "connected", Type: "memory", Version: "1.0.0"},
+	}
+
+	// Dynamic MCP servers registered via config
+	defs := []mcpServerDef{
+		{"mcp-neo4j", "Neo4j MCP", "Neo4j graph database Cypher queries and schema exploration", "database", []string{"neo4j", "graph-database", "cypher"}, func(c *config.Config) *config.MCPServerConfig { return &c.Neo4jMCP }},
+		{"mcp-minio", "MinIO MCP", "MinIO S3-compatible object storage management", "storage", []string{"minio", "s3", "object-storage"}, func(c *config.Config) *config.MCPServerConfig { return &c.MinIOMCP }},
+		{"mcp-kafka", "Kafka MCP", "Apache Kafka message broker management", "messaging", []string{"kafka", "messaging", "streaming"}, func(c *config.Config) *config.MCPServerConfig { return &c.KafkaMCP }},
+		{"mcp-grafana", "Grafana MCP", "Grafana dashboards and observability", "observability", []string{"grafana", "dashboards", "alerting"}, func(c *config.Config) *config.MCPServerConfig { return &c.GrafanaMCP }},
+		{"mcp-brave-search", "Brave Search MCP", "Privacy-focused web search via Brave", "search", []string{"search", "web", "brave", "privacy"}, func(c *config.Config) *config.MCPServerConfig { return &c.BraveSearchMCP }},
+		{"mcp-firecrawl", "Firecrawl MCP", "Web scraping and crawling via Firecrawl", "web-scraping", []string{"web-scraping", "firecrawl", "crawling"}, func(c *config.Config) *config.MCPServerConfig { return &c.FirecrawlMCP }},
+		{"mcp-atlassian", "Atlassian MCP", "Jira and Confluence integration", "productivity", []string{"atlassian", "jira", "confluence"}, func(c *config.Config) *config.MCPServerConfig { return &c.AtlassianMCP }},
+		{"mcp-context7", "Context7 MCP", "Library documentation and code examples", "documentation", []string{"documentation", "context7", "libraries"}, func(c *config.Config) *config.MCPServerConfig { return &c.Context7MCP }},
+		{"mcp-sequential-thinking", "Sequential Thinking MCP", "Structured problem-solving and analysis", "reasoning", []string{"reasoning", "thinking", "analysis"}, func(c *config.Config) *config.MCPServerConfig { return &c.SequentialThinkingMCP }},
+		{"mcp-perplexity", "Perplexity MCP", "AI-powered research and search", "search", []string{"search", "perplexity", "ai-search"}, func(c *config.Config) *config.MCPServerConfig { return &c.PerplexityMCP }},
+		{"mcp-slack", "Slack MCP", "Slack workspace communication", "communication", []string{"slack", "messaging", "communication"}, func(c *config.Config) *config.MCPServerConfig { return &c.SlackMCP }},
+		{"mcp-paper-search", "Paper Search MCP", "Academic paper search and retrieval", "research", []string{"research", "papers", "academic", "arxiv"}, func(c *config.Config) *config.MCPServerConfig { return &c.PaperSearchMCP }},
+	}
+
+	if cfg != nil {
+		for _, def := range defs {
+			mcpCfg := def.cfgGetter(cfg)
+			if mcpCfg.Enabled {
+				client := services.NewMCPClientService(def.id, mcpCfg, log)
+				h.mcpClients[def.id] = client
+				h.serverInfos = append(h.serverInfos, MCPServerInfo{
+					ID:          def.id,
+					Name:        def.name,
+					Description: def.description,
+					Status:      "connected",
+					Type:        def.serverType,
+					Version:     "1.0.0",
+					Endpoint:    mcpCfg.BaseURL,
+					Tags:        def.tags,
+				})
+			}
+		}
+	}
+
+	return h
 }
 
 // ListServers returns all registered MCP servers
 func (h *MCPHandler) ListServers(c *gin.Context) {
-	servers := []MCPServerInfo{
-		{
-			ID:          "mcp-postgres",
-			Name:        "PostgreSQL MCP",
-			Description: "PostgreSQL database tools",
-			Status:      "connected",
-			Type:        "database",
-			Version:     "1.0.0",
-		},
-		{
-			ID:          "mcp-filesystem",
-			Name:        "Filesystem MCP",
-			Description: "File system operations",
-			Status:      "connected",
-			Type:        "filesystem",
-			Version:     "1.0.0",
-		},
-		{
-			ID:          "mcp-memory",
-			Name:        "Memory MCP",
-			Description: "Knowledge graph storage",
-			Status:      "connected",
-			Type:        "memory",
-			Version:     "1.0.0",
-		},
-	}
+	servers := make([]MCPServerInfo, len(h.serverInfos))
+	copy(servers, h.serverInfos)
 
-	// Add Napkin server if enabled
+	// Add Napkin server if enabled (uses its own service type)
 	if h.napkinService != nil && h.napkinService.IsEnabled() {
 		status := "disconnected"
 		if err := h.napkinService.HealthCheck(c.Request.Context()); err == nil {
@@ -91,58 +125,6 @@ func (h *MCPHandler) ListServers(c *gin.Context) {
 		})
 	}
 
-	// Add Wave 1 infrastructure-aligned MCP servers
-	if h.cfg != nil {
-		if h.cfg.Neo4jMCP.Enabled {
-			servers = append(servers, MCPServerInfo{
-				ID:          "mcp-neo4j",
-				Name:        "Neo4j MCP",
-				Description: "Neo4j graph database Cypher queries and schema exploration",
-				Status:      "connected",
-				Type:        "database",
-				Version:     "1.0.0",
-				Endpoint:    h.cfg.Neo4jMCP.BaseURL,
-				Tags:        []string{"neo4j", "graph-database", "cypher", "knowledge-graph"},
-			})
-		}
-		if h.cfg.MinIOMCP.Enabled {
-			servers = append(servers, MCPServerInfo{
-				ID:          "mcp-minio",
-				Name:        "MinIO MCP",
-				Description: "MinIO S3-compatible object storage management",
-				Status:      "connected",
-				Type:        "storage",
-				Version:     "1.0.0",
-				Endpoint:    h.cfg.MinIOMCP.BaseURL,
-				Tags:        []string{"minio", "s3", "object-storage", "buckets"},
-			})
-		}
-		if h.cfg.KafkaMCP.Enabled {
-			servers = append(servers, MCPServerInfo{
-				ID:          "mcp-kafka",
-				Name:        "Kafka MCP",
-				Description: "Apache Kafka message broker management and monitoring",
-				Status:      "connected",
-				Type:        "messaging",
-				Version:     "1.0.0",
-				Endpoint:    h.cfg.KafkaMCP.BaseURL,
-				Tags:        []string{"kafka", "messaging", "streaming", "topics", "consumer-groups"},
-			})
-		}
-		if h.cfg.GrafanaMCP.Enabled {
-			servers = append(servers, MCPServerInfo{
-				ID:          "mcp-grafana",
-				Name:        "Grafana MCP",
-				Description: "Grafana dashboards, alerting, and observability management",
-				Status:      "connected",
-				Type:        "observability",
-				Version:     "1.0.0",
-				Endpoint:    h.cfg.GrafanaMCP.BaseURL,
-				Tags:        []string{"grafana", "dashboards", "alerting", "prometheus", "loki"},
-			})
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"servers": servers,
 	})
@@ -152,8 +134,8 @@ func (h *MCPHandler) ListServers(c *gin.Context) {
 func (h *MCPHandler) ListTools(c *gin.Context) {
 	serverID := c.Param("id")
 
-	switch serverID {
-	case "mcp-napkin":
+	// Check Napkin first (special service)
+	if serverID == "mcp-napkin" {
 		if h.napkinService == nil || !h.napkinService.IsEnabled() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Napkin service is not available"})
 			return
@@ -165,7 +147,23 @@ func (h *MCPHandler) ListTools(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"tools": tools})
+		return
+	}
 
+	// Check generic MCP clients
+	if client, ok := h.mcpClients[serverID]; ok {
+		tools, err := client.ListTools(c.Request.Context())
+		if err != nil {
+			h.logger.Error("Failed to list tools", zap.String("server", serverID), zap.Error(err))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to get tools: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"tools": tools})
+		return
+	}
+
+	// Static server tool definitions
+	switch serverID {
 	case "mcp-postgres":
 		c.JSON(http.StatusOK, gin.H{
 			"tools": []map[string]interface{}{
@@ -173,7 +171,6 @@ func (h *MCPHandler) ListTools(c *gin.Context) {
 				{"name": "list_tables", "description": "List all tables", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 			},
 		})
-
 	case "mcp-filesystem":
 		c.JSON(http.StatusOK, gin.H{
 			"tools": []map[string]interface{}{
@@ -181,7 +178,6 @@ func (h *MCPHandler) ListTools(c *gin.Context) {
 				{"name": "list_directory", "description": "List directory contents", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"path": map[string]interface{}{"type": "string", "description": "Directory path"}}, "required": []string{"path"}}},
 			},
 		})
-
 	case "mcp-memory":
 		c.JSON(http.StatusOK, gin.H{
 			"tools": []map[string]interface{}{
@@ -189,7 +185,6 @@ func (h *MCPHandler) ListTools(c *gin.Context) {
 				{"name": "search_nodes", "description": "Search knowledge graph nodes", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"query": map[string]interface{}{"type": "string", "description": "Search query"}}, "required": []string{"query"}}},
 			},
 		})
-
 	default:
 		c.JSON(http.StatusNotFound, gin.H{"error": "Server not found: " + serverID})
 	}
@@ -208,8 +203,8 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 		zap.String("tool", req.Tool),
 	)
 
-	switch req.ServerID {
-	case "mcp-napkin":
+	// Check Napkin first (special service)
+	if req.ServerID == "mcp-napkin" {
 		if h.napkinService == nil || !h.napkinService.IsEnabled() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Napkin service is not available"})
 			return
@@ -221,8 +216,20 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, result)
-
-	default:
-		c.JSON(http.StatusNotFound, gin.H{"error": "Server not found or tool invocation not supported: " + req.ServerID})
+		return
 	}
+
+	// Check generic MCP clients
+	if client, ok := h.mcpClients[req.ServerID]; ok {
+		result, err := client.InvokeTool(c.Request.Context(), req.Tool, req.Params)
+		if err != nil {
+			h.logger.Error("Failed to invoke tool", zap.String("server", req.ServerID), zap.Error(err), zap.String("tool", req.Tool))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Tool invocation failed: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "Server not found or tool invocation not supported: " + req.ServerID})
 }
