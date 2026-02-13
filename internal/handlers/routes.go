@@ -42,6 +42,7 @@ type APIServer struct {
 	SavedQueryHandler    *SavedQueryHandler
 	AIPlaygroundHandler  *AIPlaygroundHandler
 	ProductionHandler    *ProductionHandler
+	MCPHandler           *MCPHandler
 	SpaceService         *services.SpaceContextService
 	Metrics              *metrics.Metrics
 	logger               *logger.Logger
@@ -150,6 +151,10 @@ func NewAPIServer(
 	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, log)
 	productionHandler := NewProductionHandler(productionService, userService, teamService, log)
 
+	// Initialize Napkin MCP service and MCP handler
+	napkinService := services.NewNapkinService(&cfg.Napkin, log)
+	mcpHandler := NewMCPHandler(napkinService, cfg, log)
+
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
 	if err != nil {
@@ -198,6 +203,7 @@ func NewAPIServer(
 		SavedQueryHandler:    savedQueryHandler,
 		AIPlaygroundHandler:  aiPlaygroundHandler,
 		ProductionHandler:    productionHandler,
+		MCPHandler:           mcpHandler,
 		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
@@ -622,6 +628,14 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		// Stream analytics
 		streams.GET("/analytics", s.StreamHandler.GetStreamAnalytics)
 		streams.GET("/analytics/realtime", s.StreamHandler.GetRealtimeAnalytics)
+	}
+
+	// MCP server management routes
+	mcpGroup := api.Group("/mcp")
+	{
+		mcpGroup.GET("/servers", s.MCPHandler.ListServers)
+		mcpGroup.GET("/servers/:id/tools", s.MCPHandler.ListTools)
+		mcpGroup.POST("/invoke", s.MCPHandler.InvokeTool)
 	}
 
 	// Router proxy routes with flexible authentication

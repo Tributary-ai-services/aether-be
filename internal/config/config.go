@@ -29,6 +29,10 @@ type Config struct {
 	Crawl4AI   Crawl4AIConfig
 	DBHub      DBHubConfig
 	Napkin     NapkinConfig
+	Neo4jMCP   MCPServerConfig
+	MinIOMCP   MCPServerConfig
+	KafkaMCP   MCPServerConfig
+	GrafanaMCP MCPServerConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -236,6 +240,13 @@ type NapkinConfig struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
+// MCPServerConfig holds generic MCP server configuration
+type MCPServerConfig struct {
+	BaseURL        string `json:"base_url"`
+	Enabled        bool   `json:"enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
@@ -391,6 +402,26 @@ func Load() (*Config, error) {
 			BaseURL:        getEnv("NAPKIN_MCP_BASE_URL", "http://napkin-mcp.tas-mcp-servers.svc.cluster.local:8087"),
 			Enabled:        getEnvBool("NAPKIN_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("NAPKIN_MCP_TIMEOUT_SECONDS", 120),
+		},
+		Neo4jMCP: MCPServerConfig{
+			BaseURL:        getEnv("NEO4J_MCP_BASE_URL", "http://neo4j-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("NEO4J_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("NEO4J_MCP_TIMEOUT_SECONDS", 30),
+		},
+		MinIOMCP: MCPServerConfig{
+			BaseURL:        getEnv("MINIO_MCP_BASE_URL", "http://minio-mcp.tas-mcp-servers.svc.cluster.local:8090"),
+			Enabled:        getEnvBool("MINIO_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("MINIO_MCP_TIMEOUT_SECONDS", 60),
+		},
+		KafkaMCP: MCPServerConfig{
+			BaseURL:        getEnv("KAFKA_MCP_BASE_URL", "http://kafka-mcp.tas-mcp-servers.svc.cluster.local:8080"),
+			Enabled:        getEnvBool("KAFKA_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("KAFKA_MCP_TIMEOUT_SECONDS", 30),
+		},
+		GrafanaMCP: MCPServerConfig{
+			BaseURL:        getEnv("GRAFANA_MCP_BASE_URL", "http://grafana-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("GRAFANA_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("GRAFANA_MCP_TIMEOUT_SECONDS", 30),
 		},
 	}
 

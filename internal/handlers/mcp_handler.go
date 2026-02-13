@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,7 @@ import (
 // MCPHandler handles MCP server management endpoints
 type MCPHandler struct {
 	napkinService *services.NapkinService
+	cfg           *config.Config
 	logger        *zap.Logger
 }
 
@@ -35,9 +37,10 @@ type MCPInvokeRequest struct {
 }
 
 // NewMCPHandler creates a new MCP handler
-func NewMCPHandler(napkinService *services.NapkinService, log *logger.Logger) *MCPHandler {
+func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, log *logger.Logger) *MCPHandler {
 	return &MCPHandler{
 		napkinService: napkinService,
+		cfg:           cfg,
 		logger:        log.Logger,
 	}
 }
@@ -86,6 +89,58 @@ func (h *MCPHandler) ListServers(c *gin.Context) {
 			Version:     "1.0.0",
 			Tags:        []string{"napkin-ai", "visual-generation", "svg", "png", "minio"},
 		})
+	}
+
+	// Add Wave 1 infrastructure-aligned MCP servers
+	if h.cfg != nil {
+		if h.cfg.Neo4jMCP.Enabled {
+			servers = append(servers, MCPServerInfo{
+				ID:          "mcp-neo4j",
+				Name:        "Neo4j MCP",
+				Description: "Neo4j graph database Cypher queries and schema exploration",
+				Status:      "connected",
+				Type:        "database",
+				Version:     "1.0.0",
+				Endpoint:    h.cfg.Neo4jMCP.BaseURL,
+				Tags:        []string{"neo4j", "graph-database", "cypher", "knowledge-graph"},
+			})
+		}
+		if h.cfg.MinIOMCP.Enabled {
+			servers = append(servers, MCPServerInfo{
+				ID:          "mcp-minio",
+				Name:        "MinIO MCP",
+				Description: "MinIO S3-compatible object storage management",
+				Status:      "connected",
+				Type:        "storage",
+				Version:     "1.0.0",
+				Endpoint:    h.cfg.MinIOMCP.BaseURL,
+				Tags:        []string{"minio", "s3", "object-storage", "buckets"},
+			})
+		}
+		if h.cfg.KafkaMCP.Enabled {
+			servers = append(servers, MCPServerInfo{
+				ID:          "mcp-kafka",
+				Name:        "Kafka MCP",
+				Description: "Apache Kafka message broker management and monitoring",
+				Status:      "connected",
+				Type:        "messaging",
+				Version:     "1.0.0",
+				Endpoint:    h.cfg.KafkaMCP.BaseURL,
+				Tags:        []string{"kafka", "messaging", "streaming", "topics", "consumer-groups"},
+			})
+		}
+		if h.cfg.GrafanaMCP.Enabled {
+			servers = append(servers, MCPServerInfo{
+				ID:          "mcp-grafana",
+				Name:        "Grafana MCP",
+				Description: "Grafana dashboards, alerting, and observability management",
+				Status:      "connected",
+				Type:        "observability",
+				Version:     "1.0.0",
+				Endpoint:    h.cfg.GrafanaMCP.BaseURL,
+				Tags:        []string{"grafana", "dashboards", "alerting", "prometheus", "loki"},
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
