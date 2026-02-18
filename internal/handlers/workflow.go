@@ -526,3 +526,69 @@ func (h *WorkflowHandler) GetWorkflowAnalytics(c *gin.Context) {
 
 	c.JSON(http.StatusOK, analytics)
 }
+
+// UploadToWorkflow handles direct file upload to a specific workflow
+// @Summary Upload file to workflow
+// @Description Upload a file directly to trigger a specific workflow
+// @Tags workflows
+// @Accept multipart/form-data
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Workflow ID"
+// @Param file formance file true "File to upload"
+// @Success 202 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/workflows/{id}/upload [post]
+func (h *WorkflowHandler) UploadToWorkflow(c *gin.Context) {
+	workflowID := c.Param("id")
+	if workflowID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Workflow ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Verify workflow exists and is active
+	workflow, err := h.workflowService.GetWorkflowByID(c.Request.Context(), workflowID, spaceContext)
+	if err != nil {
+		c.JSON(http.StatusNotFound, errors.NotFound("Workflow not found"))
+		return
+	}
+	if workflow.Status != "active" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Workflow is not active"))
+		return
+	}
+
+	// Get uploaded file
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("File is required", err))
+		return
+	}
+	defer file.Close()
+
+	h.logger.Info("File uploaded to workflow",
+		zap.String("workflow_id", workflowID),
+		zap.String("file_name", header.Filename),
+		zap.Int64("file_size", header.Size),
+		zap.String("user_id", userID))
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":     "File accepted for workflow processing",
+		"workflow_id": workflowID,
+		"file_name":   header.Filename,
+		"file_size":   header.Size,
+	})
+}

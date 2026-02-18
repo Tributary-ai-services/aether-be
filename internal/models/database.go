@@ -16,6 +16,7 @@ const (
 	DatabaseTypeMariaDB   DatabaseType = "mariadb"
 	DatabaseTypeSQLServer DatabaseType = "sqlserver"
 	DatabaseTypeSQLite    DatabaseType = "sqlite"
+	DatabaseTypeNeo4j     DatabaseType = "neo4j"
 )
 
 // DatabaseStatus represents the connection status
@@ -45,6 +46,7 @@ type Database struct {
 	Port     int          `json:"port"`
 	Database string       `json:"database"`
 	SSLMode  string       `json:"ssl_mode,omitempty"`
+	Protocol string       `json:"protocol,omitempty"` // Neo4j connection protocol (bolt, bolt+s, bolt+ssc, neo4j, neo4j+s, neo4j+ssc)
 
 	// Kubernetes references
 	SecretName      string `json:"secret_name"`      // K8s Secret with credentials
@@ -73,13 +75,14 @@ type Database struct {
 // DatabaseCreateRequest represents the request to create a database connection
 type DatabaseCreateRequest struct {
 	Name        string            `json:"name" validate:"required,min=1,max=255"`
-	Type        DatabaseType      `json:"type" validate:"required,oneof=postgres mysql mariadb sqlserver sqlite"`
+	Type        DatabaseType      `json:"type" validate:"required,oneof=postgres mysql mariadb sqlserver sqlite neo4j"`
 	Host        string            `json:"host" validate:"required"`
 	Port        int               `json:"port" validate:"required,min=1,max=65535"`
 	Database    string            `json:"database" validate:"required"`
 	Username    string            `json:"username" validate:"required"`
 	Password    string            `json:"password" validate:"required"`
 	SSLMode     string            `json:"ssl_mode,omitempty" validate:"omitempty,oneof=disable allow prefer require verify-ca verify-full"`
+	Protocol    string            `json:"protocol,omitempty" validate:"omitempty,oneof=bolt bolt+s bolt+ssc neo4j neo4j+s neo4j+ssc"`
 	ReadOnly    bool              `json:"readonly"`
 	MaxRows     int               `json:"max_rows,omitempty" validate:"omitempty,min=1,max=100000"`
 	Labels      map[string]string `json:"labels,omitempty"`
@@ -95,6 +98,7 @@ type DatabaseUpdateRequest struct {
 	Username    *string           `json:"username,omitempty"`
 	Password    *string           `json:"password,omitempty"`
 	SSLMode     *string           `json:"ssl_mode,omitempty" validate:"omitempty,oneof=disable allow prefer require verify-ca verify-full"`
+	Protocol    *string           `json:"protocol,omitempty" validate:"omitempty,oneof=bolt bolt+s bolt+ssc neo4j neo4j+s neo4j+ssc"`
 	ReadOnly    *bool             `json:"readonly,omitempty"`
 	MaxRows     *int              `json:"max_rows,omitempty" validate:"omitempty,min=1,max=100000"`
 	Labels      map[string]string `json:"labels,omitempty"`
@@ -175,6 +179,7 @@ func NewDatabase(req DatabaseCreateRequest, userID, tenantID, spaceID string) *D
 		Port:              req.Port,
 		Database:          req.Database,
 		SSLMode:           req.SSLMode,
+		Protocol:          req.Protocol,
 		ReadOnly:          req.ReadOnly,
 		MaxRows:           maxRows,
 		ConnectionTimeout: 30, // default
@@ -210,6 +215,9 @@ func (d *Database) Update(req DatabaseUpdateRequest) {
 	}
 	if req.SSLMode != nil {
 		d.SSLMode = *req.SSLMode
+	}
+	if req.Protocol != nil {
+		d.Protocol = *req.Protocol
 	}
 	if req.ReadOnly != nil {
 		d.ReadOnly = *req.ReadOnly
@@ -282,6 +290,8 @@ func GetDefaultPort(dbType DatabaseType) int {
 		return 1433
 	case DatabaseTypeSQLite:
 		return 0 // SQLite doesn't use ports
+	case DatabaseTypeNeo4j:
+		return 7687
 	default:
 		return 0
 	}

@@ -61,6 +61,11 @@ data:
   DEEPLAKE_VECTOR_DIMENSIONS: "1536"
   DEEPLAKE_TIMEOUT_SECONDS: "30"
 
+  # Argo Workflows
+  ARGO_WORKFLOWS_ENABLED: "true"
+  ARGO_WORKFLOWS_NAMESPACE: "argo"
+  ARGO_SERVICE_ACCOUNT: "argo-workflow-runner"
+
   # Logging
   LOG_LEVEL: "debug"
   LOG_FORMAT: "json"

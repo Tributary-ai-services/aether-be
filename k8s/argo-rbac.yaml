@@ -1,0 +1,32 @@
+# RBAC for aether-backend to submit Argo Workflows to the argo namespace
+# The backend pod uses its default service account in the aether-be namespace.
+# This grants it permission to create/get/list Argo Workflows in the argo namespace.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aether-backend
+  namespace: aether-be
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aether-argo-workflow-submitter
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows"]
+    verbs: ["create", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aether-submit-argo-workflows
+  namespace: argo
+subjects:
+  - kind: ServiceAccount
+    name: aether-backend
+    namespace: aether-be
+roleRef:
+  kind: ClusterRole
+  name: aether-argo-workflow-submitter
+  apiGroup: rbac.authorization.k8s.io

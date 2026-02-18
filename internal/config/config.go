@@ -417,12 +417,12 @@ func Load() (*Config, error) {
 			TimeoutSeconds: getEnvInt("NEO4J_MCP_TIMEOUT_SECONDS", 30),
 		},
 		MinIOMCP: MCPServerConfig{
-			BaseURL:        getEnv("MINIO_MCP_BASE_URL", "http://minio-mcp.tas-mcp-servers.svc.cluster.local:8090"),
+			BaseURL:        getEnv("MINIO_MCP_BASE_URL", "http://minio-mcp.tas-mcp-servers.svc.cluster.local:8000"),
 			Enabled:        getEnvBool("MINIO_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("MINIO_MCP_TIMEOUT_SECONDS", 60),
 		},
 		KafkaMCP: MCPServerConfig{
-			BaseURL:        getEnv("KAFKA_MCP_BASE_URL", "http://kafka-mcp.tas-mcp-servers.svc.cluster.local:8080"),
+			BaseURL:        getEnv("KAFKA_MCP_BASE_URL", "http://kafka-mcp.tas-mcp-servers.svc.cluster.local:8000"),
 			Enabled:        getEnvBool("KAFKA_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("KAFKA_MCP_TIMEOUT_SECONDS", 30),
 		},
