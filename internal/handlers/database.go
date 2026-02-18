@@ -104,7 +104,7 @@ func (h *DatabaseHandler) CreateDatabase(c *gin.Context) {
 		zap.String("name", db.Name),
 	)
 
-	c.JSON(http.StatusCreated, db.ToResponse())
+	c.JSON(http.StatusCreated, h.databaseService.EnrichResponse(c.Request.Context(), db))
 }
 
 // GetDatabase gets a database connection by ID
@@ -135,7 +135,7 @@ func (h *DatabaseHandler) GetDatabase(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, db.ToResponse())
+	c.JSON(http.StatusOK, h.databaseService.EnrichResponse(c.Request.Context(), db))
 }
 
 // ListDatabases lists all databases for the tenant/space
@@ -218,7 +218,7 @@ func (h *DatabaseHandler) UpdateDatabase(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, db.ToResponse())
+	c.JSON(http.StatusOK, h.databaseService.EnrichResponse(c.Request.Context(), db))
 }
 
 // DeleteDatabase deletes a database connection

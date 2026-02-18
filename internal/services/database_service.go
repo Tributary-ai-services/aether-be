@@ -60,15 +60,6 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 	// For neo4j type, always create the secret (Neo4jQueryService reads credentials from K8s Secrets).
 	// For other types, only create if CRD management is enabled.
 	shouldCreateSecret := (s.crdEnabled || db.Type == models.DatabaseTypeNeo4j) && s.neo4jQuery != nil && req.Username != ""
-	s.logger.Info("Credential storage decision",
-		zap.Bool("should_create_secret", shouldCreateSecret),
-		zap.Bool("crd_enabled", s.crdEnabled),
-		zap.String("db_type", string(db.Type)),
-		zap.Bool("neo4j_query_svc_present", s.neo4jQuery != nil),
-		zap.Bool("has_username", req.Username != ""),
-		zap.String("secret_name", db.SecretName),
-		zap.String("secret_namespace", db.SecretNamespace),
-	)
 	if shouldCreateSecret {
 		if err := s.neo4jQuery.CreateSecret(ctx, db.SecretName, db.SecretNamespace, req.Username, req.Password); err != nil {
 			s.logger.Warn("Failed to create K8s secret for database (non-fatal)",
@@ -297,14 +288,15 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, tenantID, spaceID s
 		return nil, errors.Database("Failed to list databases", err)
 	}
 
-	databases := make([]models.Database, 0, len(result.Records))
+	databases := make([]models.DatabaseResponse, 0, len(result.Records))
 	for _, record := range result.Records {
 		db, err := s.recordToDatabase(record)
 		if err != nil {
 			s.logger.Warn("Failed to parse database record", zap.Error(err))
 			continue
 		}
-		databases = append(databases, *db)
+		resp := s.enrichResponse(ctx, db)
+		databases = append(databases, *resp)
 	}
 
 	// Get total count
@@ -592,6 +584,29 @@ func (s *DatabaseService) GetTableColumns(ctx context.Context, databaseID, tenan
 	}
 
 	return s.dbhub.GetTableColumns(ctx, db, tableName)
+}
+
+// enrichResponse populates a DatabaseResponse with credential info from K8s Secrets.
+func (s *DatabaseService) enrichResponse(ctx context.Context, db *models.Database) *models.DatabaseResponse {
+	resp := db.ToResponse()
+	if db.SecretName != "" && s.neo4jQuery != nil {
+		username, password, err := s.neo4jQuery.getCredentials(ctx, db)
+		if err == nil {
+			resp.Username = username
+			resp.HasPassword = password != ""
+		} else {
+			s.logger.Debug("Could not read credentials for database",
+				zap.String("database_id", db.ID),
+				zap.Error(err),
+			)
+		}
+	}
+	return resp
+}
+
+// EnrichResponse is the exported version for use by handlers.
+func (s *DatabaseService) EnrichResponse(ctx context.Context, db *models.Database) *models.DatabaseResponse {
+	return s.enrichResponse(ctx, db)
 }
 
 // updateStatus updates the status of a database connection

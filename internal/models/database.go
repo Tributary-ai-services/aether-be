@@ -108,14 +108,16 @@ type DatabaseUpdateRequest struct {
 // DatabaseResponse represents the API response for a database
 type DatabaseResponse struct {
 	Database
+	Username    string `json:"username,omitempty"`
+	HasPassword bool   `json:"has_password,omitempty"`
 }
 
 // DatabaseListResponse represents a paginated list of databases
 type DatabaseListResponse struct {
-	Databases []Database `json:"databases"`
-	Total     int        `json:"total"`
-	Page      int        `json:"page"`
-	PageSize  int        `json:"page_size"`
+	Databases []DatabaseResponse `json:"databases"`
+	Total     int                `json:"total"`
+	Page      int                `json:"page"`
+	PageSize  int                `json:"page_size"`
 }
 
 // QueryRequest represents a SQL query execution request
