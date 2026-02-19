@@ -261,10 +261,24 @@ func (h *SavedQueryHandler) UpdateSavedQuery(c *gin.Context) {
 		return
 	}
 
+	if req.Query != nil {
+		h.logger.Info("UpdateSavedQuery received query text",
+			zap.String("query_id", queryID),
+			zap.String("query_text", *req.Query),
+		)
+	}
+
 	query, err := h.savedQueryService.UpdateSavedQuery(c.Request.Context(), queryID, spaceContext.TenantID, userID, req)
 	if err != nil {
 		handleServiceError(c, err)
 		return
+	}
+
+	if query != nil {
+		h.logger.Info("UpdateSavedQuery returning query text",
+			zap.String("query_id", queryID),
+			zap.String("response_query_text", query.Query),
+		)
 	}
 
 	c.JSON(http.StatusOK, query.ToResponse())

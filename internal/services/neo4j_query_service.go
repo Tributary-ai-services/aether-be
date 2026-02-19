@@ -112,8 +112,22 @@ func (s *Neo4jQueryService) TestConnection(ctx context.Context, db *models.Datab
 func (s *Neo4jQueryService) ExecuteQuery(ctx context.Context, db *models.Database, query string, params []any) (*models.QueryResponse, error) {
 	start := time.Now()
 
+	s.logger.Info("Executing user Cypher query",
+		zap.String("database_id", db.ID),
+		zap.String("host", db.Host),
+		zap.Int("port", db.Port),
+		zap.String("database", db.Database),
+		zap.String("secret_name", db.SecretName),
+		zap.String("secret_namespace", db.SecretNamespace),
+		zap.String("query_preview", truncateQuery(query, 100)),
+	)
+
 	driver, err := s.newDriver(ctx, db)
 	if err != nil {
+		s.logger.Error("Failed to create Neo4j driver",
+			zap.String("database_id", db.ID),
+			zap.Error(err),
+		)
 		return nil, errors.Database("Failed to connect to Neo4j", err)
 	}
 	defer driver.Close(ctx)
@@ -126,6 +140,11 @@ func (s *Neo4jQueryService) ExecuteQuery(ctx context.Context, db *models.Databas
 
 	result, err := session.Run(ctx, query, nil)
 	if err != nil {
+		s.logger.Error("Failed to execute Cypher query",
+			zap.String("database_id", db.ID),
+			zap.String("query_preview", truncateQuery(query, 200)),
+			zap.Error(err),
+		)
 		return nil, errors.Database("Failed to execute Cypher query", err)
 	}
 
