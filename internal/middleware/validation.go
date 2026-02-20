@@ -395,8 +395,11 @@ var largeContentFields = map[string]bool{
 // contain user-authored code/queries (SQL, Cypher, etc.) where quotes,
 // semicolons, and SQL keywords are legitimate content.
 var rawContentFields = map[string]bool{
-	"query": true,
-	"sql":   true,
+	"query":         true,
+	"sql":           true,
+	"code":          true, // OAuth authorization codes — opaque tokens, not user input
+	"state":         true, // OAuth CSRF state tokens
+	"code_verifier": true, // OAuth PKCE code verifier
 }
 
 // sanitizeStringValueForKey sanitizes string values based on field context

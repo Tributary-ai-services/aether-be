@@ -33,7 +33,7 @@ type WorkflowStep struct {
 	ID            string                 `json:"id" neo4j:"id"`
 	WorkflowID    string                 `json:"workflow_id" neo4j:"workflow_id"`
 	Name          string                 `json:"name" neo4j:"name"`
-	Type          string                 `json:"type" neo4j:"type"` // container, script, http, aiTask, condition, suspend, transform + legacy types
+	Type          string                 `json:"type" neo4j:"type"` // container, script, http, aiTask, condition, suspend, transform, merge, loop, subworkflow, errorHandler + legacy types
 	Order         int                    `json:"order" neo4j:"order"` // Legacy — deprecated, use Dependencies
 	Configuration map[string]interface{} `json:"configuration" neo4j:"configuration"`
 	Conditions    map[string]interface{} `json:"conditions" neo4j:"conditions"` // Legacy conditional execution rules
@@ -138,6 +138,18 @@ type StepResult struct {
 	RetryAttempt  int                    `json:"retry_attempt" neo4j:"retry_attempt"`
 }
 
+// WorkflowVersion represents a snapshot of a workflow at a point in time
+type WorkflowVersion struct {
+	ID            string                 `json:"id" neo4j:"id"`
+	WorkflowID    string                 `json:"workflow_id" neo4j:"workflow_id"`
+	Version       int                    `json:"version" neo4j:"version"`
+	Label         string                 `json:"label" neo4j:"label"` // e.g. "1.0.0", "1.1.0"
+	Description   string                 `json:"description" neo4j:"description"`
+	Snapshot      map[string]interface{} `json:"snapshot" neo4j:"snapshot"` // Full workflow definition at this version
+	CreatedAt     time.Time              `json:"created_at" neo4j:"created_at"`
+	CreatedBy     string                 `json:"created_by" neo4j:"created_by"`
+}
+
 // Request models for API endpoints
 
 // CreateWorkflowRequest represents the request to create a new workflow
@@ -153,7 +165,7 @@ type CreateWorkflowRequest struct {
 // CreateStepRequest represents a step in the workflow creation request
 type CreateStepRequest struct {
 	Name          string                 `json:"name" binding:"required"`
-	Type          string                 `json:"type" binding:"required,oneof=process_document compliance_check approval notification ai_analysis assemble_output custom container script http aiTask condition suspend transform assembler sync"`
+	Type          string                 `json:"type" binding:"required,oneof=process_document compliance_check approval notification ai_analysis assemble_output custom container script http aiTask condition suspend transform assembler sync merge loop subworkflow errorHandler"`
 	Order         int                    `json:"order"` // Legacy — optional when Dependencies provided
 	Configuration map[string]interface{} `json:"configuration"`
 	Conditions    map[string]interface{} `json:"conditions"`
@@ -191,6 +203,15 @@ type UpdateWorkflowRequest struct {
 type ExecuteWorkflowRequest struct {
 	TriggerID string                 `json:"trigger_id"`
 	Input     map[string]interface{} `json:"input"`
+}
+
+// PublishArtifactRequest represents a request to store a workflow output artifact
+type PublishArtifactRequest struct {
+	Content     string `json:"content" binding:"required"`
+	Format      string `json:"format" binding:"required,oneof=text json markdown docx pdf"`
+	Filename    string `json:"filename" binding:"required"`
+	NotebookID  string `json:"notebook_id"`
+	ExecutionID string `json:"execution_id"`
 }
 
 // WorkflowAnalytics represents workflow performance analytics

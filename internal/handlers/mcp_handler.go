@@ -78,6 +78,7 @@ func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, lo
 		{"mcp-perplexity", "Perplexity MCP", "AI-powered research and search", "search", []string{"search", "perplexity", "ai-search"}, func(c *config.Config) *config.MCPServerConfig { return &c.PerplexityMCP }},
 		{"mcp-slack", "Slack MCP", "Slack workspace communication", "communication", []string{"slack", "messaging", "communication"}, func(c *config.Config) *config.MCPServerConfig { return &c.SlackMCP }},
 		{"mcp-paper-search", "Paper Search MCP", "Academic paper search and retrieval", "research", []string{"research", "papers", "academic", "arxiv"}, func(c *config.Config) *config.MCPServerConfig { return &c.PaperSearchMCP }},
+		{"mcp-assembler", "Assembler MCP", "Document assembly, template rendering, and format conversion (Markdown, DOCX, PDF)", "document-assembly", []string{"assembler", "templates", "documents", "reports", "formatting"}, func(c *config.Config) *config.MCPServerConfig { return &c.AssemblerMCP }},
 	}
 
 	if cfg != nil {

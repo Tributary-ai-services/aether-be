@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.uber.org/zap"
 
@@ -375,9 +376,161 @@ func (s *WorkflowService) UpdateWorkflow(ctx context.Context, workflowID string,
 	}
 
 	s.logger.Info("Updated workflow", zap.String("workflow_id", workflowID))
-	
+
+	// Create a version snapshot on each update
+	go func() {
+		bgCtx := context.Background()
+		if err := s.createVersionSnapshot(bgCtx, workflowID, spaceContext); err != nil {
+			s.logger.Warn("Failed to create version snapshot", zap.String("workflow_id", workflowID), zap.Error(err))
+		}
+	}()
+
 	// Get the full workflow with steps and triggers
 	return s.GetWorkflowByID(ctx, workflowID, spaceContext)
+}
+
+// createVersionSnapshot creates a WorkflowVersion node with the current workflow state
+func (s *WorkflowService) createVersionSnapshot(ctx context.Context, workflowID string, spaceContext *models.SpaceContext) error {
+	// Get the current version count
+	countQuery := `
+		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id})
+		RETURN count(wv) AS cnt
+	`
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	countResult, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, countQuery, map[string]interface{}{"workflow_id": workflowID})
+		if err != nil {
+			return nil, err
+		}
+		if result.Next(ctx) {
+			cnt, _ := result.Record().Get("cnt")
+			return cnt, nil
+		}
+		return int64(0), nil
+	})
+	if err != nil {
+		return err
+	}
+
+	nextVersion := int(countResult.(int64)) + 1
+	label := fmt.Sprintf("%d.0.0", nextVersion)
+
+	// Get full workflow for snapshot
+	workflow, err := s.GetWorkflowByID(ctx, workflowID, spaceContext)
+	if err != nil {
+		return err
+	}
+
+	// Serialize workflow as snapshot (steps + triggers + config)
+	snapshot := map[string]interface{}{
+		"name":          workflow.Name,
+		"description":   workflow.Description,
+		"type":          workflow.Type,
+		"configuration": workflow.Configuration,
+		"step_count":    len(workflow.Steps),
+	}
+	snapshotJSON, _ := json.Marshal(snapshot)
+
+	// Create version node
+	createQuery := `
+		CREATE (wv:WorkflowVersion {
+			id: $id,
+			workflow_id: $workflow_id,
+			version: $version,
+			label: $label,
+			description: $description,
+			snapshot: $snapshot,
+			created_at: $created_at,
+			created_by: $created_by
+		})
+		WITH wv
+		MATCH (w:Workflow {id: $workflow_id})
+		SET w.version = $label
+		RETURN wv
+	`
+
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return tx.Run(ctx, createQuery, map[string]interface{}{
+			"id":          uuid.New().String(),
+			"workflow_id": workflowID,
+			"version":     nextVersion,
+			"label":       label,
+			"description": fmt.Sprintf("Version %s", label),
+			"snapshot":    string(snapshotJSON),
+			"created_at":  time.Now(),
+			"created_by":  spaceContext.UserID,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create version snapshot: %w", err)
+	}
+
+	s.logger.Info("Created workflow version", zap.String("workflow_id", workflowID), zap.String("version", label))
+	return nil
+}
+
+// ListWorkflowVersions returns all versions of a workflow
+func (s *WorkflowService) ListWorkflowVersions(ctx context.Context, workflowID string, spaceContext *models.SpaceContext) ([]models.WorkflowVersion, error) {
+	query := `
+		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id})
+		RETURN wv
+		ORDER BY wv.version DESC
+	`
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{"workflow_id": workflowID})
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workflow versions: %w", err)
+	}
+
+	records := result.([]*neo4j.Record)
+	versions := make([]models.WorkflowVersion, 0, len(records))
+	for _, record := range records {
+		nodeVal, ok := record.Get("wv")
+		if !ok {
+			continue
+		}
+		node := nodeVal.(neo4j.Node)
+		props := node.Props
+
+		wv := models.WorkflowVersion{}
+		if v, found := props["id"]; found {
+			wv.ID = v.(string)
+		}
+		if v, found := props["workflow_id"]; found {
+			wv.WorkflowID = v.(string)
+		}
+		if v, found := props["version"]; found {
+			if vi, ok := v.(int64); ok {
+				wv.Version = int(vi)
+			}
+		}
+		if v, found := props["label"]; found {
+			wv.Label = v.(string)
+		}
+		if v, found := props["description"]; found && v != nil {
+			wv.Description = v.(string)
+		}
+		if v, found := props["created_by"]; found && v != nil {
+			wv.CreatedBy = v.(string)
+		}
+		if t, ok := props["created_at"].(time.Time); ok {
+			wv.CreatedAt = t
+		}
+		versions = append(versions, wv)
+	}
+
+	return versions, nil
 }
 
 // DeleteWorkflow deletes a workflow and all its related data
@@ -1444,6 +1597,123 @@ func (s *WorkflowService) matchesDocumentEventTrigger(doc *models.Document, even
 	return true
 }
 
+// UpdateExecutionStatus updates a WorkflowExecution node's status, output, and completion time.
+// Called by the webhook handler when Argo reports workflow completion.
+func (s *WorkflowService) UpdateExecutionStatus(ctx context.Context, workflowID, executionID, status, result, errorMsg string) error {
+	now := time.Now()
+
+	// Map Argo status to internal status
+	internalStatus := "completed"
+	switch status {
+	case "Failed", "Error":
+		internalStatus = "failed"
+	case "Succeeded":
+		internalStatus = "completed"
+	default:
+		internalStatus = strings.ToLower(status)
+	}
+
+	query := `
+		MATCH (e:WorkflowExecution {workflow_id: $workflow_id})
+		WHERE e.id = $execution_id OR e.id CONTAINS $execution_id
+		SET e.status = $status,
+		    e.completed_at = datetime($completed_at),
+		    e.error_message = $error_message,
+		    e.current_step = 'done'
+		WITH e
+		MATCH (w:Workflow {id: $workflow_id})
+		SET w.last_status = $status
+		RETURN e.id AS id
+	`
+
+	// If no execution_id provided, find the most recent submitted execution for this workflow
+	if executionID == "" || strings.Contains(executionID, "-") {
+		// executionID from Argo is the Argo workflow name (e.g., "my-workflow-abc123"),
+		// not the internal execution ID. Try to match the most recent submitted execution.
+		query = `
+			MATCH (w:Workflow {id: $workflow_id})-[:HAS_EXECUTION]->(e:WorkflowExecution)
+			WHERE e.status = 'submitted'
+			WITH e ORDER BY e.started_at DESC LIMIT 1
+			SET e.status = $status,
+			    e.completed_at = datetime($completed_at),
+			    e.error_message = $error_message,
+			    e.current_step = 'done'
+			WITH e
+			MATCH (w:Workflow {id: $workflow_id})
+			SET w.last_status = $status
+			RETURN e.id AS id
+		`
+	}
+
+	// Store result in output if provided
+	if result != "" {
+		query = strings.Replace(query, "e.current_step = 'done'",
+			"e.current_step = 'done', e.output = $output", 1)
+	}
+
+	params := map[string]interface{}{
+		"workflow_id":   workflowID,
+		"execution_id":  executionID,
+		"status":        internalStatus,
+		"completed_at":  now.Format(time.RFC3339),
+		"error_message": errorMsg,
+	}
+	if result != "" {
+		params["output"] = result
+	}
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return r.Collect(ctx)
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to update execution status",
+			zap.String("workflow_id", workflowID),
+			zap.String("execution_id", executionID),
+			zap.Error(err))
+		return fmt.Errorf("failed to update execution status: %w", err)
+	}
+
+	records, _ := res.([]*neo4j.Record)
+	if len(records) == 0 {
+		s.logger.Warn("No matching execution found to update",
+			zap.String("workflow_id", workflowID),
+			zap.String("execution_id", executionID))
+	} else {
+		s.logger.Info("Execution status updated",
+			zap.String("workflow_id", workflowID),
+			zap.String("status", internalStatus))
+	}
+
+	// Update workflow aggregate stats
+	statsQuery := `
+		MATCH (w:Workflow {id: $workflow_id})-[:HAS_EXECUTION]->(e:WorkflowExecution)
+		WHERE e.status IN ['completed', 'failed']
+		WITH w,
+		     count(e) AS total,
+		     sum(CASE WHEN e.status = 'completed' THEN 1 ELSE 0 END) AS successes,
+		     sum(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failures
+		SET w.success_count = successes,
+		    w.failure_count = failures
+	`
+	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, statsQuery, map[string]interface{}{"workflow_id": workflowID})
+		if err != nil {
+			return nil, err
+		}
+		return r.Collect(ctx)
+	})
+
+	return nil
+}
+
 // PublishProductionArtifact stores a production artifact and links it to a notebook
 func (s *WorkflowService) PublishProductionArtifact(ctx context.Context, workflowID, executionID string, artifact map[string]interface{}, destinationNotebookID string, spaceContext *models.SpaceContext) error {
 	artifactID := fmt.Sprintf("art_%d", time.Now().UnixNano())
@@ -1508,4 +1778,57 @@ func (s *WorkflowService) PublishProductionArtifact(ctx context.Context, workflo
 		zap.String("notebook_id", destinationNotebookID))
 
 	return nil
+}
+
+// GetExecutionLiveStatus queries Argo for live per-node status of a workflow execution.
+// Returns the Argo workflow name and per-node statuses.
+func (s *WorkflowService) GetExecutionLiveStatus(ctx context.Context, workflowID, executionID string, spaceContext *models.SpaceContext) (*ArgoWorkflowStatus, error) {
+	// Look up the Argo workflow name from the execution record
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, `
+			MATCH (e:WorkflowExecution {workflow_id: $workflowID, tenant_id: $tenantID})
+			WHERE e.id = $executionID OR e.argo_name IS NOT NULL
+			RETURN e.argo_name AS argoName, e.status AS status
+			ORDER BY e.started_at DESC
+			LIMIT 1
+		`, map[string]interface{}{
+			"workflowID":  workflowID,
+			"executionID": executionID,
+			"tenantID":    spaceContext.TenantID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if r.Next(ctx) {
+			rec := r.Record()
+			argoName, _ := rec.Get("argoName")
+			status, _ := rec.Get("status")
+			return map[string]interface{}{
+				"argoName": argoName,
+				"status":   status,
+			}, nil
+		}
+		return nil, fmt.Errorf("execution not found")
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up execution: %w", err)
+	}
+
+	execInfo := result.(map[string]interface{})
+	argoName, _ := execInfo["argoName"].(string)
+
+	if argoName == "" {
+		// No Argo workflow name — return status from Neo4j only
+		status, _ := execInfo["status"].(string)
+		return &ArgoWorkflowStatus{
+			Phase: status,
+		}, nil
+	}
+
+	// Query Argo for live status
+	return s.argoGenerator.GetArgoWorkflowStatus(ctx, argoName)
 }

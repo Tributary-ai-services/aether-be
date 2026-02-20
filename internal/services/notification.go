@@ -14,11 +14,18 @@ import (
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 )
 
+// ExecutionStatusUpdater is a callback interface to update workflow execution status
+// without creating a circular dependency between NotificationService and WorkflowService.
+type ExecutionStatusUpdater interface {
+	UpdateExecutionStatus(ctx context.Context, workflowID, executionID, status, result, errorMsg string) error
+}
+
 // NotificationService handles CRUD operations for notifications in Neo4j
 type NotificationService struct {
-	neo4j  *database.Neo4jClient
-	kafka  *KafkaService
-	logger *logger.Logger
+	neo4j            *database.Neo4jClient
+	kafka            *KafkaService
+	executionUpdater ExecutionStatusUpdater
+	logger           *logger.Logger
 }
 
 // NewNotificationService creates a new NotificationService
@@ -28,6 +35,12 @@ func NewNotificationService(neo4j *database.Neo4jClient, kafka *KafkaService, lo
 		kafka:  kafka,
 		logger: log.WithService("notification_service"),
 	}
+}
+
+// SetExecutionUpdater sets the callback for updating workflow execution status.
+// This is called after both services are initialized to avoid circular dependencies.
+func (s *NotificationService) SetExecutionUpdater(updater ExecutionStatusUpdater) {
+	s.executionUpdater = updater
 }
 
 // CreateNotification persists a new notification in Neo4j
@@ -255,8 +268,31 @@ func (s *NotificationService) GetUnreadCount(ctx context.Context, userID, tenant
 	return 0, nil
 }
 
-// ProcessWorkflowComplete handles a workflow completion webhook and creates a notification
+// ProcessWorkflowComplete handles a workflow completion webhook:
+// 1. Updates the WorkflowExecution node status in Neo4j
+// 2. Creates a user notification
 func (s *NotificationService) ProcessWorkflowComplete(ctx context.Context, payload *models.WorkflowCompleteWebhookPayload) error {
+	// Step 1: Update the execution status in Neo4j
+	if s.executionUpdater != nil {
+		errorMsg := ""
+		if payload.Status == "Failed" || payload.Status == "Error" {
+			errorMsg = payload.Message
+		}
+		if err := s.executionUpdater.UpdateExecutionStatus(
+			ctx, payload.WorkflowID, payload.ExecutionID,
+			payload.Status, payload.Result, errorMsg,
+		); err != nil {
+			s.logger.Error("Failed to update execution status",
+				zap.String("workflow_id", payload.WorkflowID),
+				zap.Error(err))
+			// Continue to create notification even if status update fails
+		}
+	} else {
+		s.logger.Warn("No execution updater configured, skipping execution status update",
+			zap.String("workflow_id", payload.WorkflowID))
+	}
+
+	// Step 2: Create user notification
 	notifType := "success"
 	title := fmt.Sprintf("Workflow \"%s\" Succeeded", payload.WorkflowName)
 	message := "Workflow completed successfully."

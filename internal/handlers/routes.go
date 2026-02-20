@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -47,6 +48,8 @@ type APIServer struct {
 	MCPHandler           *MCPHandler
 	ArgoHandler          *ArgoHandler
 	NotificationHandler  *NotificationHandler
+	OAuthHandler         *OAuthHandler
+	CloudDriveHandler    *CloudDriveHandler
 	SpaceService         *services.SpaceContextService
 	Metrics              *metrics.Metrics
 	logger               *logger.Logger
@@ -176,7 +179,33 @@ func NewAPIServer(
 
 	// Initialize notification service and handler
 	notificationService := services.NewNotificationService(neo4j, kafkaService, log)
+	// Wire execution status updater to close the feedback loop:
+	// when Argo completes, the webhook updates the WorkflowExecution node
+	notificationService.SetExecutionUpdater(workflowService)
 	notificationHandler := NewNotificationHandler(notificationService, log)
+
+	// Initialize OAuth and Cloud Drive services
+	oauthCfg := &services.OAuthConfig{
+		GoogleClientID:        cfg.OAuth.GoogleClientID,
+		GoogleClientSecret:    cfg.OAuth.GoogleClientSecret,
+		MicrosoftClientID:     cfg.OAuth.MicrosoftClientID,
+		MicrosoftClientSecret: cfg.OAuth.MicrosoftClientSecret,
+		MicrosoftTenantID:     cfg.OAuth.MicrosoftTenantID,
+		EncryptionKey:         cfg.OAuth.EncryptionKey,
+		RedirectBaseURL:       cfg.OAuth.RedirectBaseURL,
+	}
+	var redisClientForOAuth *redis.Client
+	if cfg.Redis.Addr != "" {
+		redisClientForOAuth = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+	}
+	oauthService := services.NewOAuthService(neo4j, redisClientForOAuth, oauthCfg, log)
+	cloudDriveService := services.NewCloudDriveService(oauthService, storageService, audiModalClient, documentService, log)
+	oauthHandler := NewOAuthHandler(oauthService, log)
+	cloudDriveHandler := NewCloudDriveHandler(cloudDriveService, oauthService, log)
 
 	// Initialize Napkin MCP service and MCP handler
 	napkinService := services.NewNapkinService(&cfg.Napkin, log)
@@ -233,6 +262,8 @@ func NewAPIServer(
 		MCPHandler:           mcpHandler,
 		ArgoHandler:          argoHandler,
 		NotificationHandler:  notificationHandler,
+		OAuthHandler:         oauthHandler,
+		CloudDriveHandler:    cloudDriveHandler,
 		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
@@ -632,7 +663,10 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		workflows.POST("/:id/execute", s.WorkflowHandler.ExecuteWorkflow)
 		workflows.PUT("/:id/status", s.WorkflowHandler.UpdateWorkflowStatus)
 		workflows.GET("/:id/executions", s.WorkflowHandler.GetWorkflowExecutions)
+		workflows.GET("/:id/executions/:execId/status", s.WorkflowHandler.GetExecutionStatus)
 		workflows.POST("/:id/upload", s.WorkflowHandler.UploadToWorkflow)
+		workflows.POST("/:id/artifacts", s.WorkflowHandler.PublishArtifact)
+		workflows.GET("/:id/versions", s.WorkflowHandler.ListWorkflowVersions)
 	}
 
 	// Notification routes
@@ -679,6 +713,33 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		mcpGroup.GET("/servers", s.MCPHandler.ListServers)
 		mcpGroup.GET("/servers/:id/tools", s.MCPHandler.ListTools)
 		mcpGroup.POST("/invoke", s.MCPHandler.InvokeTool)
+	}
+
+	// Credentials routes - list and manage OAuth credentials
+	credentials := api.Group("/credentials")
+	{
+		credentials.GET("", s.OAuthHandler.ListCredentials)
+		credentials.DELETE("/:id", s.OAuthHandler.DeleteCredential)
+	}
+
+	// OAuth routes - for cloud drive authentication
+	oauth := api.Group("/oauth")
+	{
+		oauth.POST("/:provider/authorize", s.OAuthHandler.Authorize)
+		oauth.POST("/:provider/callback", s.OAuthHandler.Callback)
+	}
+
+	// Cloud Drives routes - file browsing and import from Google Drive, OneDrive, SharePoint
+	// IMPORTANT: Specific routes (sharepoint/*) MUST come before generic :provider routes
+	// because Gin's `:provider` param would otherwise match "sharepoint" first.
+	cloudDrives := api.Group("/cloud-drives")
+	cloudDrives.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	{
+		cloudDrives.GET("/sharepoint/sites", s.CloudDriveHandler.ListSharePointSites)
+		cloudDrives.GET("/sharepoint/sites/:siteId/libraries", s.CloudDriveHandler.ListSharePointLibraries)
+		cloudDrives.GET("/:provider/files", s.CloudDriveHandler.ListFiles)
+		cloudDrives.GET("/:provider/search", s.CloudDriveHandler.SearchFiles)
+		cloudDrives.POST("/:provider/import", s.CloudDriveHandler.ImportFiles)
 	}
 
 	// Argo Events routes - reads CRDs from K8s API (graceful degradation if unavailable)

@@ -41,6 +41,8 @@ type Config struct {
 	PerplexityMCP         MCPServerConfig
 	SlackMCP              MCPServerConfig
 	PaperSearchMCP        MCPServerConfig
+	AssemblerMCP          MCPServerConfig
+	OAuth                 OAuthConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -246,6 +248,17 @@ type NapkinConfig struct {
 	BaseURL        string `json:"base_url"`
 	Enabled        bool   `json:"enabled"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+// OAuthConfig holds OAuth2 configuration for cloud drive providers
+type OAuthConfig struct {
+	GoogleClientID        string
+	GoogleClientSecret    string
+	MicrosoftClientID     string
+	MicrosoftClientSecret string
+	MicrosoftTenantID     string
+	EncryptionKey         string
+	RedirectBaseURL       string
 }
 
 // MCPServerConfig holds generic MCP server configuration
@@ -466,10 +479,24 @@ func Load() (*Config, error) {
 			Enabled:        getEnvBool("SLACK_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("SLACK_MCP_TIMEOUT_SECONDS", 30),
 		},
+		OAuth: OAuthConfig{
+			GoogleClientID:        getEnv("OAUTH_GOOGLE_CLIENT_ID", ""),
+			GoogleClientSecret:    getEnv("OAUTH_GOOGLE_CLIENT_SECRET", ""),
+			MicrosoftClientID:     getEnv("OAUTH_MICROSOFT_CLIENT_ID", ""),
+			MicrosoftClientSecret: getEnv("OAUTH_MICROSOFT_CLIENT_SECRET", ""),
+			MicrosoftTenantID:     getEnv("OAUTH_MICROSOFT_TENANT_ID", "common"),
+			EncryptionKey:         getEnv("OAUTH_ENCRYPTION_KEY", ""),
+			RedirectBaseURL:       getEnv("OAUTH_REDIRECT_BASE_URL", ""),
+		},
 		PaperSearchMCP: MCPServerConfig{
 			BaseURL:        getEnv("PAPER_SEARCH_MCP_BASE_URL", "http://paper-search-mcp.tas-mcp-servers.svc.cluster.local:8000"),
 			Enabled:        getEnvBool("PAPER_SEARCH_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("PAPER_SEARCH_MCP_TIMEOUT_SECONDS", 30),
+		},
+		AssemblerMCP: MCPServerConfig{
+			BaseURL:        getEnv("ASSEMBLER_MCP_BASE_URL", "http://assembler-mcp.tas-mcp-servers.svc.cluster.local:8091"),
+			Enabled:        getEnvBool("ASSEMBLER_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("ASSEMBLER_MCP_TIMEOUT_SECONDS", 60),
 		},
 	}
 
