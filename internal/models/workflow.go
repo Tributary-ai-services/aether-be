@@ -33,15 +33,62 @@ type WorkflowStep struct {
 	ID            string                 `json:"id" neo4j:"id"`
 	WorkflowID    string                 `json:"workflow_id" neo4j:"workflow_id"`
 	Name          string                 `json:"name" neo4j:"name"`
-	Type          string                 `json:"type" neo4j:"type"` // process_document, compliance_check, approval, notification, ai_analysis
-	Order         int                    `json:"order" neo4j:"order"`
+	Type          string                 `json:"type" neo4j:"type"` // container, script, http, aiTask, condition, suspend, transform, merge, loop, subworkflow, errorHandler + legacy types
+	Order         int                    `json:"order" neo4j:"order"` // Legacy — deprecated, use Dependencies
 	Configuration map[string]interface{} `json:"configuration" neo4j:"configuration"`
-	Conditions    map[string]interface{} `json:"conditions" neo4j:"conditions"` // Conditional execution rules
+	Conditions    map[string]interface{} `json:"conditions" neo4j:"conditions"` // Legacy conditional execution rules
 	Timeout       int                    `json:"timeout" neo4j:"timeout"`       // seconds
-	RetryCount    int                    `json:"retry_count" neo4j:"retry_count"`
-	OnSuccess     string                 `json:"on_success" neo4j:"on_success"` // next step ID or "complete"
-	OnFailure     string                 `json:"on_failure" neo4j:"on_failure"` // step ID or "abort"
+	RetryCount    int                    `json:"retry_count" neo4j:"retry_count"` // Legacy — use RetryStrategy
+	OnSuccess     string                 `json:"on_success" neo4j:"on_success"` // Legacy
+	OnFailure     string                 `json:"on_failure" neo4j:"on_failure"` // Legacy
 	CreatedAt     time.Time              `json:"created_at" neo4j:"created_at"`
+
+	// New Argo-aligned fields
+	Dependencies  []string       `json:"dependencies,omitempty" neo4j:"dependencies"`
+	TemplateName  string         `json:"template_name,omitempty" neo4j:"template_name"`
+	TemplateType  string         `json:"template_type,omitempty" neo4j:"template_type"` // container, script, http, suspend, data, condition
+	When          string         `json:"when,omitempty" neo4j:"when"`
+	Depends       string         `json:"depends,omitempty" neo4j:"depends"`
+	RetryStrategy *RetryStrategy `json:"retry_strategy,omitempty" neo4j:"-"`
+	Inputs        *TemplateIO    `json:"inputs,omitempty" neo4j:"-"`
+	Outputs       *TemplateIO    `json:"outputs,omitempty" neo4j:"-"`
+}
+
+// RetryStrategy defines Argo-compatible retry configuration
+type RetryStrategy struct {
+	Limit       int    `json:"limit"`
+	Duration    string `json:"duration,omitempty"`
+	Factor      int    `json:"factor,omitempty"`
+	MaxDuration string `json:"max_duration,omitempty"`
+	RetryPolicy string `json:"retry_policy,omitempty"` // Always, OnFailure, OnError, OnTransientError
+}
+
+// TemplateIO defines inputs/outputs for a workflow step
+type TemplateIO struct {
+	Parameters []ParameterDef `json:"parameters,omitempty"`
+	Artifacts  []ArtifactDef  `json:"artifacts,omitempty"`
+}
+
+// ParameterDef defines a single parameter for a step template
+type ParameterDef struct {
+	Name      string     `json:"name"`
+	Value     string     `json:"value,omitempty"`
+	Default   string     `json:"default,omitempty"`
+	ValueFrom *ValueFrom `json:"value_from,omitempty"`
+}
+
+// ValueFrom defines where a parameter value is sourced from
+type ValueFrom struct {
+	Path       string `json:"path,omitempty"`
+	Expression string `json:"expression,omitempty"`
+	Parameter  string `json:"parameter,omitempty"`
+}
+
+// ArtifactDef defines an artifact (file) input or output
+type ArtifactDef struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	From string `json:"from,omitempty"`
 }
 
 // WorkflowTrigger represents a trigger that can start a workflow
@@ -91,6 +138,18 @@ type StepResult struct {
 	RetryAttempt  int                    `json:"retry_attempt" neo4j:"retry_attempt"`
 }
 
+// WorkflowVersion represents a snapshot of a workflow at a point in time
+type WorkflowVersion struct {
+	ID            string                 `json:"id" neo4j:"id"`
+	WorkflowID    string                 `json:"workflow_id" neo4j:"workflow_id"`
+	Version       int                    `json:"version" neo4j:"version"`
+	Label         string                 `json:"label" neo4j:"label"` // e.g. "1.0.0", "1.1.0"
+	Description   string                 `json:"description" neo4j:"description"`
+	Snapshot      map[string]interface{} `json:"snapshot" neo4j:"snapshot"` // Full workflow definition at this version
+	CreatedAt     time.Time              `json:"created_at" neo4j:"created_at"`
+	CreatedBy     string                 `json:"created_by" neo4j:"created_by"`
+}
+
 // Request models for API endpoints
 
 // CreateWorkflowRequest represents the request to create a new workflow
@@ -106,19 +165,28 @@ type CreateWorkflowRequest struct {
 // CreateStepRequest represents a step in the workflow creation request
 type CreateStepRequest struct {
 	Name          string                 `json:"name" binding:"required"`
-	Type          string                 `json:"type" binding:"required,oneof=process_document compliance_check approval notification ai_analysis custom"`
-	Order         int                    `json:"order" binding:"required,min=1"`
+	Type          string                 `json:"type" binding:"required,oneof=process_document compliance_check approval notification ai_analysis assemble_output custom container script http aiTask condition suspend transform assembler sync merge loop subworkflow errorHandler"`
+	Order         int                    `json:"order"` // Legacy — optional when Dependencies provided
 	Configuration map[string]interface{} `json:"configuration"`
 	Conditions    map[string]interface{} `json:"conditions"`
-	Timeout       int                    `json:"timeout" binding:"min=1"` // seconds, default 300
-	RetryCount    int                    `json:"retry_count" binding:"min=0,max=5"`
-	OnSuccess     string                 `json:"on_success"` // "next", "complete", or specific step name
-	OnFailure     string                 `json:"on_failure"` // "abort", "retry", or specific step name
+	Timeout       int                    `json:"timeout"` // seconds, default 300
+	RetryCount    int                    `json:"retry_count" binding:"min=0,max=10"` // Legacy
+	OnSuccess     string                 `json:"on_success"` // Legacy
+	OnFailure     string                 `json:"on_failure"` // Legacy
+
+	// New Argo-aligned fields
+	Dependencies  []string       `json:"dependencies,omitempty"`
+	TemplateName  string         `json:"template_name,omitempty"`
+	TemplateType  string         `json:"template_type,omitempty"`
+	When          string         `json:"when,omitempty"`
+	RetryStrategy *RetryStrategy `json:"retry_strategy,omitempty"`
+	Inputs        *TemplateIO    `json:"inputs,omitempty"`
+	Outputs       *TemplateIO    `json:"outputs,omitempty"`
 }
 
 // CreateTriggerRequest represents a trigger in the workflow creation request
 type CreateTriggerRequest struct {
-	Type          string                 `json:"type" binding:"required,oneof=upload schedule api webhook manual"`
+	Type          string                 `json:"type" binding:"required,oneof=upload schedule api webhook manual document_event"`
 	Name          string                 `json:"name" binding:"required"`
 	Configuration map[string]interface{} `json:"configuration"`
 }
@@ -135,6 +203,15 @@ type UpdateWorkflowRequest struct {
 type ExecuteWorkflowRequest struct {
 	TriggerID string                 `json:"trigger_id"`
 	Input     map[string]interface{} `json:"input"`
+}
+
+// PublishArtifactRequest represents a request to store a workflow output artifact
+type PublishArtifactRequest struct {
+	Content     string `json:"content" binding:"required"`
+	Format      string `json:"format" binding:"required,oneof=text json markdown docx pdf"`
+	Filename    string `json:"filename" binding:"required"`
+	NotebookID  string `json:"notebook_id"`
+	ExecutionID string `json:"execution_id"`
 }
 
 // WorkflowAnalytics represents workflow performance analytics
@@ -185,12 +262,12 @@ func NewWorkflowStep(req CreateStepRequest, workflowID string) *WorkflowStep {
 	if timeout == 0 {
 		timeout = 300 // 5 minutes default
 	}
-	
+
 	onSuccess := req.OnSuccess
 	if onSuccess == "" {
 		onSuccess = "next"
 	}
-	
+
 	onFailure := req.OnFailure
 	if onFailure == "" {
 		onFailure = "abort"
@@ -209,6 +286,14 @@ func NewWorkflowStep(req CreateStepRequest, workflowID string) *WorkflowStep {
 		OnSuccess:     onSuccess,
 		OnFailure:     onFailure,
 		CreatedAt:     time.Now(),
+		// New Argo-aligned fields
+		Dependencies:  req.Dependencies,
+		TemplateName:  req.TemplateName,
+		TemplateType:  req.TemplateType,
+		When:          req.When,
+		RetryStrategy: req.RetryStrategy,
+		Inputs:        req.Inputs,
+		Outputs:       req.Outputs,
 	}
 }
 

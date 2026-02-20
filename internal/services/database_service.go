@@ -16,19 +16,24 @@ import (
 
 // DatabaseService handles database connection management
 type DatabaseService struct {
-	neo4j      *database.Neo4jClient
-	dbhub      *DBHubService
-	logger     *logger.Logger
-	crdEnabled bool // Whether Kubernetes CRD management is enabled
+	neo4j        *database.Neo4jClient
+	dbhub        *DBHubService
+	neo4jQuery   *Neo4jQueryService
+	logger       *logger.Logger
+	crdEnabled   bool   // Whether Kubernetes CRD management is enabled
+	crdNamespace string // Namespace for Database CRDs and Secrets
 }
 
 // NewDatabaseService creates a new database service
-func NewDatabaseService(neo4j *database.Neo4jClient, dbhub *DBHubService, log *logger.Logger) *DatabaseService {
+func NewDatabaseService(neo4j *database.Neo4jClient, dbhub *DBHubService, neo4jQuery *Neo4jQueryService, log *logger.Logger) *DatabaseService {
+	crdEnabled := neo4jQuery != nil && neo4jQuery.k8s != nil
 	return &DatabaseService{
-		neo4j:      neo4j,
-		dbhub:      dbhub,
-		logger:     log.WithService("database_service"),
-		crdEnabled: false, // K8s integration to be added later
+		neo4j:        neo4j,
+		dbhub:        dbhub,
+		neo4jQuery:   neo4jQuery,
+		logger:       log.WithService("database_service"),
+		crdEnabled:   crdEnabled,
+		crdNamespace: "tas-mcp-servers",
 	}
 }
 
@@ -45,11 +50,29 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 	// Create database model
 	db := models.NewDatabase(req, userID, tenantID, spaceID)
 
-	// Generate CRD name (for future K8s integration)
+	// Generate CRD name and K8s Secret name
 	db.CRDName = fmt.Sprintf("db-%s", db.ID[:8])
-	db.CRDNamespace = "aether-be" // Default namespace
+	db.CRDNamespace = s.crdNamespace
 	db.SecretName = fmt.Sprintf("db-credentials-%s", db.ID[:8])
-	db.SecretNamespace = db.CRDNamespace
+	db.SecretNamespace = s.crdNamespace
+
+	// Create K8s Secret with credentials.
+	// For neo4j type, always create the secret (Neo4jQueryService reads credentials from K8s Secrets).
+	// For other types, only create if CRD management is enabled.
+	shouldCreateSecret := (s.crdEnabled || db.Type == models.DatabaseTypeNeo4j) && s.neo4jQuery != nil && req.Username != ""
+	if shouldCreateSecret {
+		if err := s.neo4jQuery.CreateSecret(ctx, db.SecretName, db.SecretNamespace, req.Username, req.Password); err != nil {
+			s.logger.Warn("Failed to create K8s secret for database (non-fatal)",
+				zap.String("database_id", db.ID),
+				zap.Error(err),
+			)
+		} else {
+			s.logger.Info("K8s secret created for database",
+				zap.String("secret", db.SecretName),
+				zap.String("namespace", db.SecretNamespace),
+			)
+		}
+	}
 
 	// Create the Database node in Neo4j
 	createQuery := `
@@ -64,6 +87,7 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 			port: $port,
 			database: $database,
 			ssl_mode: $ssl_mode,
+			protocol: $protocol,
 			secret_name: $secret_name,
 			secret_namespace: $secret_namespace,
 			crd_name: $crd_name,
@@ -93,6 +117,7 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 		"port":               db.Port,
 		"database":           db.Database,
 		"ssl_mode":           db.SSLMode,
+		"protocol":           db.Protocol,
 		"secret_name":        db.SecretName,
 		"secret_namespace":   db.SecretNamespace,
 		"crd_name":           db.CRDName,
@@ -178,7 +203,7 @@ func (s *DatabaseService) GetDatabase(ctx context.Context, databaseID, tenantID 
 		MATCH (d:Database {id: $db_id})
 		WHERE d.tenant_id = $tenant_id
 		RETURN d.id, d.name, d.tenant_id, d.space_id, d.owner_id,
-		       d.type, d.host, d.port, d.database, d.ssl_mode,
+		       d.type, d.host, d.port, d.database, d.ssl_mode, d.protocol,
 		       d.secret_name, d.secret_namespace, d.crd_name, d.crd_namespace,
 		       d.readonly, d.max_rows, d.connection_timeout, d.query_timeout,
 		       d.status, d.status_message, d.last_checked,
@@ -230,7 +255,7 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, tenantID, spaceID s
 			MATCH (d:Database)
 			WHERE d.tenant_id = $tenant_id AND d.space_id = $space_id
 			RETURN d.id, d.name, d.tenant_id, d.space_id, d.owner_id,
-			       d.type, d.host, d.port, d.database, d.ssl_mode,
+			       d.type, d.host, d.port, d.database, d.ssl_mode, d.protocol,
 			       d.secret_name, d.secret_namespace, d.crd_name, d.crd_namespace,
 			       d.readonly, d.max_rows, d.connection_timeout, d.query_timeout,
 			       d.status, d.status_message, d.last_checked,
@@ -244,7 +269,7 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, tenantID, spaceID s
 			MATCH (d:Database)
 			WHERE d.tenant_id = $tenant_id
 			RETURN d.id, d.name, d.tenant_id, d.space_id, d.owner_id,
-			       d.type, d.host, d.port, d.database, d.ssl_mode,
+			       d.type, d.host, d.port, d.database, d.ssl_mode, d.protocol,
 			       d.secret_name, d.secret_namespace, d.crd_name, d.crd_namespace,
 			       d.readonly, d.max_rows, d.connection_timeout, d.query_timeout,
 			       d.status, d.status_message, d.last_checked,
@@ -263,14 +288,15 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, tenantID, spaceID s
 		return nil, errors.Database("Failed to list databases", err)
 	}
 
-	databases := make([]models.Database, 0, len(result.Records))
+	databases := make([]models.DatabaseResponse, 0, len(result.Records))
 	for _, record := range result.Records {
 		db, err := s.recordToDatabase(record)
 		if err != nil {
 			s.logger.Warn("Failed to parse database record", zap.Error(err))
 			continue
 		}
-		databases = append(databases, *db)
+		resp := s.enrichResponse(ctx, db)
+		databases = append(databases, *resp)
 	}
 
 	// Get total count
@@ -325,6 +351,27 @@ func (s *DatabaseService) UpdateDatabase(ctx context.Context, databaseID, tenant
 	// Apply updates
 	db.Update(req)
 
+	// Update K8s Secret if credentials changed for neo4j type
+	if (req.Username != nil || req.Password != nil) && db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil && db.SecretName != "" {
+		username := ""
+		password := ""
+		if req.Username != nil {
+			username = *req.Username
+		}
+		if req.Password != nil {
+			password = *req.Password
+		}
+		// Only update if at least one credential field is provided
+		if username != "" || password != "" {
+			if err := s.neo4jQuery.UpdateSecret(ctx, db.SecretName, db.SecretNamespace, username, password); err != nil {
+				s.logger.Warn("Failed to update K8s secret for database (non-fatal)",
+					zap.String("database_id", databaseID),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
 	// Update in Neo4j
 	updateQuery := `
 		MATCH (d:Database {id: $db_id})
@@ -334,6 +381,7 @@ func (s *DatabaseService) UpdateDatabase(ctx context.Context, databaseID, tenant
 		    d.port = $port,
 		    d.database = $database,
 		    d.ssl_mode = $ssl_mode,
+		    d.protocol = $protocol,
 		    d.readonly = $readonly,
 		    d.max_rows = $max_rows,
 		    d.labels = $labels,
@@ -350,6 +398,7 @@ func (s *DatabaseService) UpdateDatabase(ctx context.Context, databaseID, tenant
 		"port":        db.Port,
 		"database":    db.Database,
 		"ssl_mode":    db.SSLMode,
+		"protocol":    db.Protocol,
 		"readonly":    db.ReadOnly,
 		"max_rows":    db.MaxRows,
 		"labels":      db.GetLabelsJSON(),
@@ -385,6 +434,19 @@ func (s *DatabaseService) DeleteDatabase(ctx context.Context, databaseID, tenant
 		zap.String("database_id", databaseID),
 		zap.String("tenant_id", tenantID),
 	)
+
+	// Clean up K8s Secret if CRD management is enabled or for neo4j type
+	if s.neo4jQuery != nil {
+		db, err := s.GetDatabase(ctx, databaseID, tenantID)
+		if err == nil && db.SecretName != "" {
+			if err := s.neo4jQuery.DeleteSecret(ctx, db.SecretName, db.SecretNamespace); err != nil {
+				s.logger.Warn("Failed to delete K8s secret (non-fatal)",
+					zap.String("secret", db.SecretName),
+					zap.Error(err),
+				)
+			}
+		}
+	}
 
 	// Delete all relationships and the node
 	deleteQuery := `
@@ -432,16 +494,20 @@ func (s *DatabaseService) TestConnection(ctx context.Context, databaseID, tenant
 		return err
 	}
 
-	// Test via DBHub
-	if err := s.dbhub.TestConnection(ctx, db); err != nil {
-		// Update status to failed
-		s.updateStatus(ctx, databaseID, tenantID, models.DatabaseStatusFailed, err.Error())
-		return err
+	// Route to appropriate service
+	var testErr error
+	if db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil {
+		testErr = s.neo4jQuery.TestConnection(ctx, db)
+	} else {
+		testErr = s.dbhub.TestConnection(ctx, db)
 	}
 
-	// Update status to connected
-	s.updateStatus(ctx, databaseID, tenantID, models.DatabaseStatusConnected, "Connection successful")
+	if testErr != nil {
+		s.updateStatus(ctx, databaseID, tenantID, models.DatabaseStatusFailed, testErr.Error())
+		return testErr
+	}
 
+	s.updateStatus(ctx, databaseID, tenantID, models.DatabaseStatusConnected, "Connection successful")
 	return nil
 }
 
@@ -465,7 +531,11 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, databaseID, tenantID
 		})
 	}
 
-	// Execute via DBHub
+	// Route to appropriate service
+	if db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil {
+		return s.neo4jQuery.ExecuteQuery(ctx, db, query, params)
+	}
+
 	return s.dbhub.ExecuteQuery(ctx, db, query, params)
 }
 
@@ -481,6 +551,10 @@ func (s *DatabaseService) GetSchema(ctx context.Context, databaseID, tenantID, s
 		return nil, err
 	}
 
+	if db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil {
+		return s.neo4jQuery.GetSchema(ctx, db)
+	}
+
 	return s.dbhub.GetSchema(ctx, db, schemaType)
 }
 
@@ -489,6 +563,10 @@ func (s *DatabaseService) GetTables(ctx context.Context, databaseID, tenantID st
 	db, err := s.GetDatabase(ctx, databaseID, tenantID)
 	if err != nil {
 		return nil, err
+	}
+
+	if db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil {
+		return s.neo4jQuery.GetTables(ctx, db)
 	}
 
 	return s.dbhub.GetTables(ctx, db)
@@ -501,7 +579,34 @@ func (s *DatabaseService) GetTableColumns(ctx context.Context, databaseID, tenan
 		return nil, err
 	}
 
+	if db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil {
+		return s.neo4jQuery.GetTableColumns(ctx, db, tableName)
+	}
+
 	return s.dbhub.GetTableColumns(ctx, db, tableName)
+}
+
+// enrichResponse populates a DatabaseResponse with credential info from K8s Secrets.
+func (s *DatabaseService) enrichResponse(ctx context.Context, db *models.Database) *models.DatabaseResponse {
+	resp := db.ToResponse()
+	if db.SecretName != "" && s.neo4jQuery != nil {
+		username, password, err := s.neo4jQuery.getCredentials(ctx, db)
+		if err == nil {
+			resp.Username = username
+			resp.HasPassword = password != ""
+		} else {
+			s.logger.Debug("Could not read credentials for database",
+				zap.String("database_id", db.ID),
+				zap.Error(err),
+			)
+		}
+	}
+	return resp
+}
+
+// EnrichResponse is the exported version for use by handlers.
+func (s *DatabaseService) EnrichResponse(ctx context.Context, db *models.Database) *models.DatabaseResponse {
+	return s.enrichResponse(ctx, db)
 }
 
 // updateStatus updates the status of a database connection
@@ -583,6 +688,8 @@ func (s *DatabaseService) recordToDatabase(record any) (*models.Database, error)
 			db.Database = toString(val)
 		case "d.ssl_mode":
 			db.SSLMode = toString(val)
+		case "d.protocol":
+			db.Protocol = toString(val)
 		case "d.secret_name":
 			db.SecretName = toString(val)
 		case "d.secret_namespace":
@@ -660,6 +767,9 @@ func (s *DatabaseService) recordToDatabase2(r interface{ Get(key string) (any, b
 	}
 	if v, ok := r.Get("d.ssl_mode"); ok && v != nil {
 		db.SSLMode = toString(v)
+	}
+	if v, ok := r.Get("d.protocol"); ok && v != nil {
+		db.Protocol = toString(v)
 	}
 	if v, ok := r.Get("d.secret_name"); ok && v != nil {
 		db.SecretName = toString(v)

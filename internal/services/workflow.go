@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.uber.org/zap"
 
@@ -16,15 +19,19 @@ import (
 
 // WorkflowService handles workflow operations
 type WorkflowService struct {
-	neo4j  *database.Neo4jClient
-	logger *logger.Logger
+	neo4j         *database.Neo4jClient
+	kafkaService  *KafkaService
+	argoGenerator *ArgoGenerator
+	logger        *logger.Logger
 }
 
 // NewWorkflowService creates a new workflow service
-func NewWorkflowService(neo4j *database.Neo4jClient, log *logger.Logger) *WorkflowService {
+func NewWorkflowService(neo4j *database.Neo4jClient, kafkaService *KafkaService, argoGenerator *ArgoGenerator, log *logger.Logger) *WorkflowService {
 	return &WorkflowService{
-		neo4j:  neo4j,
-		logger: log.WithService("workflow_service"),
+		neo4j:         neo4j,
+		kafkaService:  kafkaService,
+		argoGenerator: argoGenerator,
+		logger:        log.WithService("workflow_service"),
 	}
 }
 
@@ -98,7 +105,11 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 					retry_count: $retry_count,
 					on_success: $on_success,
 					on_failure: $on_failure,
-					created_at: $created_at
+					created_at: $created_at,
+					dependencies: $dependencies,
+					template_name: $template_name,
+					template_type: $template_type,
+					when_condition: $when_condition
 				})
 				WITH s
 				MATCH (w:Workflow {id: $workflow_id})
@@ -106,19 +117,29 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 				RETURN s
 			`
 
+			// Ensure dependencies is a non-nil slice for Neo4j
+			deps := step.Dependencies
+			if deps == nil {
+				deps = []string{}
+			}
+
 			stepParams := map[string]interface{}{
-				"id":            step.ID,
-				"workflow_id":   step.WorkflowID,
-				"name":          step.Name,
-				"type":          step.Type,
-				"order":         step.Order,
-				"configuration": serializeParameters(step.Configuration),
-				"conditions":    serializeParameters(step.Conditions),
-				"timeout":       step.Timeout,
-				"retry_count":   step.RetryCount,
-				"on_success":    step.OnSuccess,
-				"on_failure":    step.OnFailure,
-				"created_at":    step.CreatedAt,
+				"id":             step.ID,
+				"workflow_id":    step.WorkflowID,
+				"name":           step.Name,
+				"type":           step.Type,
+				"order":          step.Order,
+				"configuration":  serializeParameters(step.Configuration),
+				"conditions":     serializeParameters(step.Conditions),
+				"timeout":        step.Timeout,
+				"retry_count":    step.RetryCount,
+				"on_success":     step.OnSuccess,
+				"on_failure":     step.OnFailure,
+				"created_at":     step.CreatedAt,
+				"dependencies":   deps,
+				"template_name":  step.TemplateName,
+				"template_type":  step.TemplateType,
+				"when_condition": step.When,
 			}
 
 			_, err := tx.Run(ctx, stepQuery, stepParams)
@@ -355,9 +376,161 @@ func (s *WorkflowService) UpdateWorkflow(ctx context.Context, workflowID string,
 	}
 
 	s.logger.Info("Updated workflow", zap.String("workflow_id", workflowID))
-	
+
+	// Create a version snapshot on each update
+	go func() {
+		bgCtx := context.Background()
+		if err := s.createVersionSnapshot(bgCtx, workflowID, spaceContext); err != nil {
+			s.logger.Warn("Failed to create version snapshot", zap.String("workflow_id", workflowID), zap.Error(err))
+		}
+	}()
+
 	// Get the full workflow with steps and triggers
 	return s.GetWorkflowByID(ctx, workflowID, spaceContext)
+}
+
+// createVersionSnapshot creates a WorkflowVersion node with the current workflow state
+func (s *WorkflowService) createVersionSnapshot(ctx context.Context, workflowID string, spaceContext *models.SpaceContext) error {
+	// Get the current version count
+	countQuery := `
+		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id})
+		RETURN count(wv) AS cnt
+	`
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	countResult, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, countQuery, map[string]interface{}{"workflow_id": workflowID})
+		if err != nil {
+			return nil, err
+		}
+		if result.Next(ctx) {
+			cnt, _ := result.Record().Get("cnt")
+			return cnt, nil
+		}
+		return int64(0), nil
+	})
+	if err != nil {
+		return err
+	}
+
+	nextVersion := int(countResult.(int64)) + 1
+	label := fmt.Sprintf("%d.0.0", nextVersion)
+
+	// Get full workflow for snapshot
+	workflow, err := s.GetWorkflowByID(ctx, workflowID, spaceContext)
+	if err != nil {
+		return err
+	}
+
+	// Serialize workflow as snapshot (steps + triggers + config)
+	snapshot := map[string]interface{}{
+		"name":          workflow.Name,
+		"description":   workflow.Description,
+		"type":          workflow.Type,
+		"configuration": workflow.Configuration,
+		"step_count":    len(workflow.Steps),
+	}
+	snapshotJSON, _ := json.Marshal(snapshot)
+
+	// Create version node
+	createQuery := `
+		CREATE (wv:WorkflowVersion {
+			id: $id,
+			workflow_id: $workflow_id,
+			version: $version,
+			label: $label,
+			description: $description,
+			snapshot: $snapshot,
+			created_at: $created_at,
+			created_by: $created_by
+		})
+		WITH wv
+		MATCH (w:Workflow {id: $workflow_id})
+		SET w.version = $label
+		RETURN wv
+	`
+
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return tx.Run(ctx, createQuery, map[string]interface{}{
+			"id":          uuid.New().String(),
+			"workflow_id": workflowID,
+			"version":     nextVersion,
+			"label":       label,
+			"description": fmt.Sprintf("Version %s", label),
+			"snapshot":    string(snapshotJSON),
+			"created_at":  time.Now(),
+			"created_by":  spaceContext.UserID,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create version snapshot: %w", err)
+	}
+
+	s.logger.Info("Created workflow version", zap.String("workflow_id", workflowID), zap.String("version", label))
+	return nil
+}
+
+// ListWorkflowVersions returns all versions of a workflow
+func (s *WorkflowService) ListWorkflowVersions(ctx context.Context, workflowID string, spaceContext *models.SpaceContext) ([]models.WorkflowVersion, error) {
+	query := `
+		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id})
+		RETURN wv
+		ORDER BY wv.version DESC
+	`
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{"workflow_id": workflowID})
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workflow versions: %w", err)
+	}
+
+	records := result.([]*neo4j.Record)
+	versions := make([]models.WorkflowVersion, 0, len(records))
+	for _, record := range records {
+		nodeVal, ok := record.Get("wv")
+		if !ok {
+			continue
+		}
+		node := nodeVal.(neo4j.Node)
+		props := node.Props
+
+		wv := models.WorkflowVersion{}
+		if v, found := props["id"]; found {
+			wv.ID = v.(string)
+		}
+		if v, found := props["workflow_id"]; found {
+			wv.WorkflowID = v.(string)
+		}
+		if v, found := props["version"]; found {
+			if vi, ok := v.(int64); ok {
+				wv.Version = int(vi)
+			}
+		}
+		if v, found := props["label"]; found {
+			wv.Label = v.(string)
+		}
+		if v, found := props["description"]; found && v != nil {
+			wv.Description = v.(string)
+		}
+		if v, found := props["created_by"]; found && v != nil {
+			wv.CreatedBy = v.(string)
+		}
+		if t, ok := props["created_at"].(time.Time); ok {
+			wv.CreatedAt = t
+		}
+		versions = append(versions, wv)
+	}
+
+	return versions, nil
 }
 
 // DeleteWorkflow deletes a workflow and all its related data
@@ -403,18 +576,108 @@ func (s *WorkflowService) DeleteWorkflow(ctx context.Context, workflowID string,
 
 // ExecuteWorkflow starts a new execution of a workflow
 func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string, req models.ExecuteWorkflowRequest, spaceContext *models.SpaceContext) (*models.WorkflowExecution, error) {
-	// First, verify the workflow exists and is active
+	// Verify the workflow exists
 	workflow, err := s.GetWorkflowByID(ctx, workflowID, spaceContext)
 	if err != nil {
 		return nil, err
 	}
 
+	// Auto-activate workflow on first manual execution
 	if workflow.Status != "active" {
-		return nil, fmt.Errorf("workflow is not active")
+		s.logger.Info("Auto-activating workflow for execution",
+			zap.String("workflow_id", workflowID),
+			zap.String("previous_status", workflow.Status))
+		updateReq := models.UpdateWorkflowRequest{Status: "active"}
+		if _, err := s.UpdateWorkflow(ctx, workflowID, updateReq, spaceContext); err != nil {
+			s.logger.Warn("Failed to auto-activate workflow", zap.Error(err))
+		}
 	}
 
 	// Create new execution
 	execution := models.NewWorkflowExecution(workflowID, req.TriggerID, spaceContext.TenantID, spaceContext.SpaceID, req.Input)
+
+	// Build parameter map: start with trigger defaults, then overlay user-provided values
+	paramMap := map[string]any{}
+
+	// Extract defaults from trigger input_parameters
+	for _, trigger := range workflow.Triggers {
+		if trigger.Configuration == nil {
+			continue
+		}
+		if ipList, ok := trigger.Configuration["input_parameters"]; ok {
+			if ipSlice, ok := ipList.([]interface{}); ok {
+				for _, ipRaw := range ipSlice {
+					if ip, ok := ipRaw.(map[string]interface{}); ok {
+						name, _ := ip["name"].(string)
+						defVal, hasDef := ip["default"]
+						if name != "" && hasDef {
+							paramMap[name] = defVal
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Overlay user-provided parameters (these take precedence over defaults)
+	if req.Input != nil {
+		if params, ok := req.Input["parameters"]; ok {
+			if userParams, ok := params.(map[string]any); ok {
+				for k, v := range userParams {
+					paramMap[k] = v
+				}
+			}
+		}
+	}
+
+	// Substitute parameters into workflow step configurations before submission
+	if len(paramMap) > 0 {
+		for i := range workflow.Steps {
+			if workflow.Steps[i].Configuration != nil {
+				for key, val := range workflow.Steps[i].Configuration {
+					if strVal, ok := val.(string); ok {
+						for pk, pv := range paramMap {
+							strVal = strings.ReplaceAll(strVal, "{{"+pk+"}}", fmt.Sprintf("%v", pv))
+						}
+						workflow.Steps[i].Configuration[key] = strVal
+					}
+				}
+			}
+		}
+	}
+
+	// Submit workflow to Argo for real execution
+	if s.argoGenerator != nil && s.argoGenerator.IsEnabled() {
+		argoName, err := s.argoGenerator.GenerateAndSubmit(ctx, workflow)
+		if err != nil {
+			s.logger.Error("Argo workflow submission failed",
+				zap.String("workflow_id", workflowID),
+				zap.Error(err))
+			execution.Status = "failed"
+			execution.ErrorMessage = fmt.Sprintf("Argo submission failed: %v", err)
+		} else {
+			execution.Status = "submitted"
+			execution.CurrentStep = "argo-pending"
+			execution.Output = map[string]any{
+				"argo_workflow_name": argoName,
+				"argo_namespace":    s.argoGenerator.namespace,
+				"message":           fmt.Sprintf("Workflow submitted to Argo as '%s'", argoName),
+			}
+			s.logger.Info("Workflow submitted to Argo",
+				zap.String("workflow_id", workflowID),
+				zap.String("argo_name", argoName))
+		}
+	} else {
+		execution.Status = "failed"
+		execution.ErrorMessage = "Argo Workflows integration is not enabled"
+	}
+
+	now := time.Now()
+	elapsed := time.Since(execution.StartedAt)
+	execution.Runtime = float64(elapsed.Milliseconds())
+	if execution.Status == "failed" {
+		execution.CompletedAt = &now
+	}
 
 	query := `
 		CREATE (e:WorkflowExecution {
@@ -425,19 +688,31 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string
 			progress: $progress,
 			current_step: $current_step,
 			started_at: $started_at,
+			completed_at: $completed_at,
 			runtime: $runtime,
 			input: $input,
 			output: $output,
+			error_message: $error_message,
 			tenant_id: $tenant_id,
 			organization_id: $organization_id
 		})
 		WITH e
 		MATCH (w:Workflow {id: $workflow_id})
 		CREATE (w)-[:HAS_EXECUTION]->(e)
+		SET w.execution_count = w.execution_count + 1,
+		    w.last_executed = $started_at
 		RETURN e
 	`
 
-	parameters := map[string]interface{}{
+	// For Neo4j driver compatibility: use now if completed, otherwise use started_at as placeholder
+	var completedAtValue interface{}
+	if execution.CompletedAt != nil {
+		completedAtValue = *execution.CompletedAt
+	} else {
+		completedAtValue = nil
+	}
+
+	parameters := map[string]any{
 		"id":              execution.ID,
 		"workflow_id":     execution.WorkflowID,
 		"trigger_id":      execution.TriggerID,
@@ -445,9 +720,11 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string
 		"progress":        execution.Progress,
 		"current_step":    execution.CurrentStep,
 		"started_at":      execution.StartedAt,
+		"completed_at":    completedAtValue,
 		"runtime":         execution.Runtime,
 		"input":           serializeParameters(execution.Input),
 		"output":          serializeParameters(execution.Output),
+		"error_message":   execution.ErrorMessage,
 		"tenant_id":       execution.TenantID,
 		"organization_id": execution.OrganizationID,
 	}
@@ -455,7 +732,7 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string
 	session := s.neo4j.Session(ctx)
 	defer session.Close(ctx)
 
-	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		result, err := tx.Run(ctx, query, parameters)
 		if err != nil {
 			return nil, err
@@ -468,13 +745,11 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string
 		return nil, fmt.Errorf("failed to create workflow execution: %w", err)
 	}
 
-	// TODO: Start actual workflow execution process here
-	// This would involve processing steps, handling conditions, etc.
-	// For now, we'll just mark it as running
-
-	s.logger.Info("Started workflow execution", 
-		zap.String("execution_id", execution.ID), 
-		zap.String("workflow_id", workflowID))
+	s.logger.Info("Workflow execution recorded",
+		zap.String("execution_id", execution.ID),
+		zap.String("workflow_id", workflowID),
+		zap.String("status", execution.Status),
+		zap.Int("steps", len(workflow.Steps)))
 
 	return execution, nil
 }
@@ -848,6 +1123,32 @@ func (s *WorkflowService) nodeToWorkflowStep(node neo4j.Node) *models.WorkflowSt
 		}
 	}
 
+	// Parse Argo-aligned fields
+	if deps, found := props["dependencies"]; found && deps != nil {
+		if depsList, ok := deps.([]interface{}); ok {
+			for _, d := range depsList {
+				if ds, ok := d.(string); ok {
+					step.Dependencies = append(step.Dependencies, ds)
+				}
+			}
+		}
+	}
+	if templateName, found := props["template_name"]; found && templateName != nil {
+		if tn, ok := templateName.(string); ok {
+			step.TemplateName = tn
+		}
+	}
+	if templateType, found := props["template_type"]; found && templateType != nil {
+		if tt, ok := templateType.(string); ok {
+			step.TemplateType = tt
+		}
+	}
+	if when, found := props["when_condition"]; found && when != nil {
+		if w, ok := when.(string); ok {
+			step.When = w
+		}
+	}
+
 	return step
 }
 
@@ -975,4 +1276,559 @@ func (s *WorkflowService) recordToWorkflowExecution(record *neo4j.Record, alias 
 	}
 
 	return execution, nil
+}
+
+// UploadTriggerConfig defines configuration for content-based upload routing
+type UploadTriggerConfig struct {
+	AcceptedExtensions []string `json:"accepted_extensions,omitempty"`
+	AcceptedMimeTypes  []string `json:"accepted_mime_types,omitempty"`
+	MaxFileSizeMB      int      `json:"max_file_size_mb,omitempty"`
+	SourceFilter       string   `json:"source_filter,omitempty"`
+	NotebookIDs        []string `json:"notebook_ids,omitempty"`
+	TagFilters         []string `json:"tag_filters,omitempty"`
+	UploadEndpoint     string   `json:"upload_endpoint,omitempty"`
+	OutputNotebookID   string   `json:"output_notebook_id,omitempty"`
+	OutputMode         string   `json:"output_mode,omitempty"`
+}
+
+// DocumentEventTriggerConfig defines configuration for document event triggers
+type DocumentEventTriggerConfig struct {
+	EventType      string   `json:"event_type"`
+	NotebookIDs    []string `json:"notebook_ids,omitempty"`
+	MimeTypeFilter []string `json:"mime_type_filter,omitempty"`
+	TagFilters     []string `json:"tag_filters,omitempty"`
+}
+
+// EvaluateUploadTriggers checks active workflows for matching upload triggers and publishes events
+func (s *WorkflowService) EvaluateUploadTriggers(ctx context.Context, document *models.Document, source string, spaceContext *models.SpaceContext) {
+	if s.kafkaService == nil {
+		s.logger.Debug("Kafka not available, skipping upload trigger evaluation")
+		return
+	}
+
+	query := `
+		MATCH (w:Workflow)-[:HAS_TRIGGER]->(t:WorkflowTrigger)
+		WHERE w.tenant_id = $tenant_id
+		  AND w.status = 'active'
+		  AND t.type = 'upload'
+		  AND t.is_active = true
+		RETURN w.id as workflow_id, t.id as trigger_id, t.configuration as trigger_config
+	`
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{
+			"tenant_id": spaceContext.TenantID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to query upload triggers", zap.Error(err))
+		return
+	}
+
+	records := result.([]*neo4j.Record)
+	for _, record := range records {
+		workflowID, _ := record.Get("workflow_id")
+		triggerID, _ := record.Get("trigger_id")
+		triggerConfigStr, _ := record.Get("trigger_config")
+
+		var triggerConfig UploadTriggerConfig
+		if configStr, ok := triggerConfigStr.(string); ok && configStr != "" {
+			if err := json.Unmarshal([]byte(configStr), &triggerConfig); err != nil {
+				s.logger.Warn("Failed to parse trigger config", zap.Error(err))
+				continue
+			}
+		}
+
+		if !s.matchesUploadTrigger(document, source, &triggerConfig) {
+			continue
+		}
+
+		outputNotebookID := triggerConfig.OutputNotebookID
+		if triggerConfig.OutputMode == "same_notebook" || outputNotebookID == "" {
+			outputNotebookID = document.NotebookID
+		}
+
+		eventData := map[string]interface{}{
+			"workflow_id":        workflowID,
+			"trigger_id":        triggerID,
+			"document_id":       document.ID,
+			"file_name":         document.Name,
+			"mime_type":         document.MimeType,
+			"size_bytes":        document.SizeBytes,
+			"notebook_id":       document.NotebookID,
+			"tags":              document.Tags,
+			"storage_path":      document.StoragePath,
+			"output_notebook_id": outputNotebookID,
+			"tenant_id":         spaceContext.TenantID,
+			"space_id":          spaceContext.SpaceID,
+		}
+
+		event := NewWorkflowEvent(EventWorkflowFileUploaded, workflowID.(string), "", eventData)
+		if err := s.kafkaService.PublishEvent(ctx, event); err != nil {
+			s.logger.Error("Failed to publish workflow file uploaded event",
+				zap.String("workflow_id", workflowID.(string)),
+				zap.Error(err))
+		} else {
+			s.logger.Info("Published workflow upload trigger",
+				zap.String("workflow_id", workflowID.(string)),
+				zap.String("trigger_id", triggerID.(string)),
+				zap.String("document_id", document.ID))
+		}
+	}
+}
+
+// matchesUploadTrigger checks if a document matches an upload trigger's filters
+func (s *WorkflowService) matchesUploadTrigger(doc *models.Document, source string, config *UploadTriggerConfig) bool {
+	// Source filter
+	if config.SourceFilter != "" && config.SourceFilter != "any" && config.SourceFilter != source {
+		return false
+	}
+
+	// Extension filter
+	if len(config.AcceptedExtensions) > 0 {
+		ext := strings.TrimPrefix(filepath.Ext(doc.Name), ".")
+		found := false
+		for _, accepted := range config.AcceptedExtensions {
+			if strings.EqualFold(ext, accepted) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// MIME type filter
+	if len(config.AcceptedMimeTypes) > 0 {
+		found := false
+		for _, accepted := range config.AcceptedMimeTypes {
+			if strings.EqualFold(doc.MimeType, accepted) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// File size filter
+	if config.MaxFileSizeMB > 0 && doc.SizeBytes > int64(config.MaxFileSizeMB)*1024*1024 {
+		return false
+	}
+
+	// Notebook ID filter
+	if len(config.NotebookIDs) > 0 {
+		found := false
+		for _, nbID := range config.NotebookIDs {
+			if nbID == doc.NotebookID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Tag filter (match any)
+	if len(config.TagFilters) > 0 && len(doc.Tags) > 0 {
+		found := false
+		for _, filterTag := range config.TagFilters {
+			for _, docTag := range doc.Tags {
+				if strings.EqualFold(filterTag, docTag) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// EvaluateDocumentEventTriggers checks active workflows for matching document event triggers
+func (s *WorkflowService) EvaluateDocumentEventTriggers(ctx context.Context, document *models.Document, eventType string, spaceContext *models.SpaceContext) {
+	if s.kafkaService == nil {
+		s.logger.Debug("Kafka not available, skipping document event trigger evaluation")
+		return
+	}
+
+	query := `
+		MATCH (w:Workflow)-[:HAS_TRIGGER]->(t:WorkflowTrigger)
+		WHERE w.tenant_id = $tenant_id
+		  AND w.status = 'active'
+		  AND t.type = 'document_event'
+		  AND t.is_active = true
+		RETURN w.id as workflow_id, t.id as trigger_id, t.configuration as trigger_config
+	`
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{
+			"tenant_id": spaceContext.TenantID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to query document event triggers", zap.Error(err))
+		return
+	}
+
+	records := result.([]*neo4j.Record)
+	for _, record := range records {
+		workflowID, _ := record.Get("workflow_id")
+		triggerID, _ := record.Get("trigger_id")
+		triggerConfigStr, _ := record.Get("trigger_config")
+
+		var triggerConfig DocumentEventTriggerConfig
+		if configStr, ok := triggerConfigStr.(string); ok && configStr != "" {
+			if err := json.Unmarshal([]byte(configStr), &triggerConfig); err != nil {
+				s.logger.Warn("Failed to parse document event trigger config", zap.Error(err))
+				continue
+			}
+		}
+
+		if !s.matchesDocumentEventTrigger(document, eventType, &triggerConfig) {
+			continue
+		}
+
+		eventData := map[string]interface{}{
+			"workflow_id":   workflowID,
+			"trigger_id":   triggerID,
+			"document_id":  document.ID,
+			"event_type":   eventType,
+			"file_name":    document.Name,
+			"mime_type":    document.MimeType,
+			"notebook_id":  document.NotebookID,
+			"tenant_id":    spaceContext.TenantID,
+			"space_id":     spaceContext.SpaceID,
+		}
+
+		event := NewWorkflowEvent(EventWorkflowDocumentEvent, workflowID.(string), "", eventData)
+		if err := s.kafkaService.PublishEvent(ctx, event); err != nil {
+			s.logger.Error("Failed to publish workflow document event",
+				zap.String("workflow_id", workflowID.(string)),
+				zap.Error(err))
+		} else {
+			s.logger.Info("Published workflow document event trigger",
+				zap.String("workflow_id", workflowID.(string)),
+				zap.String("event_type", eventType),
+				zap.String("document_id", document.ID))
+		}
+	}
+}
+
+// matchesDocumentEventTrigger checks if a document event matches a trigger's filters
+func (s *WorkflowService) matchesDocumentEventTrigger(doc *models.Document, eventType string, config *DocumentEventTriggerConfig) bool {
+	// Event type must match
+	if config.EventType != "" && config.EventType != eventType {
+		return false
+	}
+
+	// MIME type filter
+	if len(config.MimeTypeFilter) > 0 {
+		found := false
+		for _, accepted := range config.MimeTypeFilter {
+			if strings.EqualFold(doc.MimeType, accepted) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Notebook ID filter
+	if len(config.NotebookIDs) > 0 {
+		found := false
+		for _, nbID := range config.NotebookIDs {
+			if nbID == doc.NotebookID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Tag filter
+	if len(config.TagFilters) > 0 && len(doc.Tags) > 0 {
+		found := false
+		for _, filterTag := range config.TagFilters {
+			for _, docTag := range doc.Tags {
+				if strings.EqualFold(filterTag, docTag) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// UpdateExecutionStatus updates a WorkflowExecution node's status, output, and completion time.
+// Called by the webhook handler when Argo reports workflow completion.
+func (s *WorkflowService) UpdateExecutionStatus(ctx context.Context, workflowID, executionID, status, result, errorMsg string) error {
+	now := time.Now()
+
+	// Map Argo status to internal status
+	internalStatus := "completed"
+	switch status {
+	case "Failed", "Error":
+		internalStatus = "failed"
+	case "Succeeded":
+		internalStatus = "completed"
+	default:
+		internalStatus = strings.ToLower(status)
+	}
+
+	query := `
+		MATCH (e:WorkflowExecution {workflow_id: $workflow_id})
+		WHERE e.id = $execution_id OR e.id CONTAINS $execution_id
+		SET e.status = $status,
+		    e.completed_at = datetime($completed_at),
+		    e.error_message = $error_message,
+		    e.current_step = 'done'
+		WITH e
+		MATCH (w:Workflow {id: $workflow_id})
+		SET w.last_status = $status
+		RETURN e.id AS id
+	`
+
+	// If no execution_id provided, find the most recent submitted execution for this workflow
+	if executionID == "" || strings.Contains(executionID, "-") {
+		// executionID from Argo is the Argo workflow name (e.g., "my-workflow-abc123"),
+		// not the internal execution ID. Try to match the most recent submitted execution.
+		query = `
+			MATCH (w:Workflow {id: $workflow_id})-[:HAS_EXECUTION]->(e:WorkflowExecution)
+			WHERE e.status = 'submitted'
+			WITH e ORDER BY e.started_at DESC LIMIT 1
+			SET e.status = $status,
+			    e.completed_at = datetime($completed_at),
+			    e.error_message = $error_message,
+			    e.current_step = 'done'
+			WITH e
+			MATCH (w:Workflow {id: $workflow_id})
+			SET w.last_status = $status
+			RETURN e.id AS id
+		`
+	}
+
+	// Store result in output if provided
+	if result != "" {
+		query = strings.Replace(query, "e.current_step = 'done'",
+			"e.current_step = 'done', e.output = $output", 1)
+	}
+
+	params := map[string]interface{}{
+		"workflow_id":   workflowID,
+		"execution_id":  executionID,
+		"status":        internalStatus,
+		"completed_at":  now.Format(time.RFC3339),
+		"error_message": errorMsg,
+	}
+	if result != "" {
+		params["output"] = result
+	}
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return r.Collect(ctx)
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to update execution status",
+			zap.String("workflow_id", workflowID),
+			zap.String("execution_id", executionID),
+			zap.Error(err))
+		return fmt.Errorf("failed to update execution status: %w", err)
+	}
+
+	records, _ := res.([]*neo4j.Record)
+	if len(records) == 0 {
+		s.logger.Warn("No matching execution found to update",
+			zap.String("workflow_id", workflowID),
+			zap.String("execution_id", executionID))
+	} else {
+		s.logger.Info("Execution status updated",
+			zap.String("workflow_id", workflowID),
+			zap.String("status", internalStatus))
+	}
+
+	// Update workflow aggregate stats
+	statsQuery := `
+		MATCH (w:Workflow {id: $workflow_id})-[:HAS_EXECUTION]->(e:WorkflowExecution)
+		WHERE e.status IN ['completed', 'failed']
+		WITH w,
+		     count(e) AS total,
+		     sum(CASE WHEN e.status = 'completed' THEN 1 ELSE 0 END) AS successes,
+		     sum(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failures
+		SET w.success_count = successes,
+		    w.failure_count = failures
+	`
+	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, statsQuery, map[string]interface{}{"workflow_id": workflowID})
+		if err != nil {
+			return nil, err
+		}
+		return r.Collect(ctx)
+	})
+
+	return nil
+}
+
+// PublishProductionArtifact stores a production artifact and links it to a notebook
+func (s *WorkflowService) PublishProductionArtifact(ctx context.Context, workflowID, executionID string, artifact map[string]interface{}, destinationNotebookID string, spaceContext *models.SpaceContext) error {
+	artifactID := fmt.Sprintf("art_%d", time.Now().UnixNano())
+
+	query := `
+		CREATE (a:WorkflowArtifact {
+			id: $id,
+			workflow_id: $workflow_id,
+			execution_id: $execution_id,
+			tier: 'production',
+			name: $name,
+			format: $format,
+			storage_path: $storage_path,
+			notebook_id: $notebook_id,
+			tenant_id: $tenant_id,
+			created_at: $created_at
+		})
+		WITH a
+		MATCH (w:Workflow {id: $workflow_id})
+		CREATE (w)-[:HAS_ARTIFACT]->(a)
+		RETURN a
+	`
+
+	name, _ := artifact["name"].(string)
+	format, _ := artifact["format"].(string)
+	storagePath, _ := artifact["storage_path"].(string)
+
+	params := map[string]interface{}{
+		"id":            artifactID,
+		"workflow_id":   workflowID,
+		"execution_id":  executionID,
+		"name":          name,
+		"format":        format,
+		"storage_path":  storagePath,
+		"notebook_id":   destinationNotebookID,
+		"tenant_id":     spaceContext.TenantID,
+		"created_at":    time.Now(),
+	}
+
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return result.Collect(ctx)
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to publish production artifact",
+			zap.String("workflow_id", workflowID),
+			zap.String("execution_id", executionID),
+			zap.Error(err))
+		return fmt.Errorf("failed to publish production artifact: %w", err)
+	}
+
+	s.logger.Info("Published production artifact",
+		zap.String("artifact_id", artifactID),
+		zap.String("workflow_id", workflowID),
+		zap.String("notebook_id", destinationNotebookID))
+
+	return nil
+}
+
+// GetExecutionLiveStatus queries Argo for live per-node status of a workflow execution.
+// Returns the Argo workflow name and per-node statuses.
+func (s *WorkflowService) GetExecutionLiveStatus(ctx context.Context, workflowID, executionID string, spaceContext *models.SpaceContext) (*ArgoWorkflowStatus, error) {
+	// Look up the Argo workflow name from the execution record
+	session := s.neo4j.Session(ctx)
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, `
+			MATCH (e:WorkflowExecution {workflow_id: $workflowID, tenant_id: $tenantID})
+			WHERE e.id = $executionID OR e.argo_name IS NOT NULL
+			RETURN e.argo_name AS argoName, e.status AS status
+			ORDER BY e.started_at DESC
+			LIMIT 1
+		`, map[string]interface{}{
+			"workflowID":  workflowID,
+			"executionID": executionID,
+			"tenantID":    spaceContext.TenantID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if r.Next(ctx) {
+			rec := r.Record()
+			argoName, _ := rec.Get("argoName")
+			status, _ := rec.Get("status")
+			return map[string]interface{}{
+				"argoName": argoName,
+				"status":   status,
+			}, nil
+		}
+		return nil, fmt.Errorf("execution not found")
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up execution: %w", err)
+	}
+
+	execInfo := result.(map[string]interface{})
+	argoName, _ := execInfo["argoName"].(string)
+
+	if argoName == "" {
+		// No Argo workflow name — return status from Neo4j only
+		status, _ := execInfo["status"].(string)
+		return &ArgoWorkflowStatus{
+			Phase: status,
+		}, nil
+	}
+
+	// Query Argo for live status
+	return s.argoGenerator.GetArgoWorkflowStatus(ctx, argoName)
 }

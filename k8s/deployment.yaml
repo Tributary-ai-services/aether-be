@@ -17,6 +17,7 @@ spec:
         app: aether-backend
         component: api
     spec:
+      serviceAccountName: aether-backend
       containers:
       - name: aether-backend
         image: registry-api.tas.scharber.com/aether-backend:latest

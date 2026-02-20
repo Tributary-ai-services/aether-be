@@ -5,6 +5,9 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
 	"github.com/Tributary-ai-services/aether-be/internal/config"
@@ -42,6 +45,11 @@ type APIServer struct {
 	SavedQueryHandler    *SavedQueryHandler
 	AIPlaygroundHandler  *AIPlaygroundHandler
 	ProductionHandler    *ProductionHandler
+	MCPHandler           *MCPHandler
+	ArgoHandler          *ArgoHandler
+	NotificationHandler  *NotificationHandler
+	OAuthHandler         *OAuthHandler
+	CloudDriveHandler    *CloudDriveHandler
 	SpaceService         *services.SpaceContextService
 	Metrics              *metrics.Metrics
 	logger               *logger.Logger
@@ -68,7 +76,8 @@ func NewAPIServer(
 	documentService := services.NewDocumentService(neo4j, notebookService, log)
 	chunkService := services.NewChunkService(neo4j, log)
 	mlService := services.NewMLService(neo4j, log)
-	workflowService := services.NewWorkflowService(neo4j, log)
+	argoGenerator := services.NewArgoGenerator(log)
+	workflowService := services.NewWorkflowService(neo4j, kafkaService, argoGenerator, log)
 	teamService := services.NewTeamService(neo4j, log)
 	streamService := services.NewStreamService(neo4j, log)
 
@@ -98,7 +107,7 @@ func NewAPIServer(
 
 	// Initialize processing event handler for Kafka events from audimodal
 	if kafkaService != nil {
-		processingEventHandler := services.NewProcessingEventHandler(documentService, kafkaService, log)
+		processingEventHandler := services.NewProcessingEventHandler(documentService, workflowService, kafkaService, log)
 		if err := processingEventHandler.Start(); err != nil {
 			log.WithError(err).Error("Failed to start processing event handler - document sync from audimodal will not work")
 		} else {
@@ -133,9 +142,23 @@ func NewAPIServer(
 	securityEventService := services.NewSecurityEventService(kafkaService, postgresDB, log)
 	securityHandler := NewSecurityHandler(securityEventService, log)
 
+	// Initialize K8s client for database credential management (in-cluster)
+	var k8sClient kubernetes.Interface
+	if k8sConfig, err := rest.InClusterConfig(); err != nil {
+		log.Warn("Not running in K8s cluster — K8s Secret/CRD management disabled for databases")
+	} else {
+		if client, err := kubernetes.NewForConfig(k8sConfig); err != nil {
+			log.WithError(err).Error("Failed to create K8s client — K8s Secret/CRD management disabled")
+		} else {
+			k8sClient = client
+			log.Info("K8s client initialized for database credential management")
+		}
+	}
+
 	// Initialize DBHub and Database service and handler
 	dbhubService := services.NewDBHubService(&cfg.DBHub, log)
-	databaseService := services.NewDatabaseService(neo4j, dbhubService, log)
+	neo4jQueryService := services.NewNeo4jQueryService(k8sClient, log)
+	databaseService := services.NewDatabaseService(neo4j, dbhubService, neo4jQueryService, log)
 	databaseHandler := NewDatabaseHandler(databaseService, userService, log)
 
 	// Initialize SavedQuery service and handler
@@ -149,6 +172,44 @@ func NewAPIServer(
 	// Initialize Production service and handler
 	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, log)
 	productionHandler := NewProductionHandler(productionService, userService, teamService, log)
+
+	// Initialize Argo Events service and handler
+	argoService := services.NewArgoService(log)
+	argoHandler := NewArgoHandler(argoService, log)
+
+	// Initialize notification service and handler
+	notificationService := services.NewNotificationService(neo4j, kafkaService, log)
+	// Wire execution status updater to close the feedback loop:
+	// when Argo completes, the webhook updates the WorkflowExecution node
+	notificationService.SetExecutionUpdater(workflowService)
+	notificationHandler := NewNotificationHandler(notificationService, log)
+
+	// Initialize OAuth and Cloud Drive services
+	oauthCfg := &services.OAuthConfig{
+		GoogleClientID:        cfg.OAuth.GoogleClientID,
+		GoogleClientSecret:    cfg.OAuth.GoogleClientSecret,
+		MicrosoftClientID:     cfg.OAuth.MicrosoftClientID,
+		MicrosoftClientSecret: cfg.OAuth.MicrosoftClientSecret,
+		MicrosoftTenantID:     cfg.OAuth.MicrosoftTenantID,
+		EncryptionKey:         cfg.OAuth.EncryptionKey,
+		RedirectBaseURL:       cfg.OAuth.RedirectBaseURL,
+	}
+	var redisClientForOAuth *redis.Client
+	if cfg.Redis.Addr != "" {
+		redisClientForOAuth = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+	}
+	oauthService := services.NewOAuthService(neo4j, redisClientForOAuth, oauthCfg, log)
+	cloudDriveService := services.NewCloudDriveService(oauthService, storageService, audiModalClient, documentService, log)
+	oauthHandler := NewOAuthHandler(oauthService, log)
+	cloudDriveHandler := NewCloudDriveHandler(cloudDriveService, oauthService, log)
+
+	// Initialize Napkin MCP service and MCP handler
+	napkinService := services.NewNapkinService(&cfg.Napkin, log)
+	mcpHandler := NewMCPHandler(napkinService, cfg, log)
 
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
@@ -198,6 +259,11 @@ func NewAPIServer(
 		SavedQueryHandler:    savedQueryHandler,
 		AIPlaygroundHandler:  aiPlaygroundHandler,
 		ProductionHandler:    productionHandler,
+		MCPHandler:           mcpHandler,
+		ArgoHandler:          argoHandler,
+		NotificationHandler:  notificationHandler,
+		OAuthHandler:         oauthHandler,
+		CloudDriveHandler:    cloudDriveHandler,
 		SpaceService:         spaceContextService,
 		Metrics:              metricsInstance,
 		logger:               log.WithService("api_server"),
@@ -218,6 +284,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 
 	// Webhook routes (no auth required)
 	s.Router.POST("/webhooks/audimodal/processing-complete", s.DocumentHandler.AudiModalProcessingWebhook)
+	s.Router.POST("/webhooks/workflow-complete", s.NotificationHandler.WorkflowCompleteWebhook)
 
 	// API routes with authentication
 	api := s.Router.Group("/api/v1")
@@ -596,6 +663,22 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		workflows.POST("/:id/execute", s.WorkflowHandler.ExecuteWorkflow)
 		workflows.PUT("/:id/status", s.WorkflowHandler.UpdateWorkflowStatus)
 		workflows.GET("/:id/executions", s.WorkflowHandler.GetWorkflowExecutions)
+		workflows.GET("/:id/executions/:execId/status", s.WorkflowHandler.GetExecutionStatus)
+		workflows.POST("/:id/upload", s.WorkflowHandler.UploadToWorkflow)
+		workflows.POST("/:id/artifacts", s.WorkflowHandler.PublishArtifact)
+		workflows.GET("/:id/versions", s.WorkflowHandler.ListWorkflowVersions)
+	}
+
+	// Notification routes
+	notifications := api.Group("/notifications")
+	notifications.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	notifications.Use(middleware.RequireSpaceContext(s.logger))
+	{
+		notifications.GET("", s.NotificationHandler.GetNotifications)
+		notifications.GET("/unread-count", s.NotificationHandler.GetUnreadCount)
+		notifications.PUT("/:id/read", s.NotificationHandler.MarkAsRead)
+		notifications.PUT("/read-all", s.NotificationHandler.MarkAllAsRead)
+		notifications.DELETE("/:id", s.NotificationHandler.DeleteNotification)
 	}
 
 	// Live streaming routes
@@ -622,6 +705,48 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		// Stream analytics
 		streams.GET("/analytics", s.StreamHandler.GetStreamAnalytics)
 		streams.GET("/analytics/realtime", s.StreamHandler.GetRealtimeAnalytics)
+	}
+
+	// MCP server management routes
+	mcpGroup := api.Group("/mcp")
+	{
+		mcpGroup.GET("/servers", s.MCPHandler.ListServers)
+		mcpGroup.GET("/servers/:id/tools", s.MCPHandler.ListTools)
+		mcpGroup.POST("/invoke", s.MCPHandler.InvokeTool)
+	}
+
+	// Credentials routes - list and manage OAuth credentials
+	credentials := api.Group("/credentials")
+	{
+		credentials.GET("", s.OAuthHandler.ListCredentials)
+		credentials.DELETE("/:id", s.OAuthHandler.DeleteCredential)
+	}
+
+	// OAuth routes - for cloud drive authentication
+	oauth := api.Group("/oauth")
+	{
+		oauth.POST("/:provider/authorize", s.OAuthHandler.Authorize)
+		oauth.POST("/:provider/callback", s.OAuthHandler.Callback)
+	}
+
+	// Cloud Drives routes - file browsing and import from Google Drive, OneDrive, SharePoint
+	// IMPORTANT: Specific routes (sharepoint/*) MUST come before generic :provider routes
+	// because Gin's `:provider` param would otherwise match "sharepoint" first.
+	cloudDrives := api.Group("/cloud-drives")
+	cloudDrives.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
+	{
+		cloudDrives.GET("/sharepoint/sites", s.CloudDriveHandler.ListSharePointSites)
+		cloudDrives.GET("/sharepoint/sites/:siteId/libraries", s.CloudDriveHandler.ListSharePointLibraries)
+		cloudDrives.GET("/:provider/files", s.CloudDriveHandler.ListFiles)
+		cloudDrives.GET("/:provider/search", s.CloudDriveHandler.SearchFiles)
+		cloudDrives.POST("/:provider/import", s.CloudDriveHandler.ImportFiles)
+	}
+
+	// Argo Events routes - reads CRDs from K8s API (graceful degradation if unavailable)
+	argoGroup := api.Group("/argo")
+	{
+		argoGroup.GET("/event-sources", s.ArgoHandler.ListEventSources)
+		argoGroup.GET("/sensors", s.ArgoHandler.ListSensors)
 	}
 
 	// Router proxy routes with flexible authentication

@@ -419,6 +419,104 @@ func (h *WorkflowHandler) GetWorkflowExecutions(c *gin.Context) {
 	})
 }
 
+// GetExecutionStatus retrieves live per-node status for a workflow execution from Argo
+// @Summary Get execution status
+// @Description Get live per-node status for a specific workflow execution
+// @Tags workflows
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Workflow ID"
+// @Param execId path string true "Execution ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/workflows/{id}/executions/{execId}/status [get]
+func (h *WorkflowHandler) GetExecutionStatus(c *gin.Context) {
+	workflowID := c.Param("id")
+	execID := c.Param("execId")
+	if workflowID == "" || execID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Workflow ID and Execution ID are required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	status, err := h.workflowService.GetExecutionLiveStatus(c.Request.Context(), workflowID, execID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get execution status",
+			zap.String("workflow_id", workflowID),
+			zap.String("execution_id", execID),
+			zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to get execution status"))
+		return
+	}
+
+	// Map Argo node statuses to a simpler format for frontend
+	nodeStatuses := make(map[string]interface{})
+	for _, node := range status.Nodes {
+		if node.Type == "Pod" { // Only include actual task pods, not DAG/Steps container nodes
+			nodeStatuses[node.DisplayName] = map[string]interface{}{
+				"phase":      node.Phase,
+				"startedAt":  node.StartedAt,
+				"finishedAt": node.FinishedAt,
+				"message":    node.Message,
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"phase":        status.Phase,
+		"startedAt":    status.StartedAt,
+		"finishedAt":   status.FinishedAt,
+		"message":      status.Message,
+		"nodeStatuses": nodeStatuses,
+	})
+}
+
+// ListWorkflowVersions returns all version snapshots of a workflow
+func (h *WorkflowHandler) ListWorkflowVersions(c *gin.Context) {
+	workflowID := c.Param("id")
+	if workflowID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Workflow ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	versions, err := h.workflowService.ListWorkflowVersions(c.Request.Context(), workflowID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to list workflow versions",
+			zap.String("workflow_id", workflowID),
+			zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to list workflow versions"))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"versions": versions,
+	})
+}
+
 // UpdateWorkflowStatus updates workflow status (activate/pause)
 // @Summary Update workflow status
 // @Description Update workflow status to active, paused, or disabled
@@ -525,4 +623,150 @@ func (h *WorkflowHandler) GetWorkflowAnalytics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, analytics)
+}
+
+// UploadToWorkflow handles direct file upload to a specific workflow
+// @Summary Upload file to workflow
+// @Description Upload a file directly to trigger a specific workflow
+// @Tags workflows
+// @Accept multipart/form-data
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Workflow ID"
+// @Param file formance file true "File to upload"
+// @Success 202 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 404 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/workflows/{id}/upload [post]
+func (h *WorkflowHandler) UploadToWorkflow(c *gin.Context) {
+	workflowID := c.Param("id")
+	if workflowID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Workflow ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Verify workflow exists and is active
+	workflow, err := h.workflowService.GetWorkflowByID(c.Request.Context(), workflowID, spaceContext)
+	if err != nil {
+		c.JSON(http.StatusNotFound, errors.NotFound("Workflow not found"))
+		return
+	}
+	if workflow.Status != "active" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Workflow is not active"))
+		return
+	}
+
+	// Get uploaded file
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("File is required", err))
+		return
+	}
+	defer file.Close()
+
+	h.logger.Info("File uploaded to workflow",
+		zap.String("workflow_id", workflowID),
+		zap.String("file_name", header.Filename),
+		zap.Int64("file_size", header.Size),
+		zap.String("user_id", userID))
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":     "File accepted for workflow processing",
+		"workflow_id": workflowID,
+		"file_name":   header.Filename,
+		"file_size":   header.Size,
+	})
+}
+
+// PublishArtifact stores a workflow execution artifact and optionally creates a Document node
+// @Summary Publish workflow artifact
+// @Description Store workflow output as an artifact linked to a notebook
+// @Tags workflows
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param id path string true "Workflow ID"
+// @Param artifact body models.PublishArtifactRequest true "Artifact data"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} errors.APIError
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/workflows/{id}/artifacts [post]
+func (h *WorkflowHandler) PublishArtifact(c *gin.Context) {
+	workflowID := c.Param("id")
+	if workflowID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Workflow ID is required", nil))
+		return
+	}
+
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	var req models.PublishArtifactRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.Validation("Invalid request body", err))
+		return
+	}
+
+	if req.Content == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Content is required", nil))
+		return
+	}
+
+	artifact := map[string]interface{}{
+		"name":         req.Filename,
+		"format":       req.Format,
+		"storage_path": "", // Will be set by service after MinIO upload
+	}
+
+	err = h.workflowService.PublishProductionArtifact(
+		c.Request.Context(),
+		workflowID,
+		req.ExecutionID,
+		artifact,
+		req.NotebookID,
+		spaceContext,
+	)
+	if err != nil {
+		h.logger.Error("Failed to publish artifact",
+			zap.String("workflow_id", workflowID),
+			zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to publish artifact"))
+		return
+	}
+
+	h.logger.Info("Workflow artifact published",
+		zap.String("workflow_id", workflowID),
+		zap.String("execution_id", req.ExecutionID),
+		zap.String("format", req.Format),
+		zap.String("user_id", userID))
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success":     true,
+		"workflow_id": workflowID,
+		"filename":    req.Filename,
+		"format":      req.Format,
+	})
 }

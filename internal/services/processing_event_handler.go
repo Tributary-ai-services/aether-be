@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	"github.com/Tributary-ai-services/aether-be/internal/models"
 )
 
 // ProcessingCompleteEvent represents the event from audimodal when processing completes
@@ -39,14 +40,16 @@ type ProcessingCompleteData struct {
 // ProcessingEventHandler handles processing-related events from Kafka
 type ProcessingEventHandler struct {
 	documentService *DocumentService
+	workflowService *WorkflowService
 	kafkaService    *KafkaService
 	logger          *logger.Logger
 }
 
 // NewProcessingEventHandler creates a new processing event handler
-func NewProcessingEventHandler(documentService *DocumentService, kafkaService *KafkaService, log *logger.Logger) *ProcessingEventHandler {
+func NewProcessingEventHandler(documentService *DocumentService, workflowService *WorkflowService, kafkaService *KafkaService, log *logger.Logger) *ProcessingEventHandler {
 	return &ProcessingEventHandler{
 		documentService: documentService,
+		workflowService: workflowService,
 		kafkaService:    kafkaService,
 		logger:          log.WithService("processing_event_handler"),
 	}
@@ -177,6 +180,20 @@ func (h *ProcessingEventHandler) handleProcessingComplete(ctx context.Context, m
 		zap.String("status", status),
 		zap.Int("chunks_created", event.Data.ChunksCreated),
 	)
+
+	// Evaluate document event triggers for matching workflows
+	if event.Data.Success && h.workflowService != nil {
+		// We don't have full spaceContext here, construct a minimal one
+		minimalSpaceContext := &models.SpaceContext{
+			TenantID: event.TenantID,
+		}
+		go h.workflowService.EvaluateDocumentEventTriggers(context.Background(), &models.Document{
+			ID:         documentID,
+			Name:       event.Data.URL,
+			MimeType:   "",
+			NotebookID: "",
+		}, "processing.completed", minimalSpaceContext)
+	}
 
 	return nil
 }

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -413,16 +414,11 @@ func serializeParameters(params map[string]interface{}) string {
 	if len(params) == 0 {
 		return ""
 	}
-	// In a real implementation, you'd use JSON marshaling
-	// For now, return a simple string representation
-	result := ""
-	for k, v := range params {
-		if result != "" {
-			result += ","
-		}
-		result += fmt.Sprintf("%s:%v", k, v)
+	data, err := json.Marshal(params)
+	if err != nil {
+		return ""
 	}
-	return result
+	return string(data)
 }
 
 func deserializeParameters(paramStr string) map[string]interface{} {
@@ -430,12 +426,15 @@ func deserializeParameters(paramStr string) map[string]interface{} {
 	if paramStr == "" {
 		return params
 	}
-	// In a real implementation, you'd use JSON unmarshaling
-	// For now, parse the simple string representation
+	// Try JSON first (new format)
+	if err := json.Unmarshal([]byte(paramStr), &params); err == nil {
+		return params
+	}
+	// Fall back to legacy key:value format for old data
 	pairs := strings.Split(paramStr, ",")
 	for _, pair := range pairs {
-		if kv := strings.Split(pair, ":"); len(kv) == 2 {
-			params[kv[0]] = kv[1]
+		if kv := strings.SplitN(pair, ":", 2); len(kv) == 2 {
+			params[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 		}
 	}
 	return params

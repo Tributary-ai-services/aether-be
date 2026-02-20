@@ -63,6 +63,15 @@ const (
 	EventSecurityThreatDetected EventType = "security.threat_detected"
 	EventSecurityReviewCompleted EventType = "security.review_completed"
 	EventSecurityPolicyViolation EventType = "security.policy_violation"
+
+	// Workflow events
+	EventWorkflowFileUploaded    EventType = "workflow.file_uploaded"
+	EventWorkflowDocumentEvent   EventType = "workflow.document_event"
+	EventWorkflowCompleted       EventType = "workflow.completed"
+	EventWorkflowFailed          EventType = "workflow.failed"
+
+	// Notification events
+	EventNotificationCreated EventType = "notification.created"
 )
 
 // Event represents a domain event
@@ -411,6 +420,11 @@ func (k *KafkaService) getTopicForEvent(eventType EventType) string {
 		EventSecurityThreatDetected: "security-events",
 		EventSecurityReviewCompleted: "security-events",
 		EventSecurityPolicyViolation: "security-events",
+		EventWorkflowFileUploaded:    "workflow.execute",
+		EventWorkflowDocumentEvent:   "workflow.execute",
+		EventWorkflowCompleted:       "workflow.results",
+		EventWorkflowFailed:          "workflow.results",
+		EventNotificationCreated:     "notifications",
 	}
 
 	baseTopic, exists := topicMap[eventType]
@@ -520,6 +534,16 @@ func NewSecurityEvent(eventType EventType, eventID, requestID, userID string, da
 	return Event{
 		Type:    eventType,
 		Subject: eventID,
+		Data:    data,
+		UserID:  userID,
+	}
+}
+
+// NewWorkflowEvent creates a new workflow-related event
+func NewWorkflowEvent(eventType EventType, workflowID, userID string, data map[string]interface{}) Event {
+	return Event{
+		Type:    eventType,
+		Subject: workflowID,
 		Data:    data,
 		UserID:  userID,
 	}

@@ -391,8 +391,26 @@ var largeContentFields = map[string]bool{
 	"text":     true,
 }
 
+// rawContentFields are fields that must NOT be sanitized at all because they
+// contain user-authored code/queries (SQL, Cypher, etc.) where quotes,
+// semicolons, and SQL keywords are legitimate content.
+var rawContentFields = map[string]bool{
+	"query":         true,
+	"sql":           true,
+	"code":          true, // OAuth authorization codes — opaque tokens, not user input
+	"state":         true, // OAuth CSRF state tokens
+	"code_verifier": true, // OAuth PKCE code verifier
+}
+
 // sanitizeStringValueForKey sanitizes string values based on field context
 func sanitizeStringValueForKey(value string, key string) string {
+	// Raw content fields (SQL/Cypher queries) must not be sanitized —
+	// they legitimately contain quotes, semicolons, and SQL keywords.
+	// These are always executed via parameterized queries so injection is not a risk.
+	if rawContentFields[key] {
+		return value
+	}
+
 	// For large content fields, use permissive options with very high max length
 	// Still applies XSS, SQL injection, and HTML stripping for security
 	if largeContentFields[key] {
