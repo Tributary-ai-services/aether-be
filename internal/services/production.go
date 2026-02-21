@@ -16,6 +16,12 @@ import (
 	"github.com/Tributary-ai-services/aether-be/pkg/errors"
 )
 
+// RendererResult represents the result from a renderer post-processing step
+type RendererResult struct {
+	URL      string                 `json:"url"`
+	Metadata map[string]interface{} `json:"metadata"`
+}
+
 // ProductionService handles production-related business logic
 type ProductionService struct {
 	neo4j           *database.Neo4jClient
@@ -25,6 +31,7 @@ type ProductionService struct {
 	teamService     *TeamService
 	spaceService    *SpaceService
 	audiModal       *AudiModalService
+	podcastMCP      *MCPClientService
 	logger          *logger.Logger
 }
 
@@ -37,6 +44,7 @@ func NewProductionService(
 	teamService *TeamService,
 	spaceService *SpaceService,
 	audiModal *AudiModalService,
+	podcastMCP *MCPClientService,
 	log *logger.Logger,
 ) *ProductionService {
 	return &ProductionService{
@@ -47,6 +55,7 @@ func NewProductionService(
 		teamService:     teamService,
 		spaceService:    spaceService,
 		audiModal:       audiModal,
+		podcastMCP:      podcastMCP,
 		logger:          log.WithService("production_service"),
 	}
 }
@@ -256,6 +265,20 @@ func (s *ProductionService) ExecuteProducer(ctx context.Context, notebookID stri
 		executionID = executeResp.ExecutionID
 	}
 
+	// If renderer requested, post-process the output
+	if rendererID, ok := req.Context["renderer_id"].(string); ok && rendererID != "" {
+		mediaResult, err := s.executeRenderer(ctx, rendererID, output, req)
+		if err != nil {
+			s.logger.Error("Renderer failed, saving text production without media",
+				zap.String("renderer_id", rendererID),
+				zap.Error(err))
+		} else {
+			production.MediaURL = mediaResult.URL
+			production.MediaMetadata = mediaResult.Metadata
+			production.RendererID = rendererID
+		}
+	}
+
 	responseTimeMs := int(time.Since(startTime).Milliseconds())
 
 	// Generate content from agent output
@@ -413,6 +436,169 @@ func (s *ProductionService) executeInternalProducerAgent(
 	)
 
 	return response.Output, nil
+}
+
+// executeRenderer post-processes a producer's text output through a renderer
+// Currently supports the podcast renderer via podcast-mcp
+func (s *ProductionService) executeRenderer(ctx context.Context, rendererID, textOutput string, req models.ProducerExecuteRequest) (*RendererResult, error) {
+	rendererType, _ := req.Context["renderer_type"].(string)
+
+	switch rendererType {
+	case "podcast":
+		return s.executePodcastRenderer(ctx, textOutput, req)
+	default:
+		return nil, fmt.Errorf("unsupported renderer type: %s", rendererType)
+	}
+}
+
+// executePodcastRenderer calls podcast-mcp to generate audio from a script
+func (s *ProductionService) executePodcastRenderer(ctx context.Context, script string, req models.ProducerExecuteRequest) (*RendererResult, error) {
+	if s.podcastMCP == nil || !s.podcastMCP.IsEnabled() {
+		return nil, fmt.Errorf("podcast MCP service is not available")
+	}
+
+	// Extract renderer config from context
+	ttsProvider, _ := req.Context["tts_provider"].(string)
+	if ttsProvider == "" {
+		ttsProvider = "elevenlabs"
+	}
+
+	speakers, _ := req.Context["speakers"].(string)
+	if speakers == "" {
+		speakers = "Alex, Sam"
+	}
+
+	voiceMapping, _ := req.Context["voice_mapping"].(map[string]interface{})
+
+	introMusicKey, _ := req.Context["intro_music_key"].(string)
+	outroMusicKey, _ := req.Context["outro_music_key"].(string)
+	ambientMusicKey, _ := req.Context["ambient_music_key"].(string)
+
+	// Build MCP tool arguments
+	args := map[string]interface{}{
+		"script":   script,
+		"provider": ttsProvider,
+		"title":    req.Title,
+		"config": map[string]interface{}{
+			"intro_music_key":   introMusicKey,
+			"outro_music_key":   outroMusicKey,
+			"ambient_music_key": ambientMusicKey,
+			"silence_gap_ms":    500,
+		},
+	}
+
+	if voiceMapping != nil {
+		voiceMappingJSON, err := json.Marshal(voiceMapping)
+		if err == nil {
+			args["voice_mapping"] = string(voiceMappingJSON)
+		}
+	}
+
+	s.logger.Info("Invoking podcast renderer via MCP",
+		zap.String("provider", ttsProvider),
+		zap.String("speakers", speakers),
+		zap.String("title", req.Title),
+	)
+
+	// Call podcast-mcp generate_podcast tool
+	resp, err := s.podcastMCP.InvokeTool(ctx, "generate_podcast", args)
+	if err != nil {
+		return nil, fmt.Errorf("podcast MCP call failed: %w", err)
+	}
+
+	if resp.IsError {
+		errText := "unknown error"
+		if len(resp.Content) > 0 {
+			errText = resp.Content[0].Text
+		}
+		return nil, fmt.Errorf("podcast generation failed: %s", errText)
+	}
+
+	// Parse the response - expect JSON with podcast_url, duration, etc.
+	if len(resp.Content) == 0 {
+		return nil, fmt.Errorf("empty response from podcast MCP")
+	}
+
+	var podcastResult map[string]interface{}
+	if err := json.Unmarshal([]byte(resp.Content[0].Text), &podcastResult); err != nil {
+		// If not JSON, treat the text as a URL
+		return &RendererResult{
+			URL: resp.Content[0].Text,
+			Metadata: map[string]interface{}{
+				"provider": ttsProvider,
+				"speakers": speakers,
+			},
+		}, nil
+	}
+
+	// Extract URL and metadata from the result
+	podcastURL, _ := podcastResult["podcast_url"].(string)
+	if podcastURL == "" {
+		podcastURL, _ = podcastResult["url"].(string)
+	}
+
+	metadata := map[string]interface{}{
+		"provider": ttsProvider,
+		"speakers": speakers,
+	}
+	if duration, ok := podcastResult["duration"]; ok {
+		metadata["duration"] = duration
+	}
+	if segments, ok := podcastResult["segments"]; ok {
+		metadata["segments"] = segments
+	}
+
+	s.logger.Info("Podcast rendered successfully",
+		zap.String("url", podcastURL),
+		zap.String("provider", ttsProvider),
+	)
+
+	return &RendererResult{
+		URL:      podcastURL,
+		Metadata: metadata,
+	}, nil
+}
+
+// ListRenderers returns available renderer workflows (workflows with type='renderer' and status='active')
+func (s *ProductionService) ListRenderers(ctx context.Context) ([]map[string]interface{}, error) {
+	query := `
+		MATCH (w:Workflow {type: 'renderer', status: 'active'})
+		RETURN w.id AS id, w.name AS name, w.description AS description,
+			   w.type AS type, w.configuration AS configuration,
+			   w.created_at AS created_at
+		ORDER BY w.name
+	`
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query renderer workflows: %w", err)
+	}
+
+	renderers := make([]map[string]interface{}, 0)
+	for _, record := range result.Records {
+		renderer := map[string]interface{}{}
+		if v, ok := record.Get("id"); ok && v != nil {
+			renderer["id"] = fmt.Sprintf("%v", v)
+		}
+		if v, ok := record.Get("name"); ok && v != nil {
+			renderer["name"] = fmt.Sprintf("%v", v)
+		}
+		if v, ok := record.Get("description"); ok && v != nil {
+			renderer["description"] = fmt.Sprintf("%v", v)
+		}
+		if v, ok := record.Get("type"); ok && v != nil {
+			renderer["type"] = fmt.Sprintf("%v", v)
+		}
+		if config, ok := record.Get("configuration"); ok && config != nil {
+			renderer["configuration"] = config
+		}
+		if createdAt, ok := record.Get("created_at"); ok {
+			renderer["createdAt"] = createdAt
+		}
+		renderers = append(renderers, renderer)
+	}
+
+	return renderers, nil
 }
 
 // getNotebookDocumentContent retrieves the extracted text content from documents in a notebook
@@ -683,7 +869,8 @@ func (s *ProductionService) GetProductionByID(ctx context.Context, productionID,
 		       p.space_type, p.space_id, p.tenant_id,
 		       p.storage_bucket, p.storage_key, p.size_bytes,
 		       p.execution_id, p.tokens_used, p.cost_usd, p.response_time_ms,
-		       p.error_message, p.source_documents, p.search_text,
+		       p.error_message, p.media_url, p.media_metadata, p.renderer_id,
+		       p.source_documents, p.search_text,
 		       p.created_at, p.updated_at
 	`
 
@@ -775,7 +962,8 @@ func (s *ProductionService) ListNotebookProductions(ctx context.Context, noteboo
 		       p.space_type, p.space_id, p.tenant_id,
 		       p.storage_bucket, p.storage_key, p.size_bytes,
 		       p.execution_id, p.tokens_used, p.cost_usd, p.response_time_ms,
-		       p.error_message, p.source_documents, p.created_at, p.updated_at
+		       p.error_message, p.media_url, p.media_metadata, p.renderer_id,
+		       p.source_documents, p.created_at, p.updated_at
 		ORDER BY p.created_at DESC
 		SKIP $offset
 		LIMIT $limit
@@ -919,6 +1107,9 @@ func (s *ProductionService) createProduction(ctx context.Context, production *mo
 			cost_usd: $cost_usd,
 			response_time_ms: $response_time_ms,
 			error_message: $error_message,
+			media_url: $media_url,
+			media_metadata: $media_metadata,
+			renderer_id: $renderer_id,
 			source_documents: $source_documents,
 			search_text: $search_text,
 			created_at: datetime($created_at),
@@ -948,6 +1139,9 @@ func (s *ProductionService) createProduction(ctx context.Context, production *mo
 		"cost_usd":         production.CostUSD,
 		"response_time_ms": production.ResponseTimeMs,
 		"error_message":    production.ErrorMessage,
+		"media_url":        production.MediaURL,
+		"media_metadata":   marshalJSONOrEmpty(production.MediaMetadata),
+		"renderer_id":      production.RendererID,
 		"source_documents": production.SourceDocuments,
 		"search_text":      production.SearchText,
 		"created_at":       production.CreatedAt.Format(time.RFC3339),
@@ -976,6 +1170,9 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 		    p.cost_usd = $cost_usd,
 		    p.response_time_ms = $response_time_ms,
 		    p.error_message = $error_message,
+		    p.media_url = $media_url,
+		    p.media_metadata = $media_metadata,
+		    p.renderer_id = $renderer_id,
 		    p.search_text = $search_text,
 		    p.updated_at = datetime($updated_at)
 		RETURN p
@@ -994,6 +1191,9 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 		"cost_usd":         production.CostUSD,
 		"response_time_ms": production.ResponseTimeMs,
 		"error_message":    production.ErrorMessage,
+		"media_url":        production.MediaURL,
+		"media_metadata":   marshalJSONOrEmpty(production.MediaMetadata),
+		"renderer_id":      production.RendererID,
 		"search_text":      production.SearchText,
 		"updated_at":       production.UpdatedAt.Format(time.RFC3339),
 	}
@@ -1166,6 +1366,20 @@ func (s *ProductionService) recordToProduction(record interface{}) (*models.Prod
 	if errorMessage, found := neo4jRecord.Get("p.error_message"); found && errorMessage != nil {
 		production.ErrorMessage = errorMessage.(string)
 	}
+	if mediaURL, found := neo4jRecord.Get("p.media_url"); found && mediaURL != nil {
+		production.MediaURL = mediaURL.(string)
+	}
+	if mediaMetadata, found := neo4jRecord.Get("p.media_metadata"); found && mediaMetadata != nil {
+		if metaStr, ok := mediaMetadata.(string); ok && metaStr != "" {
+			var meta map[string]interface{}
+			if err := json.Unmarshal([]byte(metaStr), &meta); err == nil {
+				production.MediaMetadata = meta
+			}
+		}
+	}
+	if rendererID, found := neo4jRecord.Get("p.renderer_id"); found && rendererID != nil {
+		production.RendererID = rendererID.(string)
+	}
 	if sourceDocuments, found := neo4jRecord.Get("p.source_documents"); found && sourceDocuments != nil {
 		if docs, ok := sourceDocuments.([]interface{}); ok {
 			for _, doc := range docs {
@@ -1326,6 +1540,18 @@ func getContentType(format models.ProductionFormat) string {
 	default:
 		return "text/plain"
 	}
+}
+
+// marshalJSONOrEmpty marshals a map to JSON string, or returns empty string if nil
+func marshalJSONOrEmpty(m map[string]interface{}) string {
+	if m == nil {
+		return ""
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // NotebookChatResponse represents a response from notebook chat

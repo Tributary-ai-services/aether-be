@@ -832,6 +832,28 @@ func (h *ProductionHandler) BulkDeleteProductions(c *gin.Context) {
 	})
 }
 
+// ListRenderers returns available renderer workflows
+// @Summary List renderers
+// @Description Get available renderer workflows for post-processing productions
+// @Tags productions
+// @Produce json
+// @Security Bearer
+// @Success 200 {array} map[string]interface{}
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/renderers [get]
+func (h *ProductionHandler) ListRenderers(c *gin.Context) {
+	renderers, err := h.productionService.ListRenderers(c.Request.Context())
+	if err != nil {
+		h.logger.Error("Failed to list renderers", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to list renderers"))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"renderers": renderers,
+	})
+}
+
 // getUserTeams retrieves team IDs for a user for access control purposes
 func (h *ProductionHandler) getUserTeams(c *gin.Context, userID string) ([]string, error) {
 	teamIDs, err := h.teamService.GetUserTeamIDs(c.Request.Context(), userID)

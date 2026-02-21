@@ -156,7 +156,7 @@ type WorkflowVersion struct {
 type CreateWorkflowRequest struct {
 	Name          string                 `json:"name" binding:"required"`
 	Description   string                 `json:"description"`
-	Type          string                 `json:"type" binding:"required,oneof=document_processing compliance_check approval_chain data_pipeline ai_research media custom"`
+	Type          string                 `json:"type" binding:"required,oneof=document_processing compliance_check approval_chain data_pipeline ai_research media renderer custom"`
 	Configuration map[string]interface{} `json:"configuration"`
 	Steps         []CreateStepRequest    `json:"steps" binding:"required,min=1"`
 	Triggers      []CreateTriggerRequest `json:"triggers" binding:"required,min=1"`

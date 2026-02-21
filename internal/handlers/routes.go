@@ -169,8 +169,9 @@ func NewAPIServer(
 	aiPlaygroundService := services.NewAIPlaygroundService(neo4j, &cfg.Router, agentService, workflowService, log)
 	aiPlaygroundHandler := NewAIPlaygroundHandler(aiPlaygroundService, userService, teamService, log)
 
-	// Initialize Production service and handler
-	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, log)
+	// Initialize Podcast MCP client and Production service
+	podcastMCPClient := services.NewMCPClientService("podcast-mcp", &cfg.PodcastMCP, log)
+	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, podcastMCPClient, log)
 	productionHandler := NewProductionHandler(productionService, userService, teamService, log)
 
 	// Initialize Argo Events service and handler
@@ -209,7 +210,7 @@ func NewAPIServer(
 
 	// Initialize Napkin MCP service and MCP handler
 	napkinService := services.NewNapkinService(&cfg.Napkin, log)
-	mcpHandler := NewMCPHandler(napkinService, cfg, log)
+	mcpHandler := NewMCPHandler(napkinService, databaseService, neo4jQueryService, cfg, log)
 
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)
@@ -378,6 +379,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		productions.DELETE("/:id", s.ProductionHandler.DeleteProduction)
 		productions.POST("/bulk-delete", s.ProductionHandler.BulkDeleteProductions)
 	}
+
+	// Renderer routes - list available renderer workflows
+	api.GET("/renderers", s.ProductionHandler.ListRenderers)
 
 	// Chunk routes - file-specific chunks
 	files := api.Group("/files")
