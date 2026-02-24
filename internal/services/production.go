@@ -265,20 +265,6 @@ func (s *ProductionService) ExecuteProducer(ctx context.Context, notebookID stri
 		executionID = executeResp.ExecutionID
 	}
 
-	// If renderer requested, post-process the output
-	if rendererID, ok := req.Context["renderer_id"].(string); ok && rendererID != "" {
-		mediaResult, err := s.executeRenderer(ctx, rendererID, output, req)
-		if err != nil {
-			s.logger.Error("Renderer failed, saving text production without media",
-				zap.String("renderer_id", rendererID),
-				zap.Error(err))
-		} else {
-			production.MediaURL = mediaResult.URL
-			production.MediaMetadata = mediaResult.Metadata
-			production.RendererID = rendererID
-		}
-	}
-
 	responseTimeMs := int(time.Since(startTime).Milliseconds())
 
 	// Generate content from agent output
@@ -301,7 +287,73 @@ func (s *ProductionService) ExecuteProducer(ctx context.Context, notebookID stri
 		return nil, errors.InternalWithCause("Failed to store production content", err)
 	}
 
-	// Update production with completion details
+	// Check if renderer is requested — if so, mark as "rendering" and run async
+	rendererID, hasRenderer := req.Context["renderer_id"].(string)
+	hasRenderer = hasRenderer && rendererID != ""
+
+	if hasRenderer {
+		// Mark production as completed for the text part, but note rendering is pending
+		production.RendererID = rendererID
+		production.MarkCompleted(
+			storageKey,
+			fmt.Sprintf("aether-%s", extractTenantSuffix(spaceCtx.TenantID)),
+			int64(len(contentBytes)),
+			executionID,
+			tokensUsed,
+			costUSD,
+			responseTimeMs,
+		)
+		// Override status to "rendering" so frontend knows media is being generated
+		production.Status = models.ProductionStatusRendering
+
+		if err := s.updateProduction(ctx, production); err != nil {
+			s.logger.Error("Failed to update production status", zap.Error(err))
+			return nil, err
+		}
+
+		// Create relationships
+		if err := s.createProductionRelationships(ctx, production, spaceCtx.TenantID); err != nil {
+			s.logger.Error("Failed to create production relationships", zap.Error(err))
+		}
+
+		s.logger.Info("Production text saved, starting async renderer",
+			zap.String("production_id", production.ID),
+			zap.String("renderer_id", rendererID),
+		)
+
+		// Run renderer asynchronously
+		go func() {
+			bgCtx := context.Background()
+			mediaResult, renderErr := s.executeRenderer(bgCtx, rendererID, output, req)
+			if renderErr != nil {
+				s.logger.Error("Async renderer failed",
+					zap.String("production_id", production.ID),
+					zap.String("renderer_id", rendererID),
+					zap.Error(renderErr))
+				production.Status = models.ProductionStatusCompleted
+				production.ErrorMessage = "Renderer failed: " + renderErr.Error()
+			} else {
+				s.logger.Info("Async renderer completed successfully",
+					zap.String("production_id", production.ID),
+					zap.String("media_url", mediaResult.URL),
+				)
+				production.MediaURL = mediaResult.URL
+				production.MediaMetadata = mediaResult.Metadata
+				production.Status = models.ProductionStatusCompleted
+			}
+			if updateErr := s.updateProduction(bgCtx, production); updateErr != nil {
+				s.logger.Error("Failed to update production after rendering",
+					zap.String("production_id", production.ID),
+					zap.Error(updateErr))
+			}
+		}()
+
+		response := production.ToResponse()
+		response.Content = content
+		return response, nil
+	}
+
+	// No renderer — mark as completed immediately
 	production.MarkCompleted(
 		storageKey,
 		fmt.Sprintf("aether-%s", extractTenantSuffix(spaceCtx.TenantID)),
@@ -346,9 +398,17 @@ func (s *ProductionService) executeInternalProducerAgent(
 	authToken string,
 	spaceCtx *models.SpaceContext,
 ) (string, error) {
-	// Build the user message based on production type and notebook context
-	// Note: We don't include document content here since agent-builder will inject it
-	userMessage := s.buildProducerUserMessage(notebook, req, "")
+	// Fetch document content directly from Neo4j extracted_text
+	// This ensures the LLM always has the source material regardless of AudiModal chunk availability
+	documentContent, docErr := s.getNotebookDocumentContent(ctx, notebook.ID, notebook.TenantID, req.SourceDocuments)
+	if docErr != nil {
+		s.logger.Warn("Failed to get document content from Neo4j, proceeding without it",
+			zap.String("notebook_id", notebook.ID),
+			zap.Error(docErr))
+	}
+
+	// Build the user message with document content included directly
+	userMessage := s.buildProducerUserMessage(notebook, req, documentContent)
 
 	// Resolve Aether tenant ID to AudiModal UUID
 	// The notebook has an internal tenant ID (e.g., "tenant_1766596584") that needs to be
@@ -460,7 +520,7 @@ func (s *ProductionService) executePodcastRenderer(ctx context.Context, script s
 	// Extract renderer config from context
 	ttsProvider, _ := req.Context["tts_provider"].(string)
 	if ttsProvider == "" {
-		ttsProvider = "elevenlabs"
+		ttsProvider = "kokoro"
 	}
 
 	speakers, _ := req.Context["speakers"].(string)
@@ -470,28 +530,49 @@ func (s *ProductionService) executePodcastRenderer(ctx context.Context, script s
 
 	voiceMapping, _ := req.Context["voice_mapping"].(map[string]interface{})
 
+	// voice_mapping is required by the podcast MCP — build defaults from speakers if not provided
+	if voiceMapping == nil || len(voiceMapping) == 0 {
+		voiceMapping = map[string]interface{}{}
+		// Assign default voices based on provider
+		var defaultVoices []string
+		if ttsProvider == "kokoro" {
+			defaultVoices = []string{"af_heart", "am_adam", "af_bella", "am_michael"}
+		} else {
+			defaultVoices = []string{"Rachel", "Adam", "Domi", "Josh"}
+		}
+		for i, speaker := range strings.Split(speakers, ",") {
+			name := strings.TrimSpace(speaker)
+			if name == "" {
+				continue
+			}
+			voiceIdx := i % len(defaultVoices)
+			voiceMapping[name] = defaultVoices[voiceIdx]
+		}
+	}
+
 	introMusicKey, _ := req.Context["intro_music_key"].(string)
 	outroMusicKey, _ := req.Context["outro_music_key"].(string)
 	ambientMusicKey, _ := req.Context["ambient_music_key"].(string)
 
+	// Extract podcast duration (minutes) from context
+	podcastDuration := 10 // default 10 minutes
+	if dur, ok := req.Context["podcast_duration"].(float64); ok && dur > 0 {
+		podcastDuration = int(dur)
+	}
+
 	// Build MCP tool arguments
 	args := map[string]interface{}{
-		"script":   script,
-		"provider": ttsProvider,
-		"title":    req.Title,
+		"script":        script,
+		"provider":      ttsProvider,
+		"title":         req.Title,
+		"voice_mapping": voiceMapping,
 		"config": map[string]interface{}{
 			"intro_music_key":   introMusicKey,
 			"outro_music_key":   outroMusicKey,
 			"ambient_music_key": ambientMusicKey,
 			"silence_gap_ms":    500,
+			"target_duration":   podcastDuration,
 		},
-	}
-
-	if voiceMapping != nil {
-		voiceMappingJSON, err := json.Marshal(voiceMapping)
-		if err == nil {
-			args["voice_mapping"] = string(voiceMappingJSON)
-		}
 	}
 
 	s.logger.Info("Invoking podcast renderer via MCP",
@@ -833,6 +914,29 @@ func (s *ProductionService) buildProducerUserMessage(notebook *models.Notebook, 
 		message += fmt.Sprintf("Extract key insights and actionable takeaways from the documents in the notebook \"%s\".\n\n", notebook.Name)
 		message += "All insights must be derived EXCLUSIVELY from the actual text content in the documents provided above. Cite specific evidence from those documents."
 
+	case models.ProductionTypePodcast:
+		// Extract requested duration from context (default 10 minutes)
+		podcastDuration := 10
+		if dur, ok := req.Context["podcast_duration"].(float64); ok && dur > 0 {
+			podcastDuration = int(dur)
+		}
+		// TTS speech rate is ~130 words per minute; use 160 wpm target to account for
+		// stage directions and pauses that don't produce audio
+		targetWords := podcastDuration * 160
+
+		message = "IMPORTANT: You MUST use ONLY the document content provided above in the '--- RELEVANT CONTEXT ---' section. Do NOT make up or infer content.\n\n"
+		message += fmt.Sprintf("Generate a multi-speaker podcast script based on the documents in the notebook \"%s\".\n\n", notebook.Name)
+		message += fmt.Sprintf("TARGET LENGTH: The script MUST be AT LEAST %d words long (for a %d-minute podcast). ", targetWords, podcastDuration)
+		message += fmt.Sprintf("Count carefully — you need roughly %d lines of dialogue with 15-25 words each. ", targetWords/20)
+		message += "This is CRITICAL — a script that is too short will produce an incomplete podcast. Err on the side of being LONGER rather than shorter.\n\n"
+		message += "Use the screenplay format: 'SpeakerName: dialogue' on each line. Default speakers are Alex and Sam.\n"
+		message += "Include stage directions in parentheses like (laughs), (excited), (thoughtful pause).\n"
+		message += "Make the conversation natural with back-and-forth dialogue, reactions, questions, and insights.\n"
+		message += "Reference specific facts, quotes, and data from the source documents.\n"
+		message += "Structure: Introduction → Main discussion (multiple subtopics with deep exploration) → Key takeaways → Conclusion/sign-off.\n"
+		message += "IMPORTANT: Explore each topic in depth with examples, analogies, and follow-up questions. Do NOT rush through topics.\n"
+		message += "Output ONLY the screenplay text with no markdown headers or metadata."
+
 	default:
 		message = "IMPORTANT: You MUST use ONLY the document content provided above in the '--- RELEVANT CONTEXT ---' section. Do NOT make up or infer content.\n\n"
 		message += fmt.Sprintf("Analyze the documents in the notebook \"%s\" and generate content of type \"%s\".\n\n", notebook.Name, req.Type)
@@ -840,7 +944,8 @@ func (s *ProductionService) buildProducerUserMessage(notebook *models.Notebook, 
 	}
 
 	// Add format instruction if specified
-	if req.Format != "" {
+	// Skip for podcast type — the podcast renderer requires screenplay format regardless
+	if req.Format != "" && req.Type != models.ProductionTypePodcast {
 		message += fmt.Sprintf("\n\nPlease format the output as %s.", req.Format)
 	}
 
@@ -849,12 +954,13 @@ func (s *ProductionService) buildProducerUserMessage(notebook *models.Notebook, 
 		message += fmt.Sprintf("\n\nTitle the output: \"%s\"", req.Title)
 	}
 
-	// Include document content if explicitly provided (for direct LLM execution fallback)
-	// When using agent-builder, document context is injected into the system prompt,
-	// so this will typically be empty
+	// Include document content from Neo4j extracted_text
+	// This provides the source material the LLM must use to generate the production
 	if documentContent != "" {
-		message += "\n\nBelow is the content from the documents in this notebook. Use this content to generate your response:\n\n"
+		message += "\n\n--- RELEVANT CONTEXT ---\n"
+		message += "Below is the content from the documents in this notebook. You MUST use this content as the basis for your response:\n\n"
 		message += documentContent
+		message += "\n--- END CONTEXT ---\n"
 	}
 
 	return message
@@ -1148,11 +1254,24 @@ func (s *ProductionService) createProduction(ctx context.Context, production *mo
 		"updated_at":       production.UpdatedAt.Format(time.RFC3339),
 	}
 
+	s.logger.Info("Creating production in Neo4j",
+		zap.String("production_id", production.ID),
+		zap.String("type", string(production.Type)),
+		zap.String("tenant_id", production.TenantID),
+	)
+
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
-		s.logger.Error("Failed to create production", zap.Error(err))
+		s.logger.Error("Failed to create production in Neo4j",
+			zap.String("production_id", production.ID),
+			zap.Error(err),
+		)
 		return errors.Database("Failed to create production", err)
 	}
+
+	s.logger.Info("Production created in Neo4j successfully",
+		zap.String("production_id", production.ID),
+	)
 
 	return nil
 }
@@ -1205,6 +1324,52 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 	}
 
 	return nil
+}
+
+// CleanupStaleProductions finds productions stuck in processing/rendering states
+// for longer than the given threshold and marks them as failed. This handles
+// cases where async goroutines were lost due to pod restarts.
+func (s *ProductionService) CleanupStaleProductions(ctx context.Context, staleThreshold time.Duration) (int, error) {
+	query := `
+		MATCH (p:Production)
+		WHERE p.status IN ['processing', 'rendering']
+		  AND p.updated_at < datetime($cutoff)
+		SET p.status = 'failed',
+		    p.error_message = 'Stale production cleanup: processing was interrupted (likely by a service restart)',
+		    p.updated_at = datetime()
+		RETURN p.id AS id, p.title AS title, p.tenant_id AS tenant_id
+	`
+
+	cutoff := time.Now().UTC().Add(-staleThreshold).Format(time.RFC3339)
+	params := map[string]interface{}{
+		"cutoff": cutoff,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to cleanup stale productions", zap.Error(err))
+		return 0, err
+	}
+
+	count := 0
+	for _, record := range result.Records {
+		id, _ := record.Get("id")
+		title, _ := record.Get("title")
+		s.logger.Warn("Cleaned up stale production",
+			zap.Any("production_id", id),
+			zap.Any("title", title),
+		)
+		count++
+	}
+
+	if count > 0 {
+		s.logger.Info("Stale production cleanup completed",
+			zap.Int("cleaned_up", count),
+			zap.Duration("threshold", staleThreshold),
+		)
+	}
+
+	return count, nil
 }
 
 func (s *ProductionService) createProductionRelationships(ctx context.Context, production *models.Production, tenantID string) error {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/Tributary-ai-services/aether-be/internal/config"
@@ -12,30 +13,55 @@ import (
 
 // MCPHandler handles MCP server management endpoints
 type MCPHandler struct {
-	napkinService *services.NapkinService
-	mcpClients    map[string]*services.MCPClientService
-	serverInfos   []MCPServerInfo
-	cfg           *config.Config
-	logger        *zap.Logger
+	napkinService   *services.NapkinService
+	databaseService *services.DatabaseService
+	neo4jQuerySvc   *services.Neo4jQueryService
+	mcpClients      map[string]*services.MCPClientService
+	serverInfos     []MCPServerInfo
+	cfg             *config.Config
+	logger          *zap.Logger
 }
 
 // MCPServerInfo represents an MCP server in the API response
 type MCPServerInfo struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Status      string   `json:"status"`
-	Type        string   `json:"type"`
-	Version     string   `json:"version"`
-	Endpoint    string   `json:"endpoint,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	Status             string   `json:"status"`
+	Type               string   `json:"type"`
+	Version            string   `json:"version"`
+	Endpoint           string   `json:"endpoint,omitempty"`
+	Tags               []string `json:"tags,omitempty"`
+	SupportsConnection bool     `json:"supports_connection,omitempty"`
+	ConnectionType     string   `json:"connection_type,omitempty"`
 }
 
 // MCPInvokeRequest represents a tool invocation request from the frontend
 type MCPInvokeRequest struct {
-	ServerID string                 `json:"server_id"`
-	Tool     string                 `json:"tool"`
-	Params   map[string]interface{} `json:"params"`
+	ServerID     string                 `json:"server_id"`
+	Tool         string                 `json:"tool"`
+	Params       map[string]interface{} `json:"params"`
+	ConnectionID string                 `json:"connection_id,omitempty"`
+}
+
+// connectionInfo holds resolved credentials for an MCP server connection
+type connectionInfo struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Database string `json:"database"`
+	Protocol string `json:"protocol,omitempty"`
+	SSLMode  string `json:"ssl_mode,omitempty"`
+}
+
+// infrastructureServerTypes maps MCP server IDs to their database types for connection resolution
+var infrastructureServerTypes = map[string]string{
+	"mcp-neo4j":    "neo4j",
+	"mcp-postgres": "postgres",
+	"mcp-minio":    "minio",
+	"mcp-kafka":    "kafka",
+	"mcp-grafana":  "grafana",
 }
 
 // mcpServerDef defines a server to register
@@ -49,17 +75,19 @@ type mcpServerDef struct {
 }
 
 // NewMCPHandler creates a new MCP handler with all configured MCP server clients
-func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, log *logger.Logger) *MCPHandler {
+func NewMCPHandler(napkinService *services.NapkinService, databaseService *services.DatabaseService, neo4jQuerySvc *services.Neo4jQueryService, cfg *config.Config, log *logger.Logger) *MCPHandler {
 	h := &MCPHandler{
-		napkinService: napkinService,
-		mcpClients:    make(map[string]*services.MCPClientService),
-		cfg:           cfg,
-		logger:        log.Logger,
+		napkinService:   napkinService,
+		databaseService: databaseService,
+		neo4jQuerySvc:   neo4jQuerySvc,
+		mcpClients:      make(map[string]*services.MCPClientService),
+		cfg:             cfg,
+		logger:          log.Logger,
 	}
 
 	// Static servers (always present)
 	h.serverInfos = []MCPServerInfo{
-		{ID: "mcp-postgres", Name: "PostgreSQL MCP", Description: "PostgreSQL database tools", Status: "connected", Type: "database", Version: "1.0.0"},
+		{ID: "mcp-postgres", Name: "PostgreSQL MCP", Description: "PostgreSQL database tools", Status: "connected", Type: "database", Version: "1.0.0", SupportsConnection: true, ConnectionType: "postgres"},
 		{ID: "mcp-filesystem", Name: "Filesystem MCP", Description: "File system operations", Status: "connected", Type: "filesystem", Version: "1.0.0"},
 		{ID: "mcp-memory", Name: "Memory MCP", Description: "Knowledge graph storage", Status: "connected", Type: "memory", Version: "1.0.0"},
 	}
@@ -79,6 +107,7 @@ func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, lo
 		{"mcp-slack", "Slack MCP", "Slack workspace communication", "communication", []string{"slack", "messaging", "communication"}, func(c *config.Config) *config.MCPServerConfig { return &c.SlackMCP }},
 		{"mcp-paper-search", "Paper Search MCP", "Academic paper search and retrieval", "research", []string{"research", "papers", "academic", "arxiv"}, func(c *config.Config) *config.MCPServerConfig { return &c.PaperSearchMCP }},
 		{"mcp-assembler", "Assembler MCP", "Document assembly, template rendering, and format conversion (Markdown, DOCX, PDF)", "document-assembly", []string{"assembler", "templates", "documents", "reports", "formatting"}, func(c *config.Config) *config.MCPServerConfig { return &c.AssemblerMCP }},
+		{"mcp-podcast", "Podcast MCP", "Podcast generation with multi-voice TTS, FFmpeg post-production, and music mixing", "media-generation", []string{"podcast", "tts", "audio", "speech", "media"}, func(c *config.Config) *config.MCPServerConfig { return &c.PodcastMCP }},
 	}
 
 	if cfg != nil {
@@ -87,7 +116,7 @@ func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, lo
 			if mcpCfg.Enabled {
 				client := services.NewMCPClientService(def.id, mcpCfg, log)
 				h.mcpClients[def.id] = client
-				h.serverInfos = append(h.serverInfos, MCPServerInfo{
+				info := MCPServerInfo{
 					ID:          def.id,
 					Name:        def.name,
 					Description: def.description,
@@ -96,7 +125,12 @@ func NewMCPHandler(napkinService *services.NapkinService, cfg *config.Config, lo
 					Version:     "1.0.0",
 					Endpoint:    mcpCfg.BaseURL,
 					Tags:        def.tags,
-				})
+				}
+				if connType, ok := infrastructureServerTypes[def.id]; ok {
+					info.SupportsConnection = true
+					info.ConnectionType = connType
+				}
+				h.serverInfos = append(h.serverInfos, info)
 			}
 		}
 	}
@@ -202,7 +236,17 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 	h.logger.Info("MCP tool invocation",
 		zap.String("server_id", req.ServerID),
 		zap.String("tool", req.Tool),
+		zap.String("connection_id", req.ConnectionID),
 	)
+
+	// If a connectionId was provided and this is an infrastructure server, resolve credentials
+	if req.ConnectionID != "" {
+		if _, isInfra := infrastructureServerTypes[req.ServerID]; isInfra {
+			if err := h.injectConnectionParams(c, &req); err != nil {
+				return // error response already sent
+			}
+		}
+	}
 
 	// Check Napkin first (special service)
 	if req.ServerID == "mcp-napkin" {
@@ -233,4 +277,69 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusNotFound, gin.H{"error": "Server not found or tool invocation not supported: " + req.ServerID})
+}
+
+// injectConnectionParams resolves a saved connection and injects credentials into the tool params.
+func (h *MCPHandler) injectConnectionParams(c *gin.Context, req *MCPInvokeRequest) error {
+	if h.databaseService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database service not available for connection resolution"})
+		return fmt.Errorf("database service nil")
+	}
+
+	// Extract tenant ID from context (set by auth middleware)
+	tenantID, _ := c.Get("tenant_id")
+	tenantStr, _ := tenantID.(string)
+	if tenantStr == "" {
+		tenantStr = "default"
+	}
+
+	ctx := c.Request.Context()
+
+	// Resolve the saved database connection
+	db, err := h.databaseService.GetDatabase(ctx, req.ConnectionID, tenantStr)
+	if err != nil {
+		h.logger.Error("Failed to resolve connection",
+			zap.String("connection_id", req.ConnectionID),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found: " + err.Error()})
+		return err
+	}
+
+	// Read credentials from K8s Secret
+	username, password, err := h.neo4jQuerySvc.GetCredentials(ctx, db)
+	if err != nil {
+		h.logger.Error("Failed to read connection credentials",
+			zap.String("connection_id", req.ConnectionID),
+			zap.String("secret_name", db.SecretName),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read connection credentials"})
+		return err
+	}
+
+	// Build connection info and inject into params
+	conn := connectionInfo{
+		Host:     db.Host,
+		Port:     db.Port,
+		Username: username,
+		Password: password,
+		Database: db.Database,
+		Protocol: db.Protocol,
+		SSLMode:  db.SSLMode,
+	}
+
+	if req.Params == nil {
+		req.Params = make(map[string]interface{})
+	}
+	req.Params["_connection"] = conn
+
+	h.logger.Info("Injected connection credentials",
+		zap.String("connection_id", req.ConnectionID),
+		zap.String("host", db.Host),
+		zap.Int("port", db.Port),
+		zap.String("database", db.Database),
+	)
+
+	return nil
 }

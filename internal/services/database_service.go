@@ -590,7 +590,7 @@ func (s *DatabaseService) GetTableColumns(ctx context.Context, databaseID, tenan
 func (s *DatabaseService) enrichResponse(ctx context.Context, db *models.Database) *models.DatabaseResponse {
 	resp := db.ToResponse()
 	if db.SecretName != "" && s.neo4jQuery != nil {
-		username, password, err := s.neo4jQuery.getCredentials(ctx, db)
+		username, password, err := s.neo4jQuery.GetCredentials(ctx, db)
 		if err == nil {
 			resp.Username = username
 			resp.HasPassword = password != ""

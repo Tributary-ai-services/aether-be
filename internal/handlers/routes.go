@@ -50,9 +50,10 @@ type APIServer struct {
 	NotificationHandler  *NotificationHandler
 	OAuthHandler         *OAuthHandler
 	CloudDriveHandler    *CloudDriveHandler
-	SpaceService         *services.SpaceContextService
-	Metrics              *metrics.Metrics
-	logger               *logger.Logger
+	SpaceService              *services.SpaceContextService
+	ProductionCleanupWorker  *services.ProductionCleanupWorker
+	Metrics                  *metrics.Metrics
+	logger                   *logger.Logger
 }
 
 // NewAPIServer creates a new API server with all routes configured
@@ -173,6 +174,7 @@ func NewAPIServer(
 	podcastMCPClient := services.NewMCPClientService("podcast-mcp", &cfg.PodcastMCP, log)
 	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, podcastMCPClient, log)
 	productionHandler := NewProductionHandler(productionService, userService, teamService, log)
+	productionCleanupWorker := services.NewProductionCleanupWorker(productionService, log)
 
 	// Initialize Argo Events service and handler
 	argoService := services.NewArgoService(log)
@@ -265,9 +267,10 @@ func NewAPIServer(
 		NotificationHandler:  notificationHandler,
 		OAuthHandler:         oauthHandler,
 		CloudDriveHandler:    cloudDriveHandler,
-		SpaceService:         spaceContextService,
-		Metrics:              metricsInstance,
-		logger:               log.WithService("api_server"),
+		SpaceService:              spaceContextService,
+		ProductionCleanupWorker:  productionCleanupWorker,
+		Metrics:                  metricsInstance,
+		logger:                   log.WithService("api_server"),
 	}
 
 	// Setup routes

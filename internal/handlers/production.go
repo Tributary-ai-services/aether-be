@@ -343,8 +343,22 @@ func (h *ProductionHandler) GetProductionContent(c *gin.Context) {
 		return
 	}
 
+	// Also fetch the production metadata so the frontend gets fresh data
+	// (e.g., mediaUrl may have been set after async rendering completed)
+	production, prodErr := h.productionService.GetProductionByID(c.Request.Context(), productionID, userID, spaceContext)
+	if prodErr != nil {
+		// Non-fatal: still return content even if metadata fetch fails
+		h.logger.Warn("Failed to fetch production metadata alongside content", zap.Error(prodErr))
+		c.JSON(http.StatusOK, gin.H{
+			"content": content,
+		})
+		return
+	}
+
+	response := production.ToResponse()
 	c.JSON(http.StatusOK, gin.H{
-		"content": content,
+		"content":    content,
+		"production": response,
 	})
 }
 

@@ -764,9 +764,23 @@ except Exception as e:
 	}
 }
 
-// buildMCPAgentScript generates a script that calls Agent Builder for MCP tool-enabled execution
-func (g *ArgoGenerator) buildMCPAgentScript(_ map[string]interface{}, model, prompt, systemPrompt string, maxTokens int) map[string]interface{} {
+// buildMCPAgentScript generates a script that calls Agent Builder for MCP tool-enabled execution.
+// When mcpConnectionId is provided in the config, it is passed to Agent Builder so that
+// MCP tool invocations use the specified saved connection (resolved via aether-be proxy).
+func (g *ArgoGenerator) buildMCPAgentScript(config map[string]interface{}, model, prompt, systemPrompt string, maxTokens int) map[string]interface{} {
 	agentBuilderURL := "http://agent-builder.tas-agent-builder.svc.cluster.local:8083"
+
+	// Extract optional connection context from workflow node config
+	mcpConnectionID, _ := config["mcpConnectionId"].(string)
+	mcpServerID, _ := config["mcpServerId"].(string)
+
+	// Build the payload JSON with optional connection fields
+	connectionPayloadFragment := ""
+	if mcpConnectionID != "" && mcpServerID != "" {
+		connectionPayloadFragment = fmt.Sprintf(`
+    "mcp_connection_id": %q,
+    "mcp_server_id": %q,`, mcpConnectionID, mcpServerID)
+	}
 
 	source := fmt.Sprintf(`import json, urllib.request, sys, os
 # Collect upstream inputs
@@ -786,7 +800,7 @@ payload = {
     "prompt": user_prompt,
     "system_prompt": %q,
     "model": %q,
-    "max_tokens": %d,
+    "max_tokens": %d,%s
     "document_context": {
         "strategy": "mcp"
     }
@@ -804,7 +818,7 @@ try:
 except Exception as e:
     print(f"MCP Agent call failed: {e}", file=sys.stderr)
     sys.exit(1)
-`, prompt, systemPrompt, model, maxTokens, agentBuilderURL)
+`, prompt, systemPrompt, model, maxTokens, connectionPayloadFragment, agentBuilderURL)
 
 	return map[string]interface{}{
 		"image":   "python:3.11-slim",

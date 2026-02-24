@@ -11,6 +11,7 @@ type ProductionStatus string
 
 const (
 	ProductionStatusProcessing ProductionStatus = "processing"
+	ProductionStatusRendering  ProductionStatus = "rendering"
 	ProductionStatusCompleted  ProductionStatus = "completed"
 	ProductionStatusFailed     ProductionStatus = "failed"
 )
@@ -47,7 +48,7 @@ type Production struct {
 	// Production type and format
 	Type   ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
 	Format ProductionFormat `json:"format" validate:"required,oneof=markdown html json text audio"`
-	Status ProductionStatus `json:"status" validate:"required,oneof=processing completed failed"`
+	Status ProductionStatus `json:"status" validate:"required,oneof=processing rendering completed failed"`
 
 	// Agent that created this production
 	AgentID        string `json:"agent_id" validate:"required,uuid"`
@@ -106,7 +107,7 @@ type ProductionCreateRequest struct {
 // ProductionUpdateRequest represents a request to update a production
 type ProductionUpdateRequest struct {
 	Title  *string          `json:"title,omitempty" validate:"omitempty,safe_string,min=1,max=255"`
-	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing completed failed"`
+	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing rendering completed failed"`
 }
 
 // ProductionResponse represents a production response
@@ -159,7 +160,7 @@ type ProductionSearchRequest struct {
 	NotebookID string           `json:"notebook_id,omitempty" validate:"omitempty,uuid"`
 	AgentID    string           `json:"agent_id,omitempty" validate:"omitempty,uuid"`
 	Type       ProductionType   `json:"type,omitempty" validate:"omitempty,oneof=summary qa outline insight custom podcast"`
-	Status     ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing completed failed"`
+	Status     ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing rendering completed failed"`
 	Limit      int              `json:"limit,omitempty" validate:"omitempty,min=1,max=100"`
 	Offset     int              `json:"offset,omitempty" validate:"omitempty,min=0"`
 }

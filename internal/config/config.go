@@ -42,6 +42,7 @@ type Config struct {
 	SlackMCP              MCPServerConfig
 	PaperSearchMCP        MCPServerConfig
 	AssemblerMCP          MCPServerConfig
+	PodcastMCP            MCPServerConfig
 	OAuth                 OAuthConfig
 }
 
@@ -497,6 +498,11 @@ func Load() (*Config, error) {
 			BaseURL:        getEnv("ASSEMBLER_MCP_BASE_URL", "http://assembler-mcp.tas-mcp-servers.svc.cluster.local:8091"),
 			Enabled:        getEnvBool("ASSEMBLER_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("ASSEMBLER_MCP_TIMEOUT_SECONDS", 60),
+		},
+		PodcastMCP: MCPServerConfig{
+			BaseURL:        getEnv("PODCAST_MCP_BASE_URL", "http://podcast-mcp.tas-mcp-servers.svc.cluster.local:8092"),
+			Enabled:        getEnvBool("PODCAST_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("PODCAST_MCP_TIMEOUT_SECONDS", 600),
 		},
 	}
 

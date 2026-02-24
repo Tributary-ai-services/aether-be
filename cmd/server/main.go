@@ -175,6 +175,10 @@ func main() {
 	go metricsCollector.Start(ctx)
 	appLogger.Info("Metrics collection started")
 
+	// Start stale production cleanup worker
+	go apiServer.ProductionCleanupWorker.Start(ctx)
+	appLogger.Info("Production cleanup worker started")
+
 	// Start server in a goroutine
 	go func() {
 		appLogger.Info("Starting HTTP server",
@@ -193,10 +197,11 @@ func main() {
 
 	appLogger.Info("Shutting down server...")
 
-	// Stop metrics collection
-	cancel() // This stops the metrics collector context
+	// Stop metrics collection and cleanup worker
+	cancel() // This stops the metrics collector and cleanup worker contexts
 	metricsCollector.Stop()
-	appLogger.Info("Metrics collection stopped")
+	apiServer.ProductionCleanupWorker.Stop()
+	appLogger.Info("Metrics collection and production cleanup worker stopped")
 
 	// Give outstanding requests 30 seconds to complete
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
