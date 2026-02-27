@@ -72,3 +72,38 @@ spec:
             name: neo4j
             port:
               number: 7474
+
+---
+# Neo4j Bolt Ingress (WebSocket for Bolt protocol)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: neo4j-bolt-ingress
+  namespace: aether-be
+  labels:
+    app: neo4j
+  annotations:
+    cert-manager.io/cluster-issuer: "tas-ca-issuer"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/websocket-services: "neo4j"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - neo4j-bolt.tas.scharber.com
+    secretName: neo4j-bolt-ingress-tls
+  rules:
+  - host: neo4j-bolt.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: neo4j
+            port:
+              number: 7687

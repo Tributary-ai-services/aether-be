@@ -62,17 +62,13 @@ spec:
         - name: NEO4J_server_bolt_listen__address
           value: "0.0.0.0:7687"
         - name: NEO4J_server_bolt_tls__level
-          value: "REQUIRED"
+          value: "DISABLED"
         - name: NEO4J_dbms_ssl_policy_bolt_enabled
-          value: "true"
-        - name: NEO4J_dbms_ssl_policy_bolt_base__directory
-          value: "/var/lib/neo4j/certificates/bolt"
-        - name: NEO4J_dbms_ssl_policy_bolt_private__key
-          value: "private.key"
-        - name: NEO4J_dbms_ssl_policy_bolt_public__certificate
-          value: "public.crt"
-        - name: NEO4J_dbms_ssl_policy_bolt_client__auth
-          value: "NONE"
+          value: "false"
+        - name: NEO4J_server_bolt_advertised__address
+          value: "neo4j-bolt.tas.scharber.com:443"
+        - name: NEO4J_server_default__advertised__address
+          value: "neo4j-bolt.tas.scharber.com"
         - name: NEO4J_server_memory_heap_max__size
           value: "2G"
         - name: NEO4J_server_memory_pagecache_size
