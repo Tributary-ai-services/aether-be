@@ -147,7 +147,8 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 		userTeams = []string{} // Continue with empty teams
 	}
 
-	agent, err := h.agentService.GetAgent(c.Request.Context(), agentID, userID, userTeams)
+	authToken := extractAuthToken(c)
+	agent, err := h.agentService.GetAgent(c.Request.Context(), agentID, userID, userTeams, authToken)
 	if err != nil {
 		h.logger.Error("Failed to get agent", zap.Error(err))
 		handleServiceError(c, err)

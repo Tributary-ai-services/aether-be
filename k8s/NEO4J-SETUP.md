@@ -1,16 +1,15 @@
 # Neo4j Configuration for Aether Backend
 
 ## Overview
-Neo4j is deployed with TLS-enabled Bolt protocol accessible through nginx-ingress TCP passthrough.
+Neo4j is deployed with Bolt protocol accessible through nginx-ingress. TLS is terminated at the ingress layer (not by Neo4j itself).
 
 ## Components
 
 ### 1. Neo4j StatefulSet (`neo4j.yaml`)
 - **Image**: neo4j:5.15-community
-- **Bolt Protocol**: Port 7687 with TLS REQUIRED
+- **Bolt Protocol**: Port 7687, TLS DISABLED (ingress handles TLS termination)
 - **HTTP Browser**: Port 7474
-- **TLS Certificates**: Self-signed from tas-ca-issuer
-- **Init Container**: Prepares certificates in Neo4j's expected format
+- **Advertised Address**: `neo4j-bolt.tas.scharber.com:443` (routes through ingress)
 - **Health Probes**: TCP socket checks on port 7687
 
 ### 2. TLS Certificate (`neo4j-certificate.yaml`)
@@ -20,81 +19,70 @@ Neo4j is deployed with TLS-enabled Bolt protocol accessible through nginx-ingres
   - neo4j.aether-be.svc.cluster.local
   - 192.168.68.240
 - **Secret**: neo4j-bolt-tls (contains ca.crt, tls.crt, tls.key)
+- **Note**: Used by the init container for legacy compatibility but Bolt TLS is disabled
 
 ### 3. Services
 - **Internal ClusterIP** (`neo4j`):
   - Port 7474 (HTTP)
   - Port 7473 (HTTPS)
-  - Port 7687 (Bolt+TLS)
+  - Port 7687 (Bolt, plain)
 
 - **External NodePort** (`neo4j-external`):
-  - Port 30687 → 7687 (Bolt+TLS)
+  - Port 30687 → 7687 (Bolt)
   - Port 30473 → 7473 (HTTPS)
 
-### 4. Ingress (`ingress.yaml`)
-- **Neo4j Browser HTTP UI**: https://neo4j.tas.scharber.com
-- **TLS**: Self-signed certificate
-- **WebSocket Support**: Enabled for real-time features
-
-### 5. TCP Passthrough Configuration
-Located in: `/home/jscharber/eng/TAS/aether-shared/k8s-shared-infrastructure/ingress-controller.yaml`
-
-- **TCP Services ConfigMap**: Maps port 7687 → aether-be/neo4j:7687
-- **LoadBalancer Service**: Exposes port 7687 on 192.168.68.240
-- **nginx-ingress Controller**: Configured with `--tcp-services-configmap` flag
+### 4. Ingresses (`ingress.yaml`)
+- **Neo4j Browser HTTP UI**: https://neo4j.tas.scharber.com → port 7474
+- **Neo4j Bolt WebSocket**: https://neo4j-bolt.tas.scharber.com → port 7687
+- Both use TLS termination at the ingress (self-signed certs from tas-ca-issuer)
 
 ## Connection Methods
 
 ### From Web Browser (Recommended)
-1. **Open**: https://neo4j.tas.scharber.com/browser/
-2. **Connect URL**: `bolt+s://neo4j.tas.scharber.com:7687`
+1. **Open**: https://neo4j.tas.scharber.com
+2. **Connect URL**: `neo4j+s://neo4j-bolt.tas.scharber.com:443`
 3. **Username**: `neo4j`
 4. **Password**: `password`
 
 ### From Applications (Inside Cluster)
 ```
-URI: bolt+ssc://neo4j.aether-be.svc.cluster.local:7687
+URI: bolt://neo4j.aether-be.svc.cluster.local:7687
 Username: neo4j
 Password: password
 ```
-Note: Use `bolt+ssc://` (self-signed certificate) for development environments with self-signed TLS certificates.
+Note: Use plain `bolt://` — TLS is disabled on the Neo4j Bolt port. Internal cluster traffic does not need encryption.
 
 ### From Applications (Outside Cluster)
 ```
-URI: bolt+s://neo4j.tas.scharber.com:7687
+URI: neo4j+s://neo4j-bolt.tas.scharber.com:443
 Username: neo4j
 Password: password
 ```
-Note: External access via browser uses `bolt+s://` but requires trusting the CA certificate.
+Note: External access goes through the NGINX ingress which terminates TLS, then forwards plain traffic to Neo4j.
 
 ### Direct NodePort Access
 ```
-URI: bolt+ssc://192.168.68.240:30687
+URI: bolt://192.168.68.240:30687
 Username: neo4j
 Password: password
 ```
-
-## Certificate Trust
-
-The CA certificate is stored in the cluster as part of the tas-ca-issuer. To trust it in browsers:
-
-```bash
-# Extract CA certificate
-kubectl get secret -n aether-be neo4j-bolt-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > tas-root-ca.crt
-
-# Import into browser's trusted Certificate Authorities
-```
+Note: NodePort exposes plain Bolt (no TLS).
 
 ## Configuration Details
 
-### Bolt TLS Configuration
+### Bolt Configuration
 ```yaml
-NEO4J_server_bolt_tls__level: "REQUIRED"
-NEO4J_dbms_ssl_policy_bolt_enabled: "true"
-NEO4J_dbms_ssl_policy_bolt_base__directory: "/var/lib/neo4j/certificates/bolt"
-NEO4J_dbms_ssl_policy_bolt_private__key: "private.key"
-NEO4J_dbms_ssl_policy_bolt_public__certificate: "public.crt"
-NEO4J_dbms_ssl_policy_bolt_client__auth: "NONE"
+NEO4J_server_bolt_tls__level: "DISABLED"
+NEO4J_dbms_ssl_policy_bolt_enabled: "false"
+NEO4J_server_bolt_advertised__address: "neo4j-bolt.tas.scharber.com:443"
+NEO4J_server_default__advertised__address: "neo4j-bolt.tas.scharber.com"
+```
+
+### Aether Backend ConfigMap
+```yaml
+NEO4J_URI: "bolt://neo4j.aether-be.svc.cluster.local:7687"
+NEO4J_DATABASE: "neo4j"
+NEO4J_TLS_INSECURE: "false"
 ```
 
 ### Resource Allocation
@@ -136,26 +124,25 @@ kubectl get pods -n aether-be -l app=neo4j
 kubectl logs -n aether-be neo4j-0 -c neo4j --tail=50
 ```
 
-### Verify TLS Certificate
+### Test Bolt Connection (inside cluster)
 ```bash
-kubectl get certificate -n aether-be neo4j-bolt-tls
-openssl s_client -connect neo4j.tas.scharber.com:7687 -showcerts
+kubectl exec -n aether-be neo4j-0 -- cypher-shell -a bolt://localhost:7687 -u neo4j -p password "RETURN 1"
 ```
 
-### Test Bolt Connection
+### Test Bolt via Ingress
 ```bash
-kubectl exec -n aether-be neo4j-0 -- cypher-shell -a bolt+s://localhost:7687 -u neo4j -p password "RETURN 1"
+# From outside the cluster, use cypher-shell with TLS to the ingress
+cypher-shell -a neo4j+s://neo4j-bolt.tas.scharber.com:443 -u neo4j -p password "RETURN 1"
 ```
 
-### Check TCP Passthrough
+### Check Ingresses
 ```bash
-kubectl get configmap -n ingress-nginx tcp-services -o yaml
-kubectl get svc -n ingress-nginx ingress-nginx-controller
+kubectl get ingress -n aether-be | grep neo4j
 ```
 
 ## Notes
 
-- Neo4j Browser requires secure connections (`bolt+s://`) for remote access
-- The TCP passthrough configuration in nginx-ingress is essential for Bolt to work through the ingress
-- Self-signed certificates are used - browsers will show a warning until the CA is trusted
+- Neo4j Bolt TLS is DISABLED — TLS termination happens at the NGINX ingress layer
+- Neo4j Browser requires `neo4j+s://` scheme when connecting through the ingress (browser enforces secure connections)
+- Internal cluster services use plain `bolt://` for direct pod-to-pod communication
 - For production, consider using Let's Encrypt certificates with proper DNS configuration

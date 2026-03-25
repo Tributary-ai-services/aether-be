@@ -11,6 +11,7 @@ type ProductionStatus string
 
 const (
 	ProductionStatusProcessing ProductionStatus = "processing"
+	ProductionStatusRendering  ProductionStatus = "rendering"
 	ProductionStatusCompleted  ProductionStatus = "completed"
 	ProductionStatusFailed     ProductionStatus = "failed"
 )
@@ -24,6 +25,7 @@ const (
 	ProductionTypeOutline ProductionType = "outline"
 	ProductionTypeInsight ProductionType = "insight"
 	ProductionTypeCustom  ProductionType = "custom"
+	ProductionTypePodcast ProductionType = "podcast"
 )
 
 // ProductionFormat represents the output format of a production
@@ -34,6 +36,7 @@ const (
 	ProductionFormatHTML     ProductionFormat = "html"
 	ProductionFormatJSON     ProductionFormat = "json"
 	ProductionFormatText     ProductionFormat = "text"
+	ProductionFormatAudio    ProductionFormat = "audio"
 )
 
 // Production represents a generated artifact from a producer agent
@@ -43,9 +46,9 @@ type Production struct {
 	Title string `json:"title" validate:"required,min=1,max=255"`
 
 	// Production type and format
-	Type   ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom"`
-	Format ProductionFormat `json:"format" validate:"required,oneof=markdown html json text"`
-	Status ProductionStatus `json:"status" validate:"required,oneof=processing completed failed"`
+	Type   ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
+	Format ProductionFormat `json:"format" validate:"required,oneof=markdown html json text audio"`
+	Status ProductionStatus `json:"status" validate:"required,oneof=processing rendering completed failed"`
 
 	// Agent that created this production
 	AgentID        string `json:"agent_id" validate:"required,uuid"`
@@ -71,6 +74,11 @@ type Production struct {
 	CostUSD        float64 `json:"cost_usd"`
 	ResponseTimeMs int     `json:"response_time_ms"`
 
+	// Renderer (post-processing)
+	MediaURL      string                 `json:"media_url,omitempty"`
+	MediaMetadata map[string]interface{} `json:"media_metadata,omitempty"`
+	RendererID    string                 `json:"renderer_id,omitempty"`
+
 	// Error handling
 	ErrorMessage string `json:"error_message,omitempty"`
 
@@ -88,8 +96,8 @@ type Production struct {
 // ProductionCreateRequest represents a request to create/execute a production
 type ProductionCreateRequest struct {
 	Title           string           `json:"title" validate:"required,safe_string,min=1,max=255"`
-	Type            ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom"`
-	Format          ProductionFormat `json:"format" validate:"required,oneof=markdown html json text"`
+	Type            ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
+	Format          ProductionFormat `json:"format" validate:"required,oneof=markdown html json text audio"`
 	SourceDocuments []string         `json:"source_documents,omitempty" validate:"dive,uuid"`
 
 	// Optional context/parameters for the producer agent
@@ -99,7 +107,7 @@ type ProductionCreateRequest struct {
 // ProductionUpdateRequest represents a request to update a production
 type ProductionUpdateRequest struct {
 	Title  *string          `json:"title,omitempty" validate:"omitempty,safe_string,min=1,max=255"`
-	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing completed failed"`
+	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing rendering completed failed"`
 }
 
 // ProductionResponse represents a production response
@@ -120,10 +128,13 @@ type ProductionResponse struct {
 	TokensUsed      int              `json:"tokensUsed"`
 	CostUSD         float64          `json:"costUsd"`
 	ResponseTimeMs  int              `json:"responseTimeMs"`
-	ErrorMessage    string           `json:"errorMessage,omitempty"`
-	SourceDocuments []string         `json:"sourceDocuments,omitempty"`
-	CreatedAt       time.Time        `json:"createdAt"`
-	UpdatedAt       time.Time        `json:"updatedAt"`
+	ErrorMessage    string                 `json:"errorMessage,omitempty"`
+	MediaURL        string                 `json:"mediaUrl,omitempty"`
+	MediaMetadata   map[string]interface{} `json:"mediaMetadata,omitempty"`
+	RendererID      string                 `json:"rendererId,omitempty"`
+	SourceDocuments []string               `json:"sourceDocuments,omitempty"`
+	CreatedAt       time.Time              `json:"createdAt"`
+	UpdatedAt       time.Time              `json:"updatedAt"`
 
 	// Optional related data
 	Agent    *AgentResponse    `json:"agent,omitempty"`
@@ -148,8 +159,8 @@ type ProductionSearchRequest struct {
 	Query      string           `json:"query,omitempty" validate:"omitempty,safe_string,min=2,max=100"`
 	NotebookID string           `json:"notebook_id,omitempty" validate:"omitempty,uuid"`
 	AgentID    string           `json:"agent_id,omitempty" validate:"omitempty,uuid"`
-	Type       ProductionType   `json:"type,omitempty" validate:"omitempty,oneof=summary qa outline insight custom"`
-	Status     ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing completed failed"`
+	Type       ProductionType   `json:"type,omitempty" validate:"omitempty,oneof=summary qa outline insight custom podcast"`
+	Status     ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing rendering completed failed"`
 	Limit      int              `json:"limit,omitempty" validate:"omitempty,min=1,max=100"`
 	Offset     int              `json:"offset,omitempty" validate:"omitempty,min=0"`
 }
@@ -158,8 +169,8 @@ type ProductionSearchRequest struct {
 type ProducerExecuteRequest struct {
 	AgentID         string           `json:"agent_id" validate:"required,uuid"`
 	Title           string           `json:"title" validate:"required,safe_string,min=1,max=255"`
-	Type            ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom"`
-	Format          ProductionFormat `json:"format" validate:"required,oneof=markdown html json text"`
+	Type            ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
+	Format          ProductionFormat `json:"format" validate:"required,oneof=markdown html json text audio"`
 	SourceDocuments []string         `json:"source_documents,omitempty" validate:"dive,uuid"`
 	Context         map[string]interface{} `json:"context,omitempty"`
 }
@@ -218,8 +229,8 @@ type UpdateProducerPreferencesRequest struct {
 	NotebookID string `json:"notebook_id,omitempty"`
 
 	// Settings updates
-	DefaultFormat *ProductionFormat `json:"default_format,omitempty" validate:"omitempty,oneof=markdown html json text"`
-	DefaultType   *ProductionType   `json:"default_type,omitempty" validate:"omitempty,oneof=summary qa outline insight custom"`
+	DefaultFormat *ProductionFormat `json:"default_format,omitempty" validate:"omitempty,oneof=markdown html json text audio"`
+	DefaultType   *ProductionType   `json:"default_type,omitempty" validate:"omitempty,oneof=summary qa outline insight custom podcast"`
 }
 
 // NewProduction creates a new production with default values
@@ -265,6 +276,9 @@ func (p *Production) ToResponse() *ProductionResponse {
 		CostUSD:         p.CostUSD,
 		ResponseTimeMs:  p.ResponseTimeMs,
 		ErrorMessage:    p.ErrorMessage,
+		MediaURL:        p.MediaURL,
+		MediaMetadata:   p.MediaMetadata,
+		RendererID:      p.RendererID,
 		SourceDocuments: p.SourceDocuments,
 		CreatedAt:       p.CreatedAt,
 		UpdatedAt:       p.UpdatedAt,

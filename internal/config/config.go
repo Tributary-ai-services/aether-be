@@ -29,6 +29,9 @@ type Config struct {
 	Crawl4AI   Crawl4AIConfig
 	DBHub      DBHubConfig
 	Napkin     NapkinConfig
+	PostgresMCP           MCPServerConfig
+	FilesystemMCP         MCPServerConfig
+	MemoryMCP             MCPServerConfig
 	Neo4jMCP              MCPServerConfig
 	MinIOMCP              MCPServerConfig
 	KafkaMCP              MCPServerConfig
@@ -42,7 +45,21 @@ type Config struct {
 	SlackMCP              MCPServerConfig
 	PaperSearchMCP        MCPServerConfig
 	AssemblerMCP          MCPServerConfig
+	PodcastMCP            MCPServerConfig
 	OAuth                 OAuthConfig
+	SMTP                  SMTPConfig
+}
+
+// SMTPConfig holds email SMTP configuration
+type SMTPConfig struct {
+	Host       string
+	Port       int
+	User       string
+	Password   string
+	From       string
+	FromName   string
+	Enabled    bool
+	AppBaseURL string
 }
 
 // ServerConfig holds server-specific configuration
@@ -96,10 +113,12 @@ type RedisConfig struct {
 
 // KeycloakConfig holds Keycloak OIDC configuration
 type KeycloakConfig struct {
-	URL          string
-	Realm        string
-	ClientID     string
-	ClientSecret string
+	URL            string
+	Realm          string
+	ClientID       string
+	ClientSecret   string
+	AdminUsername  string
+	AdminPassword  string
 }
 
 // StorageConfig holds S3/MinIO configuration
@@ -310,10 +329,12 @@ func Load() (*Config, error) {
 			PoolSize: getEnvInt("REDIS_POOL_SIZE", 10),
 		},
 		Keycloak: KeycloakConfig{
-			URL:          getEnv("KEYCLOAK_URL", "http://localhost:8081"),
-			Realm:        getEnv("KEYCLOAK_REALM", "aether"),
-			ClientID:     getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
-			ClientSecret: getEnv("KEYCLOAK_CLIENT_SECRET", ""),
+			URL:            getEnv("KEYCLOAK_URL", "http://localhost:8081"),
+			Realm:          getEnv("KEYCLOAK_REALM", "aether"),
+			ClientID:       getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
+			ClientSecret:   getEnv("KEYCLOAK_CLIENT_SECRET", ""),
+			AdminUsername:  getEnv("KEYCLOAK_ADMIN_USERNAME", "admin"),
+			AdminPassword:  getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin123"),
 		},
 		Storage: StorageConfig{
 			Enabled:         getEnvBool("STORAGE_ENABLED", false),
@@ -424,6 +445,21 @@ func Load() (*Config, error) {
 			Enabled:        getEnvBool("NAPKIN_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("NAPKIN_MCP_TIMEOUT_SECONDS", 120),
 		},
+		PostgresMCP: MCPServerConfig{
+			BaseURL:        getEnv("POSTGRES_MCP_BASE_URL", "http://postgres-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("POSTGRES_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("POSTGRES_MCP_TIMEOUT_SECONDS", 30),
+		},
+		FilesystemMCP: MCPServerConfig{
+			BaseURL:        getEnv("FILESYSTEM_MCP_BASE_URL", "http://filesystem-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("FILESYSTEM_MCP_ENABLED", false),
+			TimeoutSeconds: getEnvInt("FILESYSTEM_MCP_TIMEOUT_SECONDS", 30),
+		},
+		MemoryMCP: MCPServerConfig{
+			BaseURL:        getEnv("MEMORY_MCP_BASE_URL", "http://memory-mcp.tas-mcp-servers.svc.cluster.local:8000"),
+			Enabled:        getEnvBool("MEMORY_MCP_ENABLED", false),
+			TimeoutSeconds: getEnvInt("MEMORY_MCP_TIMEOUT_SECONDS", 30),
+		},
 		Neo4jMCP: MCPServerConfig{
 			BaseURL:        getEnv("NEO4J_MCP_BASE_URL", "http://neo4j-mcp.tas-mcp-servers.svc.cluster.local:8000"),
 			Enabled:        getEnvBool("NEO4J_MCP_ENABLED", true),
@@ -479,6 +515,16 @@ func Load() (*Config, error) {
 			Enabled:        getEnvBool("SLACK_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("SLACK_MCP_TIMEOUT_SECONDS", 30),
 		},
+		SMTP: SMTPConfig{
+			Host:       getEnv("SMTP_HOST", ""),
+			Port:       getEnvInt("SMTP_PORT", 587),
+			User:       getEnv("SMTP_USER", ""),
+			Password:   getEnv("SMTP_PASSWORD", ""),
+			From:       getEnv("SMTP_FROM", "noreply@aether.ai"),
+			FromName:   getEnv("SMTP_FROM_NAME", "Aether Platform"),
+			Enabled:    getEnvBool("SMTP_ENABLED", false),
+			AppBaseURL: getEnv("APP_BASE_URL", "http://localhost:3001"),
+		},
 		OAuth: OAuthConfig{
 			GoogleClientID:        getEnv("OAUTH_GOOGLE_CLIENT_ID", ""),
 			GoogleClientSecret:    getEnv("OAUTH_GOOGLE_CLIENT_SECRET", ""),
@@ -497,6 +543,11 @@ func Load() (*Config, error) {
 			BaseURL:        getEnv("ASSEMBLER_MCP_BASE_URL", "http://assembler-mcp.tas-mcp-servers.svc.cluster.local:8091"),
 			Enabled:        getEnvBool("ASSEMBLER_MCP_ENABLED", true),
 			TimeoutSeconds: getEnvInt("ASSEMBLER_MCP_TIMEOUT_SECONDS", 60),
+		},
+		PodcastMCP: MCPServerConfig{
+			BaseURL:        getEnv("PODCAST_MCP_BASE_URL", "http://podcast-mcp.tas-mcp-servers.svc.cluster.local:8092"),
+			Enabled:        getEnvBool("PODCAST_MCP_ENABLED", true),
+			TimeoutSeconds: getEnvInt("PODCAST_MCP_TIMEOUT_SECONDS", 600),
 		},
 	}
 

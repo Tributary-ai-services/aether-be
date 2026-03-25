@@ -343,8 +343,22 @@ func (h *ProductionHandler) GetProductionContent(c *gin.Context) {
 		return
 	}
 
+	// Also fetch the production metadata so the frontend gets fresh data
+	// (e.g., mediaUrl may have been set after async rendering completed)
+	production, prodErr := h.productionService.GetProductionByID(c.Request.Context(), productionID, userID, spaceContext)
+	if prodErr != nil {
+		// Non-fatal: still return content even if metadata fetch fails
+		h.logger.Warn("Failed to fetch production metadata alongside content", zap.Error(prodErr))
+		c.JSON(http.StatusOK, gin.H{
+			"content": content,
+		})
+		return
+	}
+
+	response := production.ToResponse()
 	c.JSON(http.StatusOK, gin.H{
-		"content": content,
+		"content":    content,
+		"production": response,
 	})
 }
 
@@ -829,6 +843,28 @@ func (h *ProductionHandler) BulkDeleteProductions(c *gin.Context) {
 	c.JSON(http.StatusOK, models.BulkDeleteProductionsResponse{
 		Deleted: deleted,
 		Failed:  failed,
+	})
+}
+
+// ListRenderers returns available renderer workflows
+// @Summary List renderers
+// @Description Get available renderer workflows for post-processing productions
+// @Tags productions
+// @Produce json
+// @Security Bearer
+// @Success 200 {array} map[string]interface{}
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/renderers [get]
+func (h *ProductionHandler) ListRenderers(c *gin.Context) {
+	renderers, err := h.productionService.ListRenderers(c.Request.Context())
+	if err != nil {
+		h.logger.Error("Failed to list renderers", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to list renderers"))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"renderers": renderers,
 	})
 }
 

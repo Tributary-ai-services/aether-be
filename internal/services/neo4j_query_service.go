@@ -32,8 +32,8 @@ func NewNeo4jQueryService(k8s kubernetes.Interface, log *logger.Logger) *Neo4jQu
 	}
 }
 
-// getCredentials reads username/password from the K8s Secret referenced by the Database model.
-func (s *Neo4jQueryService) getCredentials(ctx context.Context, db *models.Database) (string, string, error) {
+// GetCredentials reads username/password from the K8s Secret referenced by the Database model.
+func (s *Neo4jQueryService) GetCredentials(ctx context.Context, db *models.Database) (string, string, error) {
 	if s.k8s == nil {
 		return "", "", fmt.Errorf("kubernetes client not configured")
 	}
@@ -68,7 +68,7 @@ func (s *Neo4jQueryService) buildURI(db *models.Database) string {
 
 // newDriver creates a temporary Neo4j driver for a query operation.
 func (s *Neo4jQueryService) newDriver(ctx context.Context, db *models.Database) (neo4j.DriverWithContext, error) {
-	username, password, err := s.getCredentials(ctx, db)
+	username, password, err := s.GetCredentials(ctx, db)
 	if err != nil {
 		return nil, err
 	}

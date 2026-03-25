@@ -17,6 +17,9 @@ const (
 	DatabaseTypeSQLServer DatabaseType = "sqlserver"
 	DatabaseTypeSQLite    DatabaseType = "sqlite"
 	DatabaseTypeNeo4j     DatabaseType = "neo4j"
+	DatabaseTypeMinio     DatabaseType = "minio"
+	DatabaseTypeKafka     DatabaseType = "kafka"
+	DatabaseTypeGrafana   DatabaseType = "grafana"
 )
 
 // DatabaseStatus represents the connection status
@@ -75,7 +78,7 @@ type Database struct {
 // DatabaseCreateRequest represents the request to create a database connection
 type DatabaseCreateRequest struct {
 	Name        string            `json:"name" validate:"required,min=1,max=255"`
-	Type        DatabaseType      `json:"type" validate:"required,oneof=postgres mysql mariadb sqlserver sqlite neo4j"`
+	Type        DatabaseType      `json:"type" validate:"required,oneof=postgres mysql mariadb sqlserver sqlite neo4j minio kafka grafana"`
 	Host        string            `json:"host" validate:"required"`
 	Port        int               `json:"port" validate:"required,min=1,max=65535"`
 	Database    string            `json:"database" validate:"required"`
@@ -294,6 +297,12 @@ func GetDefaultPort(dbType DatabaseType) int {
 		return 0 // SQLite doesn't use ports
 	case DatabaseTypeNeo4j:
 		return 7687
+	case DatabaseTypeMinio:
+		return 9000
+	case DatabaseTypeKafka:
+		return 9092
+	case DatabaseTypeGrafana:
+		return 3000
 	default:
 		return 0
 	}

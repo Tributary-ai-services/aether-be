@@ -426,6 +426,84 @@ func (h *NotebookHandler) ShareNotebook(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Notebook shared successfully"})
 }
 
+// RevokeNotebookShare revokes a share for a notebook
+func (h *NotebookHandler) RevokeNotebookShare(c *gin.Context) {
+	notebookID := c.Param("id")
+	targetUserID := c.Param("userId")
+	if notebookID == "" || targetUserID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID and User ID are required", nil))
+		return
+	}
+
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	if err := h.notebookService.RevokeShare(c.Request.Context(), notebookID, targetUserID, userID, spaceContext); err != nil {
+		h.logger.Error("Failed to revoke share", zap.String("notebook_id", notebookID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Share revoked successfully"})
+}
+
+// GetNotebookShares returns all shares for a notebook
+func (h *NotebookHandler) GetNotebookShares(c *gin.Context) {
+	notebookID := c.Param("id")
+	if notebookID == "" {
+		c.JSON(http.StatusBadRequest, errors.Validation("Notebook ID is required", nil))
+		return
+	}
+
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	shares, err := h.notebookService.GetNotebookShares(c.Request.Context(), notebookID, userID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get notebook shares", zap.String("notebook_id", notebookID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, shares)
+}
+
+// GetSharedWithMe returns notebooks shared with the current user
+func (h *NotebookHandler) GetSharedWithMe(c *gin.Context) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	shared, err := h.notebookService.GetSharedWithMe(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get shared notebooks", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, shared)
+}
+
 // ============================================================================
 // Internal API handlers for service-to-service communication
 // These handlers bypass space context middleware for internal service calls
@@ -451,7 +529,16 @@ func (h *NotebookHandler) GetNotebookHierarchy(c *gin.Context) {
 		return
 	}
 
+	// Try to resolve tenant via notebook access validation (supports cross-space sharing)
 	tenantID := c.Query("tenant_id")
+	if spaceContext, err := middleware.GetSpaceContext(c); err == nil {
+		if userID, err := ensureUserExists(c, h.userService, h.logger); err == nil {
+			if notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID, spaceContext); err == nil {
+				tenantID = notebook.TenantID
+			}
+		}
+	}
+
 	if tenantID == "" {
 		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
 		return
@@ -490,7 +577,16 @@ func (h *NotebookHandler) GetDocumentsRecursive(c *gin.Context) {
 		return
 	}
 
+	// Try to resolve tenant via notebook access validation (supports cross-space sharing)
 	tenantID := c.Query("tenant_id")
+	if spaceContext, err := middleware.GetSpaceContext(c); err == nil {
+		if userID, err := ensureUserExists(c, h.userService, h.logger); err == nil {
+			if notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID, spaceContext); err == nil {
+				tenantID = notebook.TenantID
+			}
+		}
+	}
+
 	if tenantID == "" {
 		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
 		return
@@ -533,7 +629,16 @@ func (h *NotebookHandler) GetSubNotebooks(c *gin.Context) {
 		return
 	}
 
+	// Try to resolve tenant via notebook access validation (supports cross-space sharing)
 	tenantID := c.Query("tenant_id")
+	if spaceContext, err := middleware.GetSpaceContext(c); err == nil {
+		if userID, err := ensureUserExists(c, h.userService, h.logger); err == nil {
+			if notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID, spaceContext); err == nil {
+				tenantID = notebook.TenantID
+			}
+		}
+	}
+
 	if tenantID == "" {
 		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
 		return
@@ -576,7 +681,16 @@ func (h *NotebookHandler) GetNotebookDocuments(c *gin.Context) {
 		return
 	}
 
+	// Try to resolve tenant via notebook access validation (supports cross-space sharing)
 	tenantID := c.Query("tenant_id")
+	if spaceContext, err := middleware.GetSpaceContext(c); err == nil {
+		if userID, err := ensureUserExists(c, h.userService, h.logger); err == nil {
+			if notebook, err := h.notebookService.GetNotebookByID(c.Request.Context(), notebookID, userID, spaceContext); err == nil {
+				tenantID = notebook.TenantID
+			}
+		}
+	}
+
 	if tenantID == "" {
 		c.JSON(http.StatusBadRequest, errors.Validation("Tenant ID is required", nil))
 		return

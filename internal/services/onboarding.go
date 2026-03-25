@@ -14,12 +14,18 @@ import (
 
 // OnboardingService handles new user setup and default resource creation
 type OnboardingService struct {
-	userService     *UserService
-	spaceService    *SpaceContextService
-	notebookService *NotebookService
-	agentService    *AgentService
-	documentService *DocumentService
-	logger          *logger.Logger
+	userService       *UserService
+	spaceService      *SpaceContextService
+	notebookService   *NotebookService
+	agentService      *AgentService
+	documentService   *DocumentService
+	invitationService *InvitationService
+	logger            *logger.Logger
+}
+
+// SetInvitationService sets the invitation service for processing pending invitations on signup
+func (s *OnboardingService) SetInvitationService(invService *InvitationService) {
+	s.invitationService = invService
 }
 
 // NewOnboardingService creates a new onboarding service
@@ -153,6 +159,12 @@ func (s *OnboardingService) OnboardNewUser(ctx context.Context, user *models.Use
 				zap.String("agent_builder_id", defaultAgent.AgentBuilderID),
 			)
 		}
+	}
+
+	// Process pending invitations (auto-accept shares from before signup)
+	if s.invitationService != nil && user.Email != "" {
+		s.invitationService.ProcessPendingInvitations(ctx, user.ID, user.Email)
+		result.Steps["process_invitations"] = true
 	}
 
 	// Mark onboarding as complete

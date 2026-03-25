@@ -84,6 +84,14 @@ type AgentCreateRequest struct {
 	// Agent-builder specific configuration (passed through)
 	SystemPrompt string                 `json:"system_prompt" validate:"required,min=1"`
 	LLMConfig    map[string]interface{} `json:"llm_config" validate:"required"`
+
+	// Knowledge/document context configuration (passed through to agent-builder)
+	EnableKnowledge     *bool                  `json:"enable_knowledge,omitempty"`
+	ContextStrategy     string                 `json:"context_strategy,omitempty"`
+	MaxContextTokens    int                    `json:"max_context_tokens,omitempty"`
+	IncludeSubNotebooks bool                   `json:"include_sub_notebooks,omitempty"`
+	MultiPassEnabled    bool                   `json:"multi_pass_enabled,omitempty"`
+	HybridConfig        map[string]interface{} `json:"hybrid_config,omitempty"`
 }
 
 // AgentUpdateRequest represents a request to update an agent
@@ -100,6 +108,16 @@ type AgentUpdateRequest struct {
 	// Agent-builder specific updates (passed through)
 	SystemPrompt *string                `json:"system_prompt,omitempty" validate:"omitempty,min=1"`
 	LLMConfig    map[string]interface{} `json:"llm_config,omitempty"`
+
+	// Knowledge/document context updates (mapped to agent-builder document_context)
+	EnableKnowledge     *bool                  `json:"enable_knowledge,omitempty"`
+	ContextStrategy     *string                `json:"context_strategy,omitempty"`
+	MaxContextTokens    *int                   `json:"max_context_tokens,omitempty"`
+	IncludeSubNotebooks *bool                  `json:"include_sub_notebooks,omitempty"`
+	MultiPassEnabled    *bool                  `json:"multi_pass_enabled,omitempty"`
+	TopK                *int                   `json:"top_k,omitempty"`
+	MinScore            *float64               `json:"min_score,omitempty"`
+	HybridConfig        map[string]interface{} `json:"hybrid_config,omitempty"`
 }
 
 // AgentResponse represents an agent response with related data
@@ -123,6 +141,17 @@ type AgentResponse struct {
 	// Agent configuration (from agent-builder)
 	SystemPrompt string                 `json:"system_prompt,omitempty"`
 	LLMConfig    map[string]interface{} `json:"llm_config,omitempty"`
+
+	// Knowledge/document context configuration (from agent-builder, flattened for frontend)
+	EnableKnowledge     bool                   `json:"enable_knowledge"`
+	ContextStrategy     string                 `json:"context_strategy,omitempty"`
+	MaxContextTokens    int                    `json:"max_context_tokens,omitempty"`
+	IncludeSubNotebooks bool                   `json:"include_sub_notebooks,omitempty"`
+	MultiPassEnabled    bool                   `json:"multi_pass_enabled,omitempty"`
+	TopK                int                    `json:"top_k,omitempty"`
+	MinScore            float64                `json:"min_score,omitempty"`
+	HybridConfig        map[string]interface{} `json:"hybrid_config,omitempty"`
+	DocumentContext     map[string]interface{} `json:"document_context,omitempty"`
 
 	// Statistics
 	TotalExecutions   int        `json:"total_executions"`

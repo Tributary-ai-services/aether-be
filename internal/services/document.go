@@ -392,6 +392,7 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 
 // GetDocumentByID retrieves a document by ID
 func (s *DocumentService) GetDocumentByID(ctx context.Context, documentID string, userID string, spaceCtx *models.SpaceContext) (*models.Document, error) {
+	// First try: match document in the user's current space
 	query := `
 		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
 		OPTIONAL MATCH (d)-[:BELONGS_TO]->(n:Notebook)
@@ -417,28 +418,55 @@ func (s *DocumentService) GetDocumentByID(ctx context.Context, documentID string
 		return nil, errors.Database("Failed to retrieve document", err)
 	}
 
-	if len(result.Records) == 0 {
+	if len(result.Records) > 0 {
+		document, err := s.recordToDocument(result.Records[0])
+		if err != nil {
+			return nil, err
+		}
+
+		// If document is in the user's space, validate space permissions
+		if document.SpaceID == spaceCtx.SpaceID && document.TenantID == spaceCtx.TenantID {
+			if !spaceCtx.CanRead() {
+				return nil, errors.Forbidden("Insufficient permissions to read document")
+			}
+			return document, nil
+		}
+	}
+
+	// Second try: check if document's notebook is shared with the user (cross-space access)
+	sharedQuery := `
+		MATCH (d:Document {id: $document_id})
+		MATCH (n:Notebook {id: d.notebook_id})-[:SHARED_WITH]->(u:User {id: $user_id})
+		WHERE n.status = 'active'
+		OPTIONAL MATCH (d)-[:OWNED_BY]->(owner:User)
+		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
+		       d.mime_type, d.size_bytes, d.checksum, d.storage_path, d.storage_bucket,
+		       d.extracted_text, d.processing_result, d.processing_time, d.confidence_score, d.metadata, d.notebook_id, d.owner_id,
+		       d.space_type, d.space_id, d.tenant_id,
+		       d.tags, d.search_text, d.processing_job_id, d.processed_at,
+		       d.created_at, d.updated_at,
+		       n.name as notebook_name, n.visibility as notebook_visibility,
+		       owner.username, owner.full_name, owner.avatar_url
+	`
+
+	sharedResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, sharedQuery, map[string]interface{}{
+		"document_id": documentID,
+		"user_id":     userID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to check shared document access", zap.String("document_id", documentID), zap.Error(err))
+		return nil, errors.Database("Failed to retrieve document", err)
+	}
+
+	if len(sharedResult.Records) == 0 {
 		return nil, errors.NotFoundWithDetails("Document not found", map[string]interface{}{
 			"document_id": documentID,
 		})
 	}
 
-	document, err := s.recordToDocument(result.Records[0])
+	document, err := s.recordToDocument(sharedResult.Records[0])
 	if err != nil {
 		return nil, err
-	}
-
-	// Validate document belongs to the correct space
-	if document.SpaceID != spaceCtx.SpaceID || document.TenantID != spaceCtx.TenantID {
-		return nil, errors.ForbiddenWithDetails("Document not accessible in this space", map[string]interface{}{
-			"document_id": documentID,
-			"space_id":    spaceCtx.SpaceID,
-		})
-	}
-
-	// Check if user has read permissions in the space
-	if !spaceCtx.CanRead() {
-		return nil, errors.Forbidden("Insufficient permissions to read document")
 	}
 
 	return document, nil
@@ -655,22 +683,11 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string,
 
 // ListDocumentsByNotebook lists documents in a notebook
 func (s *DocumentService) ListDocumentsByNotebook(ctx context.Context, notebookID string, userID string, spaceCtx *models.SpaceContext, limit, offset int) (*models.DocumentListResponse, error) {
-	// Check if user has read permissions in the space
-	if !spaceCtx.CanRead() {
-		return nil, errors.Forbidden("Insufficient permissions to list documents")
-	}
-
-	// Verify notebook exists and belongs to the correct space
+	// Verify notebook exists and user has access (via space match OR SHARED_WITH)
+	// GetNotebookByID handles cross-space access validation
 	notebook, err := s.notebookService.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
 	if err != nil {
 		return nil, err
-	}
-
-	if notebook.TenantID != spaceCtx.TenantID || notebook.SpaceID != spaceCtx.SpaceID {
-		return nil, errors.ForbiddenWithDetails("Notebook not accessible in this space", map[string]interface{}{
-			"notebook_id": notebookID,
-			"space_id":    spaceCtx.SpaceID,
-		})
 	}
 
 	// Set defaults
@@ -698,7 +715,7 @@ func (s *DocumentService) ListDocumentsByNotebook(ctx context.Context, notebookI
 
 	params := map[string]interface{}{
 		"notebook_id": notebookID,
-		"tenant_id":   spaceCtx.TenantID,
+		"tenant_id":   notebook.TenantID,
 		"limit":       limit + 1, // Get one extra to check if there are more
 		"offset":      offset,
 	}
@@ -736,7 +753,7 @@ func (s *DocumentService) ListDocumentsByNotebook(ctx context.Context, notebookI
 
 	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{
 		"notebook_id": notebookID,
-		"tenant_id":   spaceCtx.TenantID,
+		"tenant_id":   notebook.TenantID,
 	})
 	if err != nil {
 		s.logger.Error("Failed to get document count", zap.Error(err))
