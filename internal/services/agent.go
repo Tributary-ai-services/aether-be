@@ -106,7 +106,7 @@ func (s *AgentService) CreateAgent(ctx context.Context, req models.AgentCreateRe
 }
 
 // GetAgent retrieves an agent by ID with access control
-func (s *AgentService) GetAgent(ctx context.Context, agentID string, userID string, userTeams []string) (*models.AgentResponse, error) {
+func (s *AgentService) GetAgent(ctx context.Context, agentID string, userID string, userTeams []string, authToken string) (*models.AgentResponse, error) {
 	agent, err := s.getAgentFromNeo4j(ctx, agentID)
 	if err != nil {
 		return nil, err
@@ -117,7 +117,42 @@ func (s *AgentService) GetAgent(ctx context.Context, agentID string, userID stri
 		return nil, errors.NotFound("Agent not found")
 	}
 
-	return s.buildAgentResponse(ctx, agent)
+	response, err := s.buildAgentResponse(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with agent-builder data (knowledge config, system prompt, llm_config)
+	if authToken != "" {
+		builderID := agent.AgentBuilderID
+		if builderID == "" {
+			builderID = agentID
+		}
+		builderData, builderErr := s.getAgentRawFromBuilder(ctx, builderID, authToken)
+		if builderErr == nil && builderData != nil {
+			enriched := s.mapToAgentResponse(builderData)
+			if enriched != nil {
+				response.SystemPrompt = enriched.SystemPrompt
+				response.LLMConfig = enriched.LLMConfig
+				response.EnableKnowledge = enriched.EnableKnowledge
+				response.DocumentContext = enriched.DocumentContext
+				// Flatten document_context fields for frontend compatibility
+				response.ContextStrategy = enriched.ContextStrategy
+				response.MaxContextTokens = enriched.MaxContextTokens
+				response.IncludeSubNotebooks = enriched.IncludeSubNotebooks
+				response.MultiPassEnabled = enriched.MultiPassEnabled
+				response.TopK = enriched.TopK
+				response.MinScore = enriched.MinScore
+				response.HybridConfig = enriched.HybridConfig
+			}
+		} else {
+			s.logger.Warn("Failed to enrich agent from agent-builder, returning Neo4j data only",
+				zap.String("agent_id", agentID),
+				zap.Error(builderErr))
+		}
+	}
+
+	return response, nil
 }
 
 // canUserModifyAgent checks if a user can modify an agent (owner or team admin)
@@ -447,6 +482,30 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			agent.LLMConfig = llmConfig
 		}
 
+		// Extract knowledge/document context fields
+		if enableKnowledge, ok := agentMap["enable_knowledge"].(bool); ok {
+			agent.EnableKnowledge = enableKnowledge
+		}
+		if docCtx, ok := agentMap["document_context"].(map[string]interface{}); ok {
+			agent.DocumentContext = docCtx
+			// Flatten document_context fields for frontend compatibility
+			if strategy, ok := docCtx["strategy"].(string); ok {
+				agent.ContextStrategy = strategy
+			}
+			if maxTokens, ok := docCtx["max_context_tokens"].(float64); ok {
+				agent.MaxContextTokens = int(maxTokens)
+			}
+			if includeSub, ok := docCtx["include_sub_notebooks"].(bool); ok {
+				agent.IncludeSubNotebooks = includeSub
+			}
+			if topK, ok := docCtx["top_k"].(float64); ok {
+				agent.TopK = int(topK)
+			}
+			if minScore, ok := docCtx["min_score"].(float64); ok {
+				agent.MinScore = minScore
+			}
+		}
+
 		// Extract tags if present
 		if tags, ok := agentMap["tags"].([]interface{}); ok {
 			agent.Tags = make([]string, 0, len(tags))
@@ -748,6 +807,40 @@ func (s *AgentService) createAgentInBuilder(ctx context.Context, req models.Agen
 		"skills":        req.Skills,
 	}
 
+	// Forward knowledge/document context configuration
+	if req.EnableKnowledge != nil {
+		builderReq["enable_knowledge"] = *req.EnableKnowledge
+	}
+
+	// Build document_context object from flat frontend fields
+	docCtx := make(map[string]interface{})
+	hasDocCtx := false
+
+	if req.ContextStrategy != "" {
+		docCtx["strategy"] = req.ContextStrategy
+		hasDocCtx = true
+	}
+	if req.MaxContextTokens > 0 {
+		docCtx["max_context_tokens"] = req.MaxContextTokens
+		hasDocCtx = true
+	}
+	if req.IncludeSubNotebooks {
+		docCtx["include_sub_notebooks"] = true
+		hasDocCtx = true
+	}
+	if req.MultiPassEnabled {
+		docCtx["multi_pass"] = map[string]interface{}{"enabled": true}
+		hasDocCtx = true
+	}
+	if req.HybridConfig != nil {
+		docCtx["hybrid_config"] = req.HybridConfig
+		hasDocCtx = true
+	}
+
+	if hasDocCtx {
+		builderReq["document_context"] = docCtx
+	}
+
 	return s.makeAgentBuilderRequest(ctx, "POST", "/agents", builderReq, authToken)
 }
 
@@ -784,6 +877,52 @@ func (s *AgentService) updateAgentInBuilder(ctx context.Context, agentBuilderID 
 	}
 	if req.LLMConfig != nil {
 		builderReq["llm_config"] = req.LLMConfig
+	}
+
+	// Forward knowledge/document context configuration
+	if req.EnableKnowledge != nil {
+		builderReq["enable_knowledge"] = *req.EnableKnowledge
+	}
+
+	// Build document_context object from flat frontend fields
+	docCtx := make(map[string]interface{})
+	hasDocCtx := false
+
+	if req.ContextStrategy != nil {
+		docCtx["strategy"] = *req.ContextStrategy
+		hasDocCtx = true
+	}
+	if req.MaxContextTokens != nil {
+		docCtx["max_context_tokens"] = *req.MaxContextTokens
+		hasDocCtx = true
+	}
+	if req.IncludeSubNotebooks != nil {
+		docCtx["include_sub_notebooks"] = *req.IncludeSubNotebooks
+		hasDocCtx = true
+	}
+	if req.TopK != nil {
+		docCtx["top_k"] = *req.TopK
+		hasDocCtx = true
+	}
+	if req.MinScore != nil {
+		docCtx["min_score"] = *req.MinScore
+		hasDocCtx = true
+	}
+	if req.MultiPassEnabled != nil {
+		if *req.MultiPassEnabled {
+			docCtx["multi_pass"] = map[string]interface{}{"enabled": true}
+		} else {
+			docCtx["multi_pass"] = nil
+		}
+		hasDocCtx = true
+	}
+	if req.HybridConfig != nil {
+		docCtx["hybrid_config"] = req.HybridConfig
+		hasDocCtx = true
+	}
+
+	if hasDocCtx {
+		builderReq["document_context"] = docCtx
 	}
 
 	_, err := s.makeAgentBuilderRequest(ctx, "PUT", fmt.Sprintf("/agents/%s", agentBuilderID), builderReq, authToken)
@@ -1381,6 +1520,43 @@ func (s *AgentService) updateAgentExecutionStats(ctx context.Context, agent *mod
 	return s.updateAgentInNeo4j(ctx, agent)
 }
 
+// getAgentRawFromBuilder gets a single agent's raw JSON data from agent-builder
+func (s *AgentService) getAgentRawFromBuilder(ctx context.Context, agentID string, authToken string) (map[string]interface{}, error) {
+	endpoint := "/agents/" + agentID
+	requestURL := s.agentBuilderURL + endpoint
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to create agent-builder request", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, errors.ExternalService("Agent-builder service unavailable", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.ExternalService("Failed to read agent-builder response", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder error: status %d", resp.StatusCode), nil)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
+	}
+
+	return result, nil
+}
+
 // getAgentFromBuilder gets a single agent from the agent-builder service
 func (s *AgentService) getAgentFromBuilder(ctx context.Context, agentID string, authToken string) (*models.Agent, error) {
 	endpoint := "/agents/" + agentID
@@ -1753,6 +1929,38 @@ func (s *AgentService) mapToAgentResponse(agentMap map[string]interface{}) *mode
 	// Parse LLM config - keep as map[string]interface{} as that's what AgentResponse expects
 	if llmConfig, ok := agentMap["llm_config"].(map[string]interface{}); ok {
 		agent.LLMConfig = llmConfig
+	}
+
+	// Parse knowledge/document context fields
+	if enableKnowledge, ok := agentMap["enable_knowledge"].(bool); ok {
+		agent.EnableKnowledge = enableKnowledge
+	}
+	if docCtx, ok := agentMap["document_context"].(map[string]interface{}); ok {
+		agent.DocumentContext = docCtx
+		// Flatten document_context fields for frontend compatibility
+		if strategy, ok := docCtx["strategy"].(string); ok {
+			agent.ContextStrategy = strategy
+		}
+		if maxTokens, ok := docCtx["max_context_tokens"].(float64); ok {
+			agent.MaxContextTokens = int(maxTokens)
+		}
+		if includeSub, ok := docCtx["include_sub_notebooks"].(bool); ok {
+			agent.IncludeSubNotebooks = includeSub
+		}
+		if topK, ok := docCtx["top_k"].(float64); ok {
+			agent.TopK = int(topK)
+		}
+		if minScore, ok := docCtx["min_score"].(float64); ok {
+			agent.MinScore = minScore
+		}
+		if hybridConfig, ok := docCtx["hybrid_config"].(map[string]interface{}); ok {
+			agent.HybridConfig = hybridConfig
+		}
+		if multiPass, ok := docCtx["multi_pass"].(map[string]interface{}); ok {
+			if enabled, ok := multiPass["enabled"].(bool); ok {
+				agent.MultiPassEnabled = enabled
+			}
+		}
 	}
 
 	// Parse tags

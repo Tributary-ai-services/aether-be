@@ -63,8 +63,8 @@ func NewProductionService(
 // GetNotebookProducers returns available producer agents for a notebook
 // This includes both internal (system) producer agents and user-created producer agents
 func (s *ProductionService) GetNotebookProducers(ctx context.Context, notebookID, userID, authToken string, spaceCtx *models.SpaceContext) ([]*models.AgentResponse, error) {
-	// Verify notebook exists and user has access
-	_, err := s.notebookService.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
+	// Verify notebook exists and user has access (supports cross-space via SHARED_WITH)
+	notebook, err := s.notebookService.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (s *ProductionService) GetNotebookProducers(ctx context.Context, notebookID
 	)
 
 	// Get all user-created producer agents accessible to this user/space
-	// Filter agents by type=producer and accessible within the space
+	// Use notebook's own tenant/space to find agents in the notebook owner's space
 	query := `
 		MATCH (a:Agent)
 		WHERE a.type = 'producer'
@@ -101,8 +101,8 @@ func (s *ProductionService) GetNotebookProducers(ctx context.Context, notebookID
 	`
 
 	params := map[string]interface{}{
-		"tenant_id": spaceCtx.TenantID,
-		"space_id":  spaceCtx.SpaceID,
+		"tenant_id": notebook.TenantID,
+		"space_id":  notebook.SpaceID,
 	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -177,7 +177,7 @@ func (s *ProductionService) ExecuteProducer(ctx context.Context, notebookID stri
 		)
 	} else {
 		// Get the agent using the agent service (from Neo4j)
-		agent, err = s.agentService.GetAgent(ctx, req.AgentID, userID, userTeams)
+		agent, err = s.agentService.GetAgent(ctx, req.AgentID, userID, userTeams, "")
 		if err != nil {
 			return nil, errors.NotFoundWithDetails("Agent not found", map[string]interface{}{
 				"agent_id": req.AgentID,
@@ -203,7 +203,18 @@ func (s *ProductionService) ExecuteProducer(ctx context.Context, notebookID stri
 	}
 
 	// Create production record in processing status
-	production := models.NewProduction(req, agent.ID, agent.AgentBuilderID, notebookID, userID, spaceCtx)
+	// Use the notebook's space context so production is stored alongside notebook's other productions
+	productionSpaceCtx := spaceCtx
+	if notebook.TenantID != spaceCtx.TenantID || notebook.SpaceID != spaceCtx.SpaceID {
+		productionSpaceCtx = &models.SpaceContext{
+			SpaceType: notebook.SpaceType,
+			SpaceID:   notebook.SpaceID,
+			TenantID:  notebook.TenantID,
+			UserID:    spaceCtx.UserID,
+			UserRole:  spaceCtx.UserRole,
+		}
+	}
+	production := models.NewProduction(req, agent.ID, agent.AgentBuilderID, notebookID, userID, productionSpaceCtx)
 
 	// Store production in Neo4j
 	if err := s.createProduction(ctx, production); err != nil {
@@ -968,6 +979,7 @@ func (s *ProductionService) buildProducerUserMessage(notebook *models.Notebook, 
 
 // GetProductionByID retrieves a production by ID
 func (s *ProductionService) GetProductionByID(ctx context.Context, productionID, userID string, spaceCtx *models.SpaceContext) (*models.Production, error) {
+	// First try: match production in the user's current space
 	query := `
 		MATCH (p:Production {id: $production_id, tenant_id: $tenant_id})
 		RETURN p.id, p.title, p.type, p.format, p.status,
@@ -991,28 +1003,53 @@ func (s *ProductionService) GetProductionByID(ctx context.Context, productionID,
 		return nil, errors.Database("Failed to retrieve production", err)
 	}
 
-	if len(result.Records) == 0 {
+	if len(result.Records) > 0 {
+		production, err := s.recordToProduction(result.Records[0])
+		if err != nil {
+			return nil, err
+		}
+
+		if production.SpaceID == spaceCtx.SpaceID && production.TenantID == spaceCtx.TenantID {
+			if !spaceCtx.CanRead() {
+				return nil, errors.Forbidden("Insufficient permissions to read production")
+			}
+			return production, nil
+		}
+	}
+
+	// Second try: check if production's notebook is shared with the user (cross-space access)
+	sharedQuery := `
+		MATCH (p:Production {id: $production_id})
+		MATCH (n:Notebook {id: p.notebook_id})-[:SHARED_WITH]->(u:User {id: $user_id})
+		WHERE n.status = 'active'
+		RETURN p.id, p.title, p.type, p.format, p.status,
+		       p.agent_id, p.agent_builder_id, p.notebook_id, p.user_id,
+		       p.space_type, p.space_id, p.tenant_id,
+		       p.storage_bucket, p.storage_key, p.size_bytes,
+		       p.execution_id, p.tokens_used, p.cost_usd, p.response_time_ms,
+		       p.error_message, p.media_url, p.media_metadata, p.renderer_id,
+		       p.source_documents, p.search_text,
+		       p.created_at, p.updated_at
+	`
+
+	sharedResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, sharedQuery, map[string]interface{}{
+		"production_id": productionID,
+		"user_id":       userID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to check shared production access", zap.String("production_id", productionID), zap.Error(err))
+		return nil, errors.Database("Failed to retrieve production", err)
+	}
+
+	if len(sharedResult.Records) == 0 {
 		return nil, errors.NotFoundWithDetails("Production not found", map[string]interface{}{
 			"production_id": productionID,
 		})
 	}
 
-	production, err := s.recordToProduction(result.Records[0])
+	production, err := s.recordToProduction(sharedResult.Records[0])
 	if err != nil {
 		return nil, err
-	}
-
-	// Verify production belongs to the correct space
-	if production.SpaceID != spaceCtx.SpaceID || production.TenantID != spaceCtx.TenantID {
-		return nil, errors.ForbiddenWithDetails("Production not accessible in this space", map[string]interface{}{
-			"production_id": productionID,
-			"space_id":      spaceCtx.SpaceID,
-		})
-	}
-
-	// Check if user has read permissions
-	if !spaceCtx.CanRead() {
-		return nil, errors.Forbidden("Insufficient permissions to read production")
 	}
 
 	return production, nil
@@ -1032,8 +1069,8 @@ func (s *ProductionService) GetProductionContent(ctx context.Context, production
 		})
 	}
 
-	// Download content from S3
-	content, err := s.storageService.DownloadFileFromTenantBucket(ctx, spaceCtx.TenantID, production.StorageKey)
+	// Download content from S3 using the production's own tenant (supports cross-space access)
+	content, err := s.storageService.DownloadFileFromTenantBucket(ctx, production.TenantID, production.StorageKey)
 	if err != nil {
 		s.logger.Error("Failed to download production content", zap.Error(err))
 		return "", errors.InternalWithCause("Failed to retrieve production content", err)
@@ -1044,8 +1081,8 @@ func (s *ProductionService) GetProductionContent(ctx context.Context, production
 
 // ListNotebookProductions lists productions for a notebook
 func (s *ProductionService) ListNotebookProductions(ctx context.Context, notebookID, userID string, spaceCtx *models.SpaceContext, limit, offset int) (*models.ProductionListResponse, error) {
-	// Verify notebook exists and user has access
-	_, err := s.notebookService.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
+	// Verify notebook exists and user has access (supports cross-space via SHARED_WITH)
+	notebook, err := s.notebookService.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -1058,6 +1095,7 @@ func (s *ProductionService) ListNotebookProductions(ctx context.Context, noteboo
 		offset = 0
 	}
 
+	// Use notebook's own tenant/space to find productions
 	query := `
 		MATCH (p:Production)
 		WHERE p.notebook_id = $notebook_id
@@ -1077,8 +1115,8 @@ func (s *ProductionService) ListNotebookProductions(ctx context.Context, noteboo
 
 	params := map[string]interface{}{
 		"notebook_id": notebookID,
-		"tenant_id":   spaceCtx.TenantID,
-		"space_id":    spaceCtx.SpaceID,
+		"tenant_id":   notebook.TenantID,
+		"space_id":    notebook.SpaceID,
 		"limit":       limit + 1,
 		"offset":      offset,
 	}
@@ -1106,7 +1144,7 @@ func (s *ProductionService) ListNotebookProductions(ctx context.Context, noteboo
 		productions = append(productions, production.ToResponse())
 	}
 
-	// Get total count
+	// Get total count using notebook's own tenant/space
 	countQuery := `
 		MATCH (p:Production)
 		WHERE p.notebook_id = $notebook_id
@@ -1117,8 +1155,8 @@ func (s *ProductionService) ListNotebookProductions(ctx context.Context, noteboo
 
 	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{
 		"notebook_id": notebookID,
-		"tenant_id":   spaceCtx.TenantID,
-		"space_id":    spaceCtx.SpaceID,
+		"tenant_id":   notebook.TenantID,
+		"space_id":    notebook.SpaceID,
 	})
 	if err != nil {
 		s.logger.Error("Failed to get production count", zap.Error(err))

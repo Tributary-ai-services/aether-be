@@ -50,6 +50,9 @@ type APIServer struct {
 	NotificationHandler  *NotificationHandler
 	OAuthHandler         *OAuthHandler
 	CloudDriveHandler    *CloudDriveHandler
+	InvitationHandler    *InvitationHandler
+	CommentHandler       *CommentHandler
+	RegistrationHandler  *RegistrationHandler
 	SpaceService              *services.SpaceContextService
 	ProductionCleanupWorker  *services.ProductionCleanupWorker
 	Metrics                  *metrics.Metrics
@@ -119,7 +122,7 @@ func NewAPIServer(
 	// Initialize handlers
 	userHandler := NewUserHandler(userService, spaceContextService, onboardingService, log)
 	notebookHandler := NewNotebookHandler(notebookService, userService, log)
-	documentHandler := NewDocumentHandler(documentService, audiModalClient, log)
+	documentHandler := NewDocumentHandler(documentService, audiModalClient, userService, log)
 	chunkHandler := NewChunkHandler(neo4j, chunkService, audiModalClient, log)
 	jobHandler := NewJobHandler(documentService, audiModalClient, log)
 	webSocketHandler := NewWebSocketHandler(documentService, audiModalClient, log)
@@ -210,6 +213,21 @@ func NewAPIServer(
 	oauthHandler := NewOAuthHandler(oauthService, log)
 	cloudDriveHandler := NewCloudDriveHandler(cloudDriveService, oauthService, log)
 
+	// Initialize email and invitation services
+	emailService := services.NewEmailService(&cfg.SMTP, log)
+	invitationService := services.NewInvitationService(neo4j, notebookService, userService, emailService, log)
+	invitationHandler := NewInvitationHandler(invitationService, userService, log)
+
+	// Initialize comment service and handler
+	commentService := services.NewCommentService(neo4j, notebookService, log)
+	commentHandler := NewCommentHandler(commentService, notebookService, userService, log)
+
+	// Initialize registration handler (public, no auth required)
+	registrationHandler := NewRegistrationHandler(keycloakClient, log)
+
+	// Wire invitation processing into onboarding
+	onboardingService.SetInvitationService(invitationService)
+
 	// Initialize Napkin MCP service and MCP handler
 	napkinService := services.NewNapkinService(&cfg.Napkin, log)
 	mcpHandler := NewMCPHandler(napkinService, databaseService, neo4jQueryService, cfg, log)
@@ -267,6 +285,9 @@ func NewAPIServer(
 		NotificationHandler:  notificationHandler,
 		OAuthHandler:         oauthHandler,
 		CloudDriveHandler:    cloudDriveHandler,
+		InvitationHandler:    invitationHandler,
+		CommentHandler:       commentHandler,
+		RegistrationHandler:  registrationHandler,
 		SpaceService:              spaceContextService,
 		ProductionCleanupWorker:  productionCleanupWorker,
 		Metrics:                  metricsInstance,
@@ -290,12 +311,25 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 	s.Router.POST("/webhooks/audimodal/processing-complete", s.DocumentHandler.AudiModalProcessingWebhook)
 	s.Router.POST("/webhooks/workflow-complete", s.NotificationHandler.WorkflowCompleteWebhook)
 
+	// Public auth routes (no authentication required)
+	publicAuth := s.Router.Group("/api/v1/auth")
+	{
+		publicAuth.POST("/register", s.RegistrationHandler.Register)
+	}
+
 	// API routes with authentication
 	api := s.Router.Group("/api/v1")
 	api.Use(middleware.AuthMiddleware(keycloakClient, s.logger))
 
 	// Logging routes - frontend logs sent to backend
 	api.POST("/logs", s.LoggingHandler.SubmitFrontendLogs)
+
+	// Invitation routes (no space context needed)
+	invitations := api.Group("/invitations")
+	{
+		invitations.POST("/accept", s.InvitationHandler.AcceptInvitation)
+		invitations.GET("/pending", s.InvitationHandler.GetPendingInvitations)
+	}
 
 	// User routes
 	users := api.Group("/users")
@@ -326,10 +360,25 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		notebooks.POST("", s.NotebookHandler.CreateNotebook)
 		notebooks.GET("", s.NotebookHandler.ListNotebooks)
 		notebooks.GET("/search", s.NotebookHandler.SearchNotebooks)
+		notebooks.GET("/shared-with-me", s.NotebookHandler.GetSharedWithMe)
 		notebooks.GET("/:id", s.NotebookHandler.GetNotebook)
 		notebooks.PUT("/:id", s.NotebookHandler.UpdateNotebook)
 		notebooks.DELETE("/:id", s.NotebookHandler.DeleteNotebook)
 		notebooks.POST("/:id/share", s.NotebookHandler.ShareNotebook)
+		notebooks.GET("/:id/shares", s.NotebookHandler.GetNotebookShares)
+		notebooks.DELETE("/:id/share/:userId", s.NotebookHandler.RevokeNotebookShare)
+
+		// Invitation routes
+		notebooks.POST("/:id/invite", s.InvitationHandler.SendInvitation)
+		notebooks.GET("/:id/invitations", s.InvitationHandler.GetNotebookInvitations)
+		notebooks.DELETE("/:id/invitations/:invitationId", s.InvitationHandler.CancelInvitation)
+
+		// Comment routes (stream must be before :commentId to avoid param conflict)
+		notebooks.GET("/:id/comments/stream", s.CommentHandler.StreamComments)
+		notebooks.POST("/:id/comments", s.CommentHandler.CreateComment)
+		notebooks.GET("/:id/comments", s.CommentHandler.GetComments)
+		notebooks.PUT("/:id/comments/:commentId", s.CommentHandler.UpdateComment)
+		notebooks.DELETE("/:id/comments/:commentId", s.CommentHandler.DeleteComment)
 
 		// Documents within notebooks - use same parameter name to avoid conflict
 		notebooks.GET("/:id/documents", s.DocumentHandler.ListDocumentsByNotebook)
@@ -716,9 +765,11 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 
 	// MCP server management routes
 	mcpGroup := api.Group("/mcp")
+	mcpGroup.Use(middleware.SpaceContextMiddleware(s.SpaceService, s.logger))
 	{
 		mcpGroup.GET("/servers", s.MCPHandler.ListServers)
 		mcpGroup.GET("/servers/:id/tools", s.MCPHandler.ListTools)
+		mcpGroup.POST("/servers/:id/test-connection", s.MCPHandler.TestConnection)
 		mcpGroup.POST("/invoke", s.MCPHandler.InvokeTool)
 	}
 

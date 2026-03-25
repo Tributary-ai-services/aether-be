@@ -24,14 +24,16 @@ import (
 type DocumentHandler struct {
 	documentService   *services.DocumentService
 	audiModalService  *services.AudiModalService
+	userService       *services.UserService
 	logger            *logger.Logger
 }
 
 // NewDocumentHandler creates a new document handler
-func NewDocumentHandler(documentService *services.DocumentService, audiModalService *services.AudiModalService, log *logger.Logger) *DocumentHandler {
+func NewDocumentHandler(documentService *services.DocumentService, audiModalService *services.AudiModalService, userService *services.UserService, log *logger.Logger) *DocumentHandler {
 	return &DocumentHandler{
 		documentService:  documentService,
 		audiModalService: audiModalService,
+		userService:      userService,
 		logger:           log.WithService("document_handler"),
 	}
 }
@@ -516,15 +518,19 @@ func (h *DocumentHandler) GetDocument(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
 	// Get space context
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
 		return
 	}
-	
+
 	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to get document", zap.String("document_id", documentID), zap.Error(err))
@@ -555,9 +561,9 @@ func (h *DocumentHandler) GetDocumentStatus(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -746,9 +752,9 @@ func (h *DocumentHandler) ReprocessDocument(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -813,9 +819,10 @@ func (h *DocumentHandler) ListDocumentsByNotebook(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
 		return
 	}
 
@@ -996,15 +1003,19 @@ func (h *DocumentHandler) GetDocumentURL(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
 	// Get space context
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
 		return
 	}
-	
+
 	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to get document", zap.String("document_id", documentID), zap.Error(err))
@@ -1140,9 +1151,9 @@ func (h *DocumentHandler) GetDocumentAnalysis(c *gin.Context) {
 		return
 	}
 
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -1262,15 +1273,15 @@ func (h *DocumentHandler) GetDocumentExtractedText(c *gin.Context) {
 		return
 	}
 
-	// Get user ID from context
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	// Get internal user ID (resolves Keycloak sub to Neo4j user ID)
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
 	// Get document to verify access and get audimodal file ID
-	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID.(string), spaceContext)
+	document, err := h.documentService.GetDocumentByID(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to get document",
 			zap.String("document_id", documentID),
@@ -1297,13 +1308,17 @@ func (h *DocumentHandler) GetDocumentExtractedText(c *gin.Context) {
 		fileID = document.ProcessingJobID
 	}
 
+	// Use the document's tenant ID (not caller's space context) for AudiModal lookup
+	// This ensures cross-space shared documents can retrieve text from the owner's tenant
+	documentTenantID := document.TenantID
+
 	h.logger.Info("Fetching extracted text for document",
 		zap.String("document_id", documentID),
 		zap.String("file_id", fileID),
-		zap.String("tenant_id", spaceContext.TenantID))
+		zap.String("tenant_id", documentTenantID))
 
 	// Fetch extracted text from AudiModal
-	extractedText, err := h.audiModalService.GetFileContent(c.Request.Context(), spaceContext.TenantID, fileID)
+	extractedText, err := h.audiModalService.GetFileContent(c.Request.Context(), documentTenantID, fileID)
 	if err != nil {
 		h.logger.Error("Failed to get extracted text from AudiModal",
 			zap.String("document_id", documentID),

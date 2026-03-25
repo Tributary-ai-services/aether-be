@@ -411,11 +411,11 @@ func calculateCost(tokens int, model string) float64 {
 		costPer1000Tokens = 0.015
 	case "gpt-3.5-turbo", "gpt-3.5-turbo-16k":
 		costPer1000Tokens = 0.002
-	case "claude-3-sonnet", "claude-3-5-sonnet":
+	case "claude-sonnet-4-6", "claude-3-sonnet", "claude-3-5-sonnet":
 		costPer1000Tokens = 0.003
-	case "claude-3-haiku":
-		costPer1000Tokens = 0.00025
-	case "claude-3-opus":
+	case "claude-haiku-4-5-20251001", "claude-3-haiku":
+		costPer1000Tokens = 0.0008
+	case "claude-opus-4-6", "claude-3-opus":
 		costPer1000Tokens = 0.015
 	default:
 		// Use default pricing for unknown models

@@ -1,8 +1,14 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"go.uber.org/zap"
@@ -328,6 +334,114 @@ func (k *KeycloakClient) IsAdmin(claims *TokenClaims) bool {
 // GetProviderMetadata returns OIDC provider metadata
 func (k *KeycloakClient) GetProviderMetadata() *oidc.Provider {
 	return k.provider
+}
+
+// RegisterUser creates a new user in Keycloak via the Admin REST API
+func (k *KeycloakClient) RegisterUser(ctx context.Context, firstName, lastName, email, password string) (string, error) {
+	// Step 1: Get admin access token
+	adminToken, err := k.getAdminToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get admin token: %w", err)
+	}
+
+	// Step 2: Create user in Keycloak
+	userRep := map[string]interface{}{
+		"username":      email,
+		"email":         email,
+		"emailVerified": true,
+		"enabled":       true,
+		"firstName":     firstName,
+		"lastName":      lastName,
+		"credentials": []map[string]interface{}{
+			{
+				"type":      "password",
+				"value":     password,
+				"temporary": false,
+			},
+		},
+	}
+
+	userJSON, err := json.Marshal(userRep)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal user: %w", err)
+	}
+
+	createURL := fmt.Sprintf("%s/admin/realms/%s/users", k.config.URL, k.config.Realm)
+	req, err := http.NewRequestWithContext(ctx, "POST", createURL, bytes.NewReader(userJSON))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to create user in Keycloak: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return "", fmt.Errorf("user with email %s already exists", email)
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		k.logger.Error("Keycloak user creation failed",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(body)),
+		)
+		return "", fmt.Errorf("keycloak returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Extract user ID from Location header
+	location := resp.Header.Get("Location")
+	parts := strings.Split(location, "/")
+	keycloakUserID := parts[len(parts)-1]
+
+	k.logger.Info("User created in Keycloak",
+		zap.String("email", email),
+		zap.String("keycloak_user_id", keycloakUserID),
+	)
+
+	return keycloakUserID, nil
+}
+
+// getAdminToken gets an admin access token from Keycloak using the master realm
+func (k *KeycloakClient) getAdminToken(ctx context.Context) (string, error) {
+	tokenURL := fmt.Sprintf("%s/realms/master/protocol/openid-connect/token", k.config.URL)
+
+	data := url.Values{
+		"grant_type": {"password"},
+		"client_id":  {"admin-cli"},
+		"username":   {k.config.AdminUsername},
+		"password":   {k.config.AdminPassword},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to get admin token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("admin token request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", fmt.Errorf("failed to decode token response: %w", err)
+	}
+
+	return tokenResp.AccessToken, nil
 }
 
 // HealthCheck performs a health check on the Keycloak connection

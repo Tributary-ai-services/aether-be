@@ -37,6 +37,9 @@ type Notebook struct {
 	Tags           []string `json:"tags,omitempty"`
 	SearchText     string   `json:"search_text,omitempty"` // Combined searchable text
 
+	// Access type (set at runtime, not persisted)
+	AccessType string `json:"access_type,omitempty"` // "owner", "space_member", or "shared"
+
 	// Timestamps
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -76,6 +79,7 @@ type NotebookResponse struct {
 	DocumentCount      int                    `json:"documentCount"`
 	TotalSizeBytes     int64                  `json:"totalSizeBytes"`
 	Tags               []string               `json:"tags,omitempty"`
+	AccessType         string                 `json:"accessType,omitempty"` // "owner", "space_member", or "shared"
 	CreatedAt          time.Time              `json:"createdAt"`
 	UpdatedAt          time.Time              `json:"updatedAt"`
 
@@ -109,7 +113,7 @@ type NotebookSearchRequest struct {
 type NotebookShareRequest struct {
 	UserIDs     []string `json:"user_ids,omitempty" validate:"dive,uuid"`
 	GroupIDs    []string `json:"group_ids,omitempty"`
-	Permissions []string `json:"permissions" validate:"required,dive,oneof=read write admin"`
+	Permissions []string `json:"permissions" validate:"required,dive,oneof=read write admin view edit"`
 }
 
 // NotebookPermission represents notebook permissions
@@ -117,7 +121,7 @@ type NotebookPermission struct {
 	NotebookID string    `json:"notebook_id"`
 	UserID     string    `json:"user_id,omitempty"`
 	GroupID    string    `json:"group_id,omitempty"`
-	Permission string    `json:"permission" validate:"oneof=read write admin"`
+	Permission string    `json:"permission" validate:"oneof=read write admin view edit"`
 	GrantedBy  string    `json:"granted_by"`
 	GrantedAt  time.Time `json:"granted_at"`
 }
@@ -130,6 +134,37 @@ type NotebookActivity struct {
 	Action     string                 `json:"action"`
 	Details    map[string]interface{} `json:"details,omitempty"`
 	Timestamp  time.Time              `json:"timestamp"`
+}
+
+// NotebookShareResponse represents a single share entry for a notebook
+type NotebookShareResponse struct {
+	UserID     string    `json:"userId"`
+	Username   string    `json:"username"`
+	FullName   string    `json:"fullName,omitempty"`
+	AvatarURL  string    `json:"avatarUrl,omitempty"`
+	Email      string    `json:"email,omitempty"`
+	Permission string    `json:"permission"`
+	GrantedBy  string    `json:"grantedBy"`
+	GrantedAt  time.Time `json:"grantedAt"`
+}
+
+// NotebookSharesListResponse represents a list of shares for a notebook
+type NotebookSharesListResponse struct {
+	Shares []*NotebookShareResponse `json:"shares"`
+	Total  int                      `json:"total"`
+}
+
+// SharedNotebookResponse extends NotebookResponse with share permission info
+type SharedNotebookResponse struct {
+	*NotebookResponse
+	Permission string `json:"permission"`
+	SharedBy   string `json:"sharedBy,omitempty"`
+}
+
+// SharedNotebooksListResponse represents notebooks shared with the user
+type SharedNotebooksListResponse struct {
+	Notebooks []*SharedNotebookResponse `json:"notebooks"`
+	Total     int                       `json:"total"`
 }
 
 // NotebookStats represents notebook statistics
@@ -181,6 +216,7 @@ func (n *Notebook) ToResponse() *NotebookResponse {
 		DocumentCount:      n.DocumentCount,
 		TotalSizeBytes:     n.TotalSizeBytes,
 		Tags:               n.Tags,
+		AccessType:         n.AccessType,
 		CreatedAt:          n.CreatedAt,
 		UpdatedAt:          n.UpdatedAt,
 	}
