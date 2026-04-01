@@ -17,33 +17,34 @@ import (
 // AuthMiddleware handles JWT token validation
 func AuthMiddleware(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var idToken string
+
 		// Extract token from Authorization header
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			log.Warn("Missing authorization header")
+		if authHeader != "" {
+			// Check Bearer prefix
+			tokenParts := strings.SplitN(authHeader, " ", 2)
+			if len(tokenParts) == 2 && tokenParts[0] == "Bearer" {
+				idToken = tokenParts[1]
+			}
+		}
+
+		// Fallback: accept token from query parameter (needed for SSE/EventSource
+		// which cannot set custom headers)
+		if idToken == "" {
+			idToken = c.Query("token")
+		}
+
+		if idToken == "" {
+			log.Warn("Missing authorization token")
 			c.JSON(http.StatusUnauthorized, errors.NewAPIError(
 				errors.ErrUnauthorized,
-				"Authorization header is required",
+				"Authorization token is required",
 				nil,
 			))
 			c.Abort()
 			return
 		}
-
-		// Check Bearer prefix
-		tokenParts := strings.SplitN(authHeader, " ", 2)
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			log.Warn("Invalid authorization header format")
-			c.JSON(http.StatusUnauthorized, errors.NewAPIError(
-				errors.ErrUnauthorized,
-				"Invalid authorization header format",
-				nil,
-			))
-			c.Abort()
-			return
-		}
-
-		idToken := tokenParts[1]
 
 		// Verify and parse the ID token
 		ctx := context.Background()

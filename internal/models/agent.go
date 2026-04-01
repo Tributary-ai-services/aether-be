@@ -96,13 +96,13 @@ type AgentCreateRequest struct {
 
 // AgentUpdateRequest represents a request to update an agent
 type AgentUpdateRequest struct {
-	Name        *string    `json:"name,omitempty" validate:"omitempty,safe_string,min=1,max=255"`
-	Description *string    `json:"description,omitempty" validate:"omitempty,safe_string,max=1000"`
+	Name        *string    `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
+	Description *string    `json:"description,omitempty" validate:"omitempty,max=1000"`
 	Type        *AgentType `json:"type,omitempty" validate:"omitempty,oneof=qa conversational producer"`
 	Status      *string    `json:"status,omitempty" validate:"omitempty,oneof=draft published disabled"`
 	IsPublic    *bool      `json:"is_public,omitempty"`
 	IsTemplate  *bool      `json:"is_template,omitempty"`
-	Tags        []string   `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
+	Tags        []string   `json:"tags,omitempty" validate:"dive,min=1,max=50"`
 	Skills      []string   `json:"skills,omitempty"`
 
 	// Agent-builder specific updates (passed through)

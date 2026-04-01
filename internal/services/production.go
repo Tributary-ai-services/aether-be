@@ -32,6 +32,7 @@ type ProductionService struct {
 	spaceService    *SpaceService
 	audiModal       *AudiModalService
 	podcastMCP      *MCPClientService
+	kafkaService    *KafkaService
 	logger          *logger.Logger
 }
 
@@ -45,6 +46,7 @@ func NewProductionService(
 	spaceService *SpaceService,
 	audiModal *AudiModalService,
 	podcastMCP *MCPClientService,
+	kafkaService *KafkaService,
 	log *logger.Logger,
 ) *ProductionService {
 	return &ProductionService{
@@ -56,6 +58,7 @@ func NewProductionService(
 		spaceService:    spaceService,
 		audiModal:       audiModal,
 		podcastMCP:      podcastMCP,
+		kafkaService:    kafkaService,
 		logger:          log.WithService("production_service"),
 	}
 }
@@ -332,32 +335,117 @@ func (s *ProductionService) ExecuteProducer(ctx context.Context, notebookID stri
 			zap.String("renderer_id", rendererID),
 		)
 
-		// Run renderer asynchronously
-		go func() {
-			bgCtx := context.Background()
-			mediaResult, renderErr := s.executeRenderer(bgCtx, rendererID, output, req)
-			if renderErr != nil {
-				s.logger.Error("Async renderer failed",
+		// Attempt to publish to Kafka job queue for distributed processing
+		rendererType, _ := req.Context["renderer_type"].(string)
+		if s.kafkaService != nil && rendererType == "podcast" {
+			voiceMapping, _ := req.Context["voice_mapping"].(map[string]interface{})
+			ttsProvider, _ := req.Context["tts_provider"].(string)
+			if ttsProvider == "" {
+				ttsProvider = "kokoro"
+			}
+
+			// Build default voice mapping from speakers if not provided (same logic as goroutine path)
+			if voiceMapping == nil || len(voiceMapping) == 0 {
+				voiceMapping = map[string]interface{}{}
+				speakers, _ := req.Context["speakers"].(string)
+				var defaultVoices []string
+				if ttsProvider == "kokoro" {
+					defaultVoices = []string{"af_heart", "am_adam", "af_bella", "am_michael"}
+				} else {
+					defaultVoices = []string{"Rachel", "Adam", "Domi", "Josh"}
+				}
+				for i, speaker := range strings.Split(speakers, ",") {
+					name := strings.TrimSpace(speaker)
+					if name == "" {
+						continue
+					}
+					voiceIdx := i % len(defaultVoices)
+					voiceMapping[name] = defaultVoices[voiceIdx]
+				}
+			}
+
+			jobEvent := NewPodcastEvent(EventPodcastJobRequested, production.ID, production.UserID, map[string]interface{}{
+				"production_id": production.ID,
+				"notebook_id":   production.NotebookID,
+				"script":        output,
+				"title":         production.Title,
+				"provider":      ttsProvider,
+				"voice_mapping": voiceMapping,
+				"config":        req.Context,
+				"retry_attempt": 0,
+				"max_retries":   3,
+			})
+
+			if pubErr := s.kafkaService.PublishEvent(ctx, jobEvent); pubErr != nil {
+				// Fallback: use existing goroutine approach if Kafka is down
+				s.logger.Warn("Kafka unavailable, falling back to goroutine for renderer", zap.Error(pubErr))
+				go func() {
+					bgCtx := context.Background()
+					mediaResult, renderErr := s.executeRenderer(bgCtx, rendererID, output, req)
+					if renderErr != nil {
+						s.logger.Error("Async renderer failed",
+							zap.String("production_id", production.ID),
+							zap.String("renderer_id", rendererID),
+							zap.Error(renderErr))
+						production.Status = models.ProductionStatusCompleted
+						production.ErrorMessage = "Renderer failed: " + renderErr.Error()
+					} else {
+						s.logger.Info("Async renderer completed successfully",
+							zap.String("production_id", production.ID),
+							zap.String("media_url", mediaResult.URL),
+						)
+						production.MediaURL = mediaResult.URL
+						production.MediaMetadata = mediaResult.Metadata
+						production.Status = models.ProductionStatusCompleted
+					}
+					if updateErr := s.updateProduction(bgCtx, production); updateErr != nil {
+						s.logger.Error("Failed to update production after rendering",
+							zap.String("production_id", production.ID),
+							zap.Error(updateErr))
+					}
+				}()
+			} else {
+				// Kafka publish succeeded — mark as queued
+				production.Status = models.ProductionStatusQueued
+				production.MaxRetries = 3
+				if updateErr := s.updateProduction(ctx, production); updateErr != nil {
+					s.logger.Error("Failed to update production status to queued",
+						zap.String("production_id", production.ID),
+						zap.Error(updateErr))
+				}
+				s.logger.Info("Production job published to Kafka",
 					zap.String("production_id", production.ID),
 					zap.String("renderer_id", rendererID),
-					zap.Error(renderErr))
-				production.Status = models.ProductionStatusCompleted
-				production.ErrorMessage = "Renderer failed: " + renderErr.Error()
-			} else {
-				s.logger.Info("Async renderer completed successfully",
-					zap.String("production_id", production.ID),
-					zap.String("media_url", mediaResult.URL),
 				)
-				production.MediaURL = mediaResult.URL
-				production.MediaMetadata = mediaResult.Metadata
-				production.Status = models.ProductionStatusCompleted
 			}
-			if updateErr := s.updateProduction(bgCtx, production); updateErr != nil {
-				s.logger.Error("Failed to update production after rendering",
-					zap.String("production_id", production.ID),
-					zap.Error(updateErr))
-			}
-		}()
+		} else {
+			// No Kafka available or not podcast type — use goroutine fallback
+			go func() {
+				bgCtx := context.Background()
+				mediaResult, renderErr := s.executeRenderer(bgCtx, rendererID, output, req)
+				if renderErr != nil {
+					s.logger.Error("Async renderer failed",
+						zap.String("production_id", production.ID),
+						zap.String("renderer_id", rendererID),
+						zap.Error(renderErr))
+					production.Status = models.ProductionStatusCompleted
+					production.ErrorMessage = "Renderer failed: " + renderErr.Error()
+				} else {
+					s.logger.Info("Async renderer completed successfully",
+						zap.String("production_id", production.ID),
+						zap.String("media_url", mediaResult.URL),
+					)
+					production.MediaURL = mediaResult.URL
+					production.MediaMetadata = mediaResult.Metadata
+					production.Status = models.ProductionStatusCompleted
+				}
+				if updateErr := s.updateProduction(bgCtx, production); updateErr != nil {
+					s.logger.Error("Failed to update production after rendering",
+						zap.String("production_id", production.ID),
+						zap.Error(updateErr))
+				}
+			}()
+		}
 
 		response := production.ToResponse()
 		response.Content = content
@@ -693,6 +781,54 @@ func (s *ProductionService) ListRenderers(ctx context.Context) ([]map[string]int
 	return renderers, nil
 }
 
+// RetryProduction republishes a failed production to the Kafka job queue for retry
+func (s *ProductionService) RetryProduction(ctx context.Context, production *models.Production, userID string) error {
+	if s.kafkaService == nil {
+		return fmt.Errorf("Kafka service not available for retry")
+	}
+
+	// Increment retry count
+	production.RetryCount++
+	production.Status = models.ProductionStatusRetrying
+	production.ErrorMessage = ""
+	production.ProgressPhase = ""
+
+	if err := s.updateProduction(ctx, production); err != nil {
+		return fmt.Errorf("failed to update production for retry: %w", err)
+	}
+
+	// Republish to Kafka job queue
+	jobEvent := NewPodcastEvent(EventPodcastJobRequested, production.ID, userID, map[string]interface{}{
+		"production_id": production.ID,
+		"notebook_id":   production.NotebookID,
+		"title":         production.Title,
+		"retry_attempt": production.RetryCount,
+		"max_retries":   production.MaxRetries,
+	})
+
+	if err := s.kafkaService.PublishEvent(ctx, jobEvent); err != nil {
+		production.Status = models.ProductionStatusFailed
+		production.ErrorMessage = "Failed to publish retry job: " + err.Error()
+		_ = s.updateProduction(ctx, production)
+		return fmt.Errorf("failed to publish retry job to Kafka: %w", err)
+	}
+
+	// Update status to queued
+	production.Status = models.ProductionStatusQueued
+	if err := s.updateProduction(ctx, production); err != nil {
+		s.logger.Error("Failed to update production to queued after retry",
+			zap.String("production_id", production.ID),
+			zap.Error(err))
+	}
+
+	s.logger.Info("Production retry published to Kafka",
+		zap.String("production_id", production.ID),
+		zap.Int("retry_count", production.RetryCount),
+	)
+
+	return nil
+}
+
 // getNotebookDocumentContent retrieves the extracted text content from documents in a notebook
 func (s *ProductionService) getNotebookDocumentContent(ctx context.Context, notebookID, tenantID string, sourceDocumentIDs []string) (string, error) {
 	var query string
@@ -940,12 +1076,26 @@ func (s *ProductionService) buildProducerUserMessage(notebook *models.Notebook, 
 		message += fmt.Sprintf("TARGET LENGTH: The script MUST be AT LEAST %d words long (for a %d-minute podcast). ", targetWords, podcastDuration)
 		message += fmt.Sprintf("Count carefully — you need roughly %d lines of dialogue with 15-25 words each. ", targetWords/20)
 		message += "This is CRITICAL — a script that is too short will produce an incomplete podcast. Err on the side of being LONGER rather than shorter.\n\n"
-		message += "Use the screenplay format: 'SpeakerName: dialogue' on each line. Default speakers are Alex and Sam.\n"
+		// Use user-specified speakers or default to Alex and Sam
+		speakerNames := "Alex and Sam"
+		if s, ok := req.Context["speakers"].(string); ok && s != "" {
+			speakerNames = s
+		}
+		message += fmt.Sprintf("Use the screenplay format: 'SpeakerName: dialogue' on each line. The speakers are: %s.\n", speakerNames)
+		message += fmt.Sprintf("Use ONLY these speaker names: %s. Do NOT introduce other speakers.\n", speakerNames)
 		message += "Include stage directions in parentheses like (laughs), (excited), (thoughtful pause).\n"
 		message += "Make the conversation natural with back-and-forth dialogue, reactions, questions, and insights.\n"
-		message += "Reference specific facts, quotes, and data from the source documents.\n"
+		message += "Reference specific facts, quotes, rules, policies, names, numbers, and data from the source documents. Every claim must be grounded in the document content.\n"
 		message += "Structure: Introduction → Main discussion (multiple subtopics with deep exploration) → Key takeaways → Conclusion/sign-off.\n"
 		message += "IMPORTANT: Explore each topic in depth with examples, analogies, and follow-up questions. Do NOT rush through topics.\n"
+
+		// Include user-specified topics to focus the discussion
+		if topics, ok := req.Context["topics"].(string); ok && topics != "" {
+			message += fmt.Sprintf("\nFOCUS TOPICS: The podcast MUST specifically address these topics AS THEY APPEAR IN THE SOURCE DOCUMENTS: %s\n", topics)
+			message += "CRITICAL: Discuss these topics ONLY using specific information, details, rules, policies, and examples found in the source documents above. "
+			message += "Do NOT discuss these topics in general or abstract terms. Every point must reference concrete details from the documents.\n"
+		}
+
 		message += "Output ONLY the screenplay text with no markdown headers or metadata."
 
 	default:
@@ -1327,6 +1477,10 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 		    p.cost_usd = $cost_usd,
 		    p.response_time_ms = $response_time_ms,
 		    p.error_message = $error_message,
+		    p.progress_phase = $progress_phase,
+		    p.retry_count = $retry_count,
+		    p.max_retries = $max_retries,
+		    p.worker_id = $worker_id,
 		    p.media_url = $media_url,
 		    p.media_metadata = $media_metadata,
 		    p.renderer_id = $renderer_id,
@@ -1348,6 +1502,10 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 		"cost_usd":         production.CostUSD,
 		"response_time_ms": production.ResponseTimeMs,
 		"error_message":    production.ErrorMessage,
+		"progress_phase":   production.ProgressPhase,
+		"retry_count":      production.RetryCount,
+		"max_retries":      production.MaxRetries,
+		"worker_id":        production.WorkerID,
 		"media_url":        production.MediaURL,
 		"media_metadata":   marshalJSONOrEmpty(production.MediaMetadata),
 		"renderer_id":      production.RendererID,
@@ -1370,7 +1528,7 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 func (s *ProductionService) CleanupStaleProductions(ctx context.Context, staleThreshold time.Duration) (int, error) {
 	query := `
 		MATCH (p:Production)
-		WHERE p.status IN ['processing', 'rendering']
+		WHERE p.status IN ['processing', 'rendering', 'queued', 'retrying']
 		  AND p.updated_at < datetime($cutoff)
 		SET p.status = 'failed',
 		    p.error_message = 'Stale production cleanup: processing was interrupted (likely by a service restart)',

@@ -72,6 +72,12 @@ const (
 
 	// Notification events
 	EventNotificationCreated EventType = "notification.created"
+
+	// Podcast production events
+	EventPodcastJobRequested   EventType = "podcast.job.requested"
+	EventPodcastProgressUpdate EventType = "podcast.progress.update"
+	EventPodcastCompleted      EventType = "podcast.completed"
+	EventPodcastFailed         EventType = "podcast.failed"
 )
 
 // Event represents a domain event
@@ -425,6 +431,10 @@ func (k *KafkaService) getTopicForEvent(eventType EventType) string {
 		EventWorkflowCompleted:       "workflow.results",
 		EventWorkflowFailed:          "workflow.results",
 		EventNotificationCreated:     "notifications",
+		EventPodcastJobRequested:     "podcast.jobs",
+		EventPodcastProgressUpdate:   "podcast.progress",
+		EventPodcastCompleted:        "podcast.progress",
+		EventPodcastFailed:           "podcast.progress",
 	}
 
 	baseTopic, exists := topicMap[eventType]
@@ -438,6 +448,12 @@ func (k *KafkaService) getTopicForEvent(eventType EventType) string {
 	}
 
 	return baseTopic
+}
+
+// GetTopicForEvent returns the full topic name (with prefix) for a given event type.
+// Use this when subscribing to topics so the consumer uses the same topic the publisher writes to.
+func (k *KafkaService) GetTopicForEvent(eventType EventType) string {
+	return k.getTopicForEvent(eventType)
 }
 
 func (k *KafkaService) testConnection(ctx context.Context) error {
@@ -544,6 +560,16 @@ func NewWorkflowEvent(eventType EventType, workflowID, userID string, data map[s
 	return Event{
 		Type:    eventType,
 		Subject: workflowID,
+		Data:    data,
+		UserID:  userID,
+	}
+}
+
+// NewPodcastEvent creates a new podcast-related event
+func NewPodcastEvent(eventType EventType, productionID, userID string, data map[string]interface{}) Event {
+	return Event{
+		Type:    eventType,
+		Subject: productionID,
 		Data:    data,
 		UserID:  userID,
 	}

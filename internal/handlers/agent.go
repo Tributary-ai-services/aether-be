@@ -208,11 +208,28 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 		zap.Any("name", req.Name),
 		zap.Any("type", req.Type),
 		zap.Bool("has_system_prompt", req.SystemPrompt != nil),
+		zap.Strings("tags", req.Tags),
+		zap.Strings("skills", req.Skills),
 	)
+
+	// Strip empty tags before validation
+	if len(req.Tags) > 0 {
+		filtered := make([]string, 0, len(req.Tags))
+		for _, t := range req.Tags {
+			if t != "" {
+				filtered = append(filtered, t)
+			}
+		}
+		req.Tags = filtered
+	}
 
 	// Validate request
 	if err := validateStruct(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errors.Validation("Validation failed", err))
+		h.logger.Warn("Agent update validation failed",
+			zap.String("agent_id", agentID),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusUnprocessableEntity, errors.Validation("Validation failed", err))
 		return
 	}
 
