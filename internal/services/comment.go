@@ -34,34 +34,68 @@ func NewCommentService(neo4j *database.Neo4jClient, notebookService *NotebookSer
 	}
 }
 
-// CreateComment creates a new comment on a notebook
+// CreateComment creates a new comment on a notebook or conversation
 func (s *CommentService) CreateComment(ctx context.Context, notebookID string, req models.CreateCommentRequest, userID, tenantID string) (*models.CommentResponse, error) {
 	commentID := uuid.New().String()
 	now := time.Now()
 
-	// Build Cypher query
-	query := `
-		MATCH (n:Notebook {id: $notebook_id}), (u:User {id: $user_id})
-		CREATE (c:Comment {
-			id: $id,
-			content: $content,
-			author_id: $user_id,
-			resource_id: $notebook_id,
-			resource_type: 'notebook',
-			parent_id: $parent_id,
-			tenant_id: $tenant_id,
-			mentions: $mentions,
-			edited: false,
-			created_at: datetime($created_at),
-			updated_at: datetime($created_at)
-		})
-		CREATE (c)-[:COMMENTED_ON]->(n)
-		CREATE (c)-[:AUTHORED_BY]->(u)
-		RETURN c.id, c.content, c.author_id, c.resource_id, c.resource_type,
-		       c.parent_id, c.mentions, c.edited, c.created_at, c.updated_at,
-		       u.username as author_username, u.full_name as author_full_name,
-		       u.avatar_url as author_avatar_url
-	`
+	// Determine resource type and ID based on conversationId
+	resourceID := notebookID
+	resourceType := "notebook"
+	if req.ConversationID != "" {
+		resourceID = req.ConversationID
+		resourceType = "conversation"
+	}
+
+	// Build Cypher query - match the appropriate target node
+	var query string
+	if resourceType == "conversation" {
+		query = `
+			MATCH (target:ChatConversation {id: $resource_id}), (u:User {id: $user_id})
+			CREATE (c:Comment {
+				id: $id,
+				content: $content,
+				author_id: $user_id,
+				resource_id: $resource_id,
+				resource_type: $resource_type,
+				parent_id: $parent_id,
+				tenant_id: $tenant_id,
+				mentions: $mentions,
+				edited: false,
+				created_at: datetime($created_at),
+				updated_at: datetime($created_at)
+			})
+			CREATE (c)-[:COMMENTED_ON]->(target)
+			CREATE (c)-[:AUTHORED_BY]->(u)
+			RETURN c.id, c.content, c.author_id, c.resource_id, c.resource_type,
+			       c.parent_id, c.mentions, c.edited, c.created_at, c.updated_at,
+			       u.username as author_username, u.full_name as author_full_name,
+			       u.avatar_url as author_avatar_url
+		`
+	} else {
+		query = `
+			MATCH (target:Notebook {id: $resource_id}), (u:User {id: $user_id})
+			CREATE (c:Comment {
+				id: $id,
+				content: $content,
+				author_id: $user_id,
+				resource_id: $resource_id,
+				resource_type: $resource_type,
+				parent_id: $parent_id,
+				tenant_id: $tenant_id,
+				mentions: $mentions,
+				edited: false,
+				created_at: datetime($created_at),
+				updated_at: datetime($created_at)
+			})
+			CREATE (c)-[:COMMENTED_ON]->(target)
+			CREATE (c)-[:AUTHORED_BY]->(u)
+			RETURN c.id, c.content, c.author_id, c.resource_id, c.resource_type,
+			       c.parent_id, c.mentions, c.edited, c.created_at, c.updated_at,
+			       u.username as author_username, u.full_name as author_full_name,
+			       u.avatar_url as author_avatar_url
+		`
+	}
 
 	mentions := req.Mentions
 	if mentions == nil {
@@ -69,14 +103,15 @@ func (s *CommentService) CreateComment(ctx context.Context, notebookID string, r
 	}
 
 	params := map[string]interface{}{
-		"id":          commentID,
-		"notebook_id": notebookID,
-		"user_id":     userID,
-		"content":     req.Content,
-		"parent_id":   req.ParentID,
-		"tenant_id":   tenantID,
-		"mentions":    mentions,
-		"created_at":  now.Format(time.RFC3339),
+		"id":            commentID,
+		"resource_id":   resourceID,
+		"resource_type": resourceType,
+		"user_id":       userID,
+		"content":       req.Content,
+		"parent_id":     req.ParentID,
+		"tenant_id":     tenantID,
+		"mentions":      mentions,
+		"created_at":    now.Format(time.RFC3339),
 	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -107,11 +142,19 @@ func (s *CommentService) CreateComment(ctx context.Context, notebookID string, r
 	return comment, nil
 }
 
-// GetComments returns threaded comments for a notebook
-func (s *CommentService) GetComments(ctx context.Context, notebookID, tenantID string) (*models.CommentListResponse, error) {
+// GetComments returns threaded comments for a notebook or conversation
+func (s *CommentService) GetComments(ctx context.Context, notebookID, tenantID, conversationID string) (*models.CommentListResponse, error) {
+	// Determine resource filter
+	resourceID := notebookID
+	resourceType := "notebook"
+	if conversationID != "" {
+		resourceID = conversationID
+		resourceType = "conversation"
+	}
+
 	// Get top-level comments with author info
 	query := `
-		MATCH (c:Comment {resource_id: $notebook_id, resource_type: 'notebook'})
+		MATCH (c:Comment {resource_id: $resource_id, resource_type: $resource_type})
 		WHERE c.parent_id IS NULL OR c.parent_id = ''
 		MATCH (c)-[:AUTHORED_BY]->(author:User)
 		OPTIONAL MATCH (reply:Comment)-[:REPLY_TO]->(c)
@@ -133,7 +176,8 @@ func (s *CommentService) GetComments(ctx context.Context, notebookID, tenantID s
 		ORDER BY c.created_at DESC
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
-		"notebook_id": notebookID,
+		"resource_id":   resourceID,
+		"resource_type": resourceType,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to get comments", err)

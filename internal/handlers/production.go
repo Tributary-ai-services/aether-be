@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -33,24 +37,30 @@ func extractBearerToken(c *gin.Context) string {
 
 // ProductionHandler handles production-related HTTP requests
 type ProductionHandler struct {
-	productionService *services.ProductionService
-	userService       *services.UserService
-	teamService       *services.TeamService
-	logger            *logger.Logger
+	productionService   *services.ProductionService
+	progressService     *services.PodcastProgressService
+	conversationService *services.ConversationService
+	userService         *services.UserService
+	teamService         *services.TeamService
+	logger              *logger.Logger
 }
 
 // NewProductionHandler creates a new production handler
 func NewProductionHandler(
 	productionService *services.ProductionService,
+	progressService *services.PodcastProgressService,
+	conversationService *services.ConversationService,
 	userService *services.UserService,
 	teamService *services.TeamService,
 	log *logger.Logger,
 ) *ProductionHandler {
 	return &ProductionHandler{
-		productionService: productionService,
-		userService:       userService,
-		teamService:       teamService,
-		logger:            log.WithService("production_handler"),
+		productionService:   productionService,
+		progressService:     progressService,
+		conversationService: conversationService,
+		userService:         userService,
+		teamService:         teamService,
+		logger:              log.WithService("production_handler"),
 	}
 }
 
@@ -888,8 +898,9 @@ func (h *ProductionHandler) getUserTeams(c *gin.Context, userID string) ([]strin
 
 // NotebookChatRequest represents a chat request for a notebook
 type NotebookChatRequest struct {
-	Message string                   `json:"message" binding:"required"`
-	History []NotebookChatMessage    `json:"history,omitempty"`
+	Message        string                `json:"message" binding:"required"`
+	History        []NotebookChatMessage `json:"history,omitempty"`
+	ConversationID string                `json:"conversation_id,omitempty"`
 }
 
 // NotebookChatMessage represents a message in the chat history
@@ -900,9 +911,10 @@ type NotebookChatMessage struct {
 
 // NotebookChatResponse represents the response from notebook chat
 type NotebookChatResponse struct {
-	Message   string `json:"message"`
-	AgentID   string `json:"agent_id"`
-	AgentName string `json:"agent_name"`
+	Message        string `json:"message"`
+	AgentID        string `json:"agent_id"`
+	AgentName      string `json:"agent_name"`
+	ConversationID string `json:"conversation_id"`
 }
 
 // NotebookChat handles chat requests for a notebook using the internal Notebook Chat Assistant
@@ -957,13 +969,45 @@ func (h *ProductionHandler) NotebookChat(c *gin.Context) {
 		return
 	}
 
-	// Build conversation history for the agent
+	// Handle conversation persistence
+	conversationID := req.ConversationID
+
+	// If no conversation_id provided, create a new conversation
+	if conversationID == "" && h.conversationService != nil {
+		createReq := models.CreateConversationRequest{}
+		conv, convErr := h.conversationService.CreateConversation(c.Request.Context(), notebookID, createReq, userID, spaceContext)
+		if convErr != nil {
+			h.logger.Warn("Failed to create conversation, proceeding without persistence", zap.Error(convErr))
+		} else {
+			conversationID = conv.ID
+		}
+	}
+
+	// Build conversation history from persisted messages or client-supplied history
 	var conversationHistory []models.ConversationMessage
-	for _, msg := range req.History {
-		conversationHistory = append(conversationHistory, models.ConversationMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
+	if conversationID != "" && h.conversationService != nil {
+		// Load history from persisted messages
+		persistedMessages, msgErr := h.conversationService.GetAllMessages(c.Request.Context(), conversationID)
+		if msgErr != nil {
+			h.logger.Warn("Failed to load persisted messages, falling back to client history", zap.Error(msgErr))
+		} else if len(persistedMessages) > 0 {
+			for _, msg := range persistedMessages {
+				conversationHistory = append(conversationHistory, models.ConversationMessage{
+					Role:    msg.Role,
+					Content: msg.Content,
+				})
+			}
+		}
+	}
+
+	// Fall back to client-supplied history if no persisted messages
+	if len(conversationHistory) == 0 {
+		for _, msg := range req.History {
+			conversationHistory = append(conversationHistory, models.ConversationMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
 	}
 
 	// Execute chat using the production service
@@ -982,14 +1026,161 @@ func (h *ProductionHandler) NotebookChat(c *gin.Context) {
 		return
 	}
 
+	// Persist messages
+	if conversationID != "" && h.conversationService != nil {
+		// Persist user message
+		_, _ = h.conversationService.AddMessage(c.Request.Context(), conversationID, "user", req.Message, false, nil)
+		// Persist assistant response
+		_, _ = h.conversationService.AddMessage(c.Request.Context(), conversationID, "assistant", response.Content, false, nil)
+		// Auto-name conversation from first message
+		_ = h.conversationService.UpdateConversationNameFromMessage(c.Request.Context(), conversationID, req.Message)
+	}
+
 	h.logger.Info("Notebook chat completed",
 		zap.String("notebook_id", notebookID),
 		zap.String("user_id", userID),
+		zap.String("conversation_id", conversationID),
 	)
 
 	c.JSON(http.StatusOK, NotebookChatResponse{
-		Message:   response.Content,
-		AgentID:   NotebookChatAssistantID,
-		AgentName: "Notebook Chat Assistant",
+		Message:        response.Content,
+		AgentID:        NotebookChatAssistantID,
+		AgentName:      "Notebook Chat Assistant",
+		ConversationID: conversationID,
+	})
+}
+
+// StreamProductionProgress handles SSE for real-time podcast production progress
+func (h *ProductionHandler) StreamProductionProgress(c *gin.Context) {
+	productionID := c.Param("id")
+	if productionID == "" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Production ID is required"))
+		return
+	}
+
+	if h.progressService == nil {
+		c.JSON(http.StatusServiceUnavailable, errors.Internal("Progress service not available"))
+		return
+	}
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// Subscribe to progress events
+	eventCh := h.progressService.Subscribe(productionID)
+	defer h.progressService.Unsubscribe(productionID, eventCh)
+
+	// Heartbeat ticker
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
+	clientGone := c.Request.Context().Done()
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case <-clientGone:
+			return false
+		case event := <-eventCh:
+			data, err := json.Marshal(event)
+			if err != nil {
+				h.logger.Error("Failed to marshal progress event", zap.Error(err))
+				return true
+			}
+			c.SSEvent("message", string(data))
+			return true
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			c.Writer.Flush()
+			return true
+		}
+	})
+}
+
+// GetProductionProgress returns the current progress of a podcast production (polling fallback)
+func (h *ProductionHandler) GetProductionProgress(c *gin.Context) {
+	productionID := c.Param("id")
+	if productionID == "" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Production ID is required"))
+		return
+	}
+
+	if h.progressService == nil {
+		c.JSON(http.StatusServiceUnavailable, errors.Internal("Progress service not available"))
+		return
+	}
+
+	progress, err := h.progressService.GetProgress(c.Request.Context(), productionID)
+	if err != nil {
+		h.logger.Error("Failed to get production progress", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, errors.Internal("Failed to get progress"))
+		return
+	}
+
+	if progress == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"phase":   "unknown",
+			"message": "No progress data available",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, progress)
+}
+
+// RetryProduction retries a failed podcast production
+func (h *ProductionHandler) RetryProduction(c *gin.Context) {
+	productionID := c.Param("id")
+	if productionID == "" {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Production ID is required"))
+		return
+	}
+
+	// Resolve user
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		h.logger.Error("Failed to resolve user", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	// Get space context from middleware
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	// Get the production and validate it's in failed state
+	production, err := h.productionService.GetProductionByID(c.Request.Context(), productionID, userID, spaceContext)
+	if err != nil {
+		h.logger.Error("Failed to get production", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	if production.Status != models.ProductionStatusFailed {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Can only retry failed productions"))
+		return
+	}
+
+	// Retry via production service
+	err = h.productionService.RetryProduction(c.Request.Context(), production, userID)
+	if err != nil {
+		h.logger.Error("Failed to retry production", zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	h.logger.Info("Production retry initiated",
+		zap.String("production_id", productionID),
+		zap.String("user_id", userID),
+	)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Retry initiated",
+		"production": production.ToResponse(),
 	})
 }

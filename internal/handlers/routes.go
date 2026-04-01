@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -52,6 +53,7 @@ type APIServer struct {
 	CloudDriveHandler    *CloudDriveHandler
 	InvitationHandler    *InvitationHandler
 	CommentHandler       *CommentHandler
+	ConversationHandler  *ConversationHandler
 	RegistrationHandler  *RegistrationHandler
 	SpaceService              *services.SpaceContextService
 	ProductionCleanupWorker  *services.ProductionCleanupWorker
@@ -173,11 +175,34 @@ func NewAPIServer(
 	aiPlaygroundService := services.NewAIPlaygroundService(neo4j, &cfg.Router, agentService, workflowService, log)
 	aiPlaygroundHandler := NewAIPlaygroundHandler(aiPlaygroundService, userService, teamService, log)
 
+	// Initialize conversation service (needed by production handler)
+	conversationService := services.NewConversationService(neo4j, notebookService, log)
+
 	// Initialize Podcast MCP client and Production service
 	podcastMCPClient := services.NewMCPClientService("podcast-mcp", &cfg.PodcastMCP, log)
-	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, podcastMCPClient, log)
-	productionHandler := NewProductionHandler(productionService, userService, teamService, log)
+	productionService := services.NewProductionService(neo4j, storageService, agentService, notebookService, teamService, spaceService, audiModalClient, podcastMCPClient, kafkaService, log)
 	productionCleanupWorker := services.NewProductionCleanupWorker(productionService, log)
+
+	// Initialize Redis client for podcast progress tracking (optional — graceful if unavailable)
+	var podcastProgressService *services.PodcastProgressService
+	if cfg.Redis.Addr != "" {
+		redisClient, redisErr := database.NewRedisClient(cfg.Redis, log)
+		if redisErr != nil {
+			log.Warn("Redis unavailable — podcast progress tracking disabled", zap.Error(redisErr))
+		} else {
+			podcastProgressService = services.NewPodcastProgressService(redisClient, neo4j, productionService, log)
+			// Subscribe to Kafka podcast.progress topic for progress events
+			if kafkaService != nil {
+				progressTopic := kafkaService.GetTopicForEvent(services.EventPodcastProgressUpdate)
+				if subErr := kafkaService.Subscribe(progressTopic, "podcast-progress-handler", podcastProgressService.HandleProgressMessage); subErr != nil {
+					log.Warn("Failed to subscribe to podcast progress topic", zap.String("topic", progressTopic), zap.Error(subErr))
+				} else {
+					log.Info("Subscribed to podcast progress Kafka topic", zap.String("topic", progressTopic))
+				}
+			}
+		}
+	}
+	productionHandler := NewProductionHandler(productionService, podcastProgressService, conversationService, userService, teamService, log)
 
 	// Initialize Argo Events service and handler
 	argoService := services.NewArgoService(log)
@@ -221,6 +246,9 @@ func NewAPIServer(
 	// Initialize comment service and handler
 	commentService := services.NewCommentService(neo4j, notebookService, log)
 	commentHandler := NewCommentHandler(commentService, notebookService, userService, log)
+
+	// Initialize conversation handler
+	conversationHandler := NewConversationHandler(conversationService, notebookService, userService, log)
 
 	// Initialize registration handler (public, no auth required)
 	registrationHandler := NewRegistrationHandler(keycloakClient, log)
@@ -287,6 +315,7 @@ func NewAPIServer(
 		CloudDriveHandler:    cloudDriveHandler,
 		InvitationHandler:    invitationHandler,
 		CommentHandler:       commentHandler,
+		ConversationHandler:  conversationHandler,
 		RegistrationHandler:  registrationHandler,
 		SpaceService:              spaceContextService,
 		ProductionCleanupWorker:  productionCleanupWorker,
@@ -380,6 +409,14 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		notebooks.PUT("/:id/comments/:commentId", s.CommentHandler.UpdateComment)
 		notebooks.DELETE("/:id/comments/:commentId", s.CommentHandler.DeleteComment)
 
+		// Conversation routes
+		notebooks.GET("/:id/conversations", s.ConversationHandler.ListConversations)
+		notebooks.POST("/:id/conversations", s.ConversationHandler.CreateConversation)
+		notebooks.GET("/:id/conversations/:convId", s.ConversationHandler.GetConversation)
+		notebooks.PUT("/:id/conversations/:convId", s.ConversationHandler.UpdateConversation)
+		notebooks.DELETE("/:id/conversations/:convId", s.ConversationHandler.DeleteConversation)
+		notebooks.GET("/:id/conversations/:convId/messages", s.ConversationHandler.GetMessages)
+
 		// Documents within notebooks - use same parameter name to avoid conflict
 		notebooks.GET("/:id/documents", s.DocumentHandler.ListDocumentsByNotebook)
 
@@ -428,6 +465,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 	{
 		productions.GET("/:id", s.ProductionHandler.GetProduction)
 		productions.GET("/:id/content", s.ProductionHandler.GetProductionContent)
+		productions.GET("/:id/progress", s.ProductionHandler.GetProductionProgress)
+		productions.GET("/:id/progress/stream", s.ProductionHandler.StreamProductionProgress)
+		productions.POST("/:id/retry", s.ProductionHandler.RetryProduction)
 		productions.DELETE("/:id", s.ProductionHandler.DeleteProduction)
 		productions.POST("/bulk-delete", s.ProductionHandler.BulkDeleteProductions)
 	}

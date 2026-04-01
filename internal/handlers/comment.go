@@ -107,7 +107,9 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 		return
 	}
 
-	comments, err := h.commentService.GetComments(c.Request.Context(), notebookID, notebook.TenantID)
+	conversationID := c.Query("conversation_id")
+
+	comments, err := h.commentService.GetComments(c.Request.Context(), notebookID, notebook.TenantID, conversationID)
 	if err != nil {
 		h.logger.Error("Failed to get comments", zap.Error(err))
 		handleServiceError(c, err)

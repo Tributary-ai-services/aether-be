@@ -11,9 +11,11 @@ type ProductionStatus string
 
 const (
 	ProductionStatusProcessing ProductionStatus = "processing"
+	ProductionStatusQueued     ProductionStatus = "queued"
 	ProductionStatusRendering  ProductionStatus = "rendering"
 	ProductionStatusCompleted  ProductionStatus = "completed"
 	ProductionStatusFailed     ProductionStatus = "failed"
+	ProductionStatusRetrying   ProductionStatus = "retrying"
 )
 
 // ProductionType represents the type of production
@@ -48,7 +50,7 @@ type Production struct {
 	// Production type and format
 	Type   ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
 	Format ProductionFormat `json:"format" validate:"required,oneof=markdown html json text audio"`
-	Status ProductionStatus `json:"status" validate:"required,oneof=processing rendering completed failed"`
+	Status ProductionStatus `json:"status" validate:"required,oneof=processing queued rendering completed failed retrying"`
 
 	// Agent that created this production
 	AgentID        string `json:"agent_id" validate:"required,uuid"`
@@ -79,6 +81,12 @@ type Production struct {
 	MediaMetadata map[string]interface{} `json:"media_metadata,omitempty"`
 	RendererID    string                 `json:"renderer_id,omitempty"`
 
+	// Progress tracking (Kafka job queue)
+	ProgressPhase string `json:"progress_phase,omitempty"` // tts_generating, assembling, uploading
+	RetryCount    int    `json:"retry_count"`
+	MaxRetries    int    `json:"max_retries"`
+	WorkerID      string `json:"worker_id,omitempty"`
+
 	// Error handling
 	ErrorMessage string `json:"error_message,omitempty"`
 
@@ -107,7 +115,7 @@ type ProductionCreateRequest struct {
 // ProductionUpdateRequest represents a request to update a production
 type ProductionUpdateRequest struct {
 	Title  *string          `json:"title,omitempty" validate:"omitempty,safe_string,min=1,max=255"`
-	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing rendering completed failed"`
+	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing queued rendering completed failed retrying"`
 }
 
 // ProductionResponse represents a production response
@@ -129,6 +137,8 @@ type ProductionResponse struct {
 	CostUSD         float64          `json:"costUsd"`
 	ResponseTimeMs  int              `json:"responseTimeMs"`
 	ErrorMessage    string                 `json:"errorMessage,omitempty"`
+	ProgressPhase   string                 `json:"progressPhase,omitempty"`
+	RetryCount      int                    `json:"retryCount"`
 	MediaURL        string                 `json:"mediaUrl,omitempty"`
 	MediaMetadata   map[string]interface{} `json:"mediaMetadata,omitempty"`
 	RendererID      string                 `json:"rendererId,omitempty"`
@@ -160,7 +170,7 @@ type ProductionSearchRequest struct {
 	NotebookID string           `json:"notebook_id,omitempty" validate:"omitempty,uuid"`
 	AgentID    string           `json:"agent_id,omitempty" validate:"omitempty,uuid"`
 	Type       ProductionType   `json:"type,omitempty" validate:"omitempty,oneof=summary qa outline insight custom podcast"`
-	Status     ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing rendering completed failed"`
+	Status     ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing queued rendering completed failed retrying"`
 	Limit      int              `json:"limit,omitempty" validate:"omitempty,min=1,max=100"`
 	Offset     int              `json:"offset,omitempty" validate:"omitempty,min=0"`
 }
@@ -276,6 +286,8 @@ func (p *Production) ToResponse() *ProductionResponse {
 		CostUSD:         p.CostUSD,
 		ResponseTimeMs:  p.ResponseTimeMs,
 		ErrorMessage:    p.ErrorMessage,
+		ProgressPhase:   p.ProgressPhase,
+		RetryCount:      p.RetryCount,
 		MediaURL:        p.MediaURL,
 		MediaMetadata:   p.MediaMetadata,
 		RendererID:      p.RendererID,
