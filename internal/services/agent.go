@@ -995,6 +995,41 @@ func (s *AgentService) makeAgentBuilderRequest(ctx context.Context, method, path
 	return result, nil
 }
 
+// ProxySkillsList forwards a skills list request to agent-builder and returns the raw JSON response
+func (s *AgentService) ProxySkillsList(ctx context.Context, queryString string, authToken string) ([]byte, error) {
+	url := s.agentBuilderURL + "/skills"
+	if queryString != "" {
+		url += "?" + queryString
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, errors.InternalWithCause("Failed to create skills request", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		s.logger.Error("Agent-builder skills request failed", zap.String("url", url), zap.Error(err))
+		return nil, errors.ExternalService("Agent-builder service unavailable", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.InternalWithCause("Failed to read skills response", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder skills error: %s", string(body)), nil)
+	}
+
+	return body, nil
+}
+
 // Helper methods for Neo4j operations
 
 func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Agent) error {

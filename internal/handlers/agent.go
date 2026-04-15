@@ -1131,6 +1131,18 @@ func (h *AgentHandler) GetAgentStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// ListSkills proxies the skills list request to agent-builder
+func (h *AgentHandler) ListSkills(c *gin.Context) {
+	authToken := extractAuthToken(c)
+	body, err := h.agentService.ProxySkillsList(c.Request.Context(), c.Request.URL.RawQuery, authToken)
+	if err != nil {
+		h.logger.Error("Failed to proxy skills list", zap.Error(err))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch skills from agent-builder"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", body)
+}
+
 // truncateString truncates a string to the specified length
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {

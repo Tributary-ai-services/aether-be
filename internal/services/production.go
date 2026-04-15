@@ -1933,6 +1933,7 @@ func (s *ProductionService) ExecuteNotebookChat(
 	userID string,
 	authToken string,
 	spaceCtx *models.SpaceContext,
+	skillIDs []string,
 ) (*NotebookChatResponse, error) {
 	// Verify notebook exists and user has access
 	notebook, err := s.notebookService.GetNotebookByID(ctx, notebookID, userID, spaceCtx)
@@ -1995,11 +1996,20 @@ func (s *ProductionService) ExecuteNotebookChat(
 		executeReq.SelectedDocuments = audimodalFileIDs
 	}
 
+	// Pass requested skill IDs so agent-builder can activate specific MCP tools
+	if len(skillIDs) > 0 {
+		if executeReq.Context == nil {
+			executeReq.Context = make(map[string]interface{})
+		}
+		executeReq.Context["skill_ids"] = skillIDs
+	}
+
 	s.logger.Info("Executing notebook chat via agent-builder",
 		zap.String("notebook_id", notebook.ID),
 		zap.String("audimodal_tenant_id", audimodalTenantID),
 		zap.Int("history_length", len(history)),
 		zap.Int("file_ids", len(audimodalFileIDs)),
+		zap.Int("skill_ids", len(skillIDs)),
 		zap.String("user_id", userID),
 	)
 

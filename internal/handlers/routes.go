@@ -813,6 +813,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		mcpGroup.POST("/invoke", s.MCPHandler.InvokeTool)
 	}
 
+	// Skills routes - proxy to agent-builder
+	api.GET("/skills", s.AgentHandler.ListSkills)
+
 	// Credentials routes - list and manage OAuth credentials
 	credentials := api.Group("/credentials")
 	{
