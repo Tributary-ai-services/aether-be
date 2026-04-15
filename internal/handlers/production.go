@@ -901,6 +901,7 @@ type NotebookChatRequest struct {
 	Message        string                `json:"message" binding:"required"`
 	History        []NotebookChatMessage `json:"history,omitempty"`
 	ConversationID string                `json:"conversation_id,omitempty"`
+	SkillIDs       []string              `json:"skill_ids,omitempty"`
 }
 
 // NotebookChatMessage represents a message in the chat history
@@ -1019,6 +1020,7 @@ func (h *ProductionHandler) NotebookChat(c *gin.Context) {
 		userID,
 		authToken,
 		spaceContext,
+		req.SkillIDs,
 	)
 	if err != nil {
 		h.logger.Error("Failed to execute notebook chat", zap.Error(err))
