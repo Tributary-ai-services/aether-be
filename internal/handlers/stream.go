@@ -15,20 +15,24 @@ import (
 	"github.com/Tributary-ai-services/aether-be/internal/middleware"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
+	"github.com/Tributary-ai-services/aether-be/internal/streaming"
 	"github.com/Tributary-ai-services/aether-be/pkg/errors"
 )
 
 // StreamHandler handles live streaming HTTP requests and WebSocket connections
 type StreamHandler struct {
 	streamService *services.StreamService
+	hub           *streaming.Hub
 	logger        *logger.Logger
 	upgrader      websocket.Upgrader
 }
 
-// NewStreamHandler creates a new stream handler
-func NewStreamHandler(streamService *services.StreamService, log *logger.Logger) *StreamHandler {
+// NewStreamHandler creates a new stream handler. The hub is optional — pass nil
+// to use only the legacy Neo4j-backed stream service.
+func NewStreamHandler(streamService *services.StreamService, hub *streaming.Hub, log *logger.Logger) *StreamHandler {
 	return &StreamHandler{
 		streamService: streamService,
+		hub:           hub,
 		logger:        log.WithService("stream_handler"),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -39,6 +43,12 @@ func NewStreamHandler(streamService *services.StreamService, log *logger.Logger)
 			WriteBufferSize: 1024,
 		},
 	}
+}
+
+// SetStreamingHub wires the Kafka-backed streaming hub into the handler.
+// Called from main.go after the consumer is initialized.
+func (h *StreamHandler) SetStreamingHub(hub *streaming.Hub) {
+	h.hub = hub
 }
 
 // CreateStreamSource creates a new stream source
@@ -522,7 +532,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 
 	// Parse filters from query parameters
 	filters := models.StreamFilters{}
-	
+
 	if sourceIDs := c.Query("source_ids"); sourceIDs != "" {
 		filters.SourceIDs = parseCommaSeparated(sourceIDs)
 	}
@@ -541,7 +551,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Starting WebSocket event stream", 
+	h.logger.Info("Starting WebSocket event stream",
 		zap.String("user_id", userID),
 		zap.String("tenant_id", spaceContext.TenantID),
 		zap.Any("filters", filters))
@@ -552,11 +562,19 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 		h.logger.Error("Failed to upgrade WebSocket connection", zap.Error(err))
 		return
 	}
+
+	// If the streaming hub is available, use the Kafka-backed event delivery.
+	// Otherwise fall back to the legacy Neo4j-based analytics polling.
+	if h.hub != nil {
+		h.handleHubWebSocket(conn, userID, spaceContext.TenantID, filters.EventTypes)
+		return
+	}
+
 	defer conn.Close()
 
 	// Create stream connection
 	streamConn := models.NewStreamConnection(userID, spaceContext.TenantID, filters)
-	
+
 	// Register connection with stream service
 	h.streamService.AddStreamConnection(streamConn)
 	defer h.streamService.RemoveStreamConnection(streamConn.ID)
@@ -566,7 +584,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 		Type:      "connection_established",
 		Timestamp: time.Now(),
 	}
-	
+
 	if err := conn.WriteJSON(confirmationMsg); err != nil {
 		h.logger.Error("Failed to send connection confirmation", zap.Error(err))
 		return
@@ -574,6 +592,26 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 
 	// Handle WebSocket connection
 	h.handleWebSocketConnection(conn, streamConn)
+}
+
+// handleHubWebSocket registers the WS connection with the streaming hub so it
+// receives CloudEvents from Kafka in real time.
+func (h *StreamHandler) handleHubWebSocket(ws *websocket.Conn, userID, tenantID string, typeFilter []string) {
+	connID := userID + "-" + time.Now().Format("20060102150405")
+
+	sc := streaming.NewConn(connID, tenantID, ws, typeFilter)
+	h.hub.Register(sc)
+	defer h.hub.Unregister(connID)
+
+	// Send connection confirmation as a plain JSON message (not a CE)
+	ws.WriteJSON(map[string]interface{}{
+		"type":      "connection_established",
+		"timestamp": time.Now(),
+	})
+
+	// ReadPump blocks until the client disconnects
+	go sc.WritePump()
+	sc.ReadPump()
 }
 
 // handleWebSocketConnection handles an active WebSocket connection

@@ -21,6 +21,7 @@ import (
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/metrics"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
+	"github.com/Tributary-ai-services/aether-be/internal/streaming"
 )
 
 func main() {
@@ -159,6 +160,19 @@ func main() {
 		appLogger,
 	)
 
+	// Initialize streaming event hub + Kafka consumer (if Kafka is enabled)
+	var streamingConsumer *streaming.Consumer
+	if cfg.Kafka.Enabled && len(cfg.Kafka.Brokers) > 0 {
+		zapLogger, _ := zap.NewProduction()
+		streamingHub := streaming.NewHub(zapLogger)
+		consumerCfg := streaming.DefaultConsumerConfig(cfg.Kafka.Brokers)
+		streamingConsumer = streaming.NewConsumer(streamingHub, consumerCfg, zapLogger)
+		apiServer.StreamHandler.SetStreamingHub(streamingHub)
+		appLogger.Info("Streaming hub initialized — Live Streams will receive Kafka events")
+	} else {
+		appLogger.Info("Kafka disabled — Live Streams will use legacy Neo4j polling")
+	}
+
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -174,6 +188,12 @@ func main() {
 
 	go metricsCollector.Start(ctx)
 	appLogger.Info("Metrics collection started")
+
+	// Start streaming consumer (if enabled)
+	if streamingConsumer != nil {
+		streamingConsumer.Start(ctx)
+		appLogger.Info("Streaming consumer started — reading from Kafka activity + compliance topics")
+	}
 
 	// Start stale production cleanup worker
 	go apiServer.ProductionCleanupWorker.Start(ctx)
@@ -197,8 +217,12 @@ func main() {
 
 	appLogger.Info("Shutting down server...")
 
-	// Stop metrics collection and cleanup worker
-	cancel() // This stops the metrics collector and cleanup worker contexts
+	// Stop metrics collection, streaming consumer, and cleanup worker
+	cancel() // This stops the metrics collector, streaming consumer, and cleanup worker contexts
+	if streamingConsumer != nil {
+		streamingConsumer.Stop()
+		appLogger.Info("Streaming consumer stopped")
+	}
 	metricsCollector.Stop()
 	apiServer.ProductionCleanupWorker.Stop()
 	appLogger.Info("Metrics collection and production cleanup worker stopped")
