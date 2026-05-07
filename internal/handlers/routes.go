@@ -801,6 +801,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		// Stream analytics
 		streams.GET("/analytics", s.StreamHandler.GetStreamAnalytics)
 		streams.GET("/analytics/realtime", s.StreamHandler.GetRealtimeAnalytics)
+
+		// Live Streams summary cards (TimescaleDB-backed)
+		streams.GET("/stats", s.StreamHandler.GetStreamStats)
 	}
 
 	// MCP server management routes

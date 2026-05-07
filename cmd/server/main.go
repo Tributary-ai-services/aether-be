@@ -17,6 +17,7 @@ import (
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
 	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/database"
+	"github.com/Tributary-ai-services/aether-be/internal/events"
 	"github.com/Tributary-ai-services/aether-be/internal/handlers"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/metrics"
@@ -168,9 +169,38 @@ func main() {
 		consumerCfg := streaming.DefaultConsumerConfig(cfg.Kafka.Brokers)
 		streamingConsumer = streaming.NewConsumer(streamingHub, consumerCfg, zapLogger)
 		apiServer.StreamHandler.SetStreamingHub(streamingHub)
+
+		// Wire MCP CloudEvents publisher → tas.activity.mcp
+		mcpPublisher := events.NewMCPPublisher(events.MCPConfig{
+			Brokers: cfg.Kafka.Brokers,
+			Logger:  zapLogger,
+		})
+		apiServer.MCPHandler.SetMCPPublisher(mcpPublisher)
 		appLogger.Info("Streaming hub initialized — Live Streams will receive Kafka events")
 	} else {
 		appLogger.Info("Kafka disabled — Live Streams will use legacy Neo4j polling")
+	}
+
+	// Open TimescaleDB pool for Live Streams summary cards
+	if dsn := os.Getenv("TIMESCALE_DSN"); dsn != "" {
+		tsdb, err := sql.Open("postgres", dsn)
+		if err != nil {
+			appLogger.Warn("TimescaleDB pool open failed — /streams/stats will return unavailable", zap.Error(err))
+		} else {
+			tsdb.SetMaxOpenConns(5)
+			tsdb.SetMaxIdleConns(2)
+			tsdb.SetConnMaxLifetime(time.Hour)
+			if pingErr := tsdb.Ping(); pingErr != nil {
+				appLogger.Warn("TimescaleDB ping failed — /streams/stats will return unavailable", zap.Error(pingErr))
+				tsdb.Close()
+			} else {
+				statsService := services.NewStreamStatsService(tsdb, appLogger)
+				apiServer.StreamHandler.SetStatsService(statsService)
+				appLogger.Info("TimescaleDB stats service connected — /streams/stats backed by events_1m")
+			}
+		}
+	} else {
+		appLogger.Info("TIMESCALE_DSN unset — /streams/stats will return unavailable")
 	}
 
 	// Create HTTP server

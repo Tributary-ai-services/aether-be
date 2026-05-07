@@ -22,9 +22,16 @@ import (
 // StreamHandler handles live streaming HTTP requests and WebSocket connections
 type StreamHandler struct {
 	streamService *services.StreamService
+	statsService  *services.StreamStatsService
 	hub           *streaming.Hub
 	logger        *logger.Logger
 	upgrader      websocket.Upgrader
+}
+
+// SetStatsService wires the TimescaleDB-backed stats service. Pass nil to
+// disable — GetStreamStats will return a 0-value response with source=unavailable.
+func (h *StreamHandler) SetStatsService(s *services.StreamStatsService) {
+	h.statsService = s
 }
 
 // NewStreamHandler creates a new stream handler. The hub is optional — pass nil
@@ -503,6 +510,34 @@ func (h *StreamHandler) GetStreamAnalytics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, analytics)
+}
+
+// GetStreamStats returns real-time event throughput for the Live Streams
+// summary cards. Backed by the TimescaleDB events_1m continuous aggregate.
+// @Summary Get live stream stats
+// @Description Returns events/min and active source count over the last 5 minutes
+// @Tags streams
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} services.StreamStats
+// @Router /api/v1/streams/stats [get]
+func (h *StreamHandler) GetStreamStats(c *gin.Context) {
+	if h.statsService == nil {
+		c.JSON(http.StatusOK, services.StreamStats{Source: "unavailable", BySeverity: map[string]int64{}, WindowMinutes: 5})
+		return
+	}
+
+	tenantID := ""
+	if spaceContext, err := middleware.GetSpaceContext(c); err == nil && spaceContext != nil {
+		tenantID = spaceContext.TenantID
+	}
+
+	stats, err := h.statsService.GetStats(c.Request.Context(), tenantID)
+	if err != nil {
+		// stats already populated with safe defaults; log + still return 200
+		h.logger.Warn("stream stats query failed, returning fallback", zap.Error(err))
+	}
+	c.JSON(http.StatusOK, stats)
 }
 
 // StreamEvents handles WebSocket connections for real-time event streaming
