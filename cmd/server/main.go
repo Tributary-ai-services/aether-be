@@ -166,7 +166,12 @@ func main() {
 	if cfg.Kafka.Enabled && len(cfg.Kafka.Brokers) > 0 {
 		zapLogger, _ := zap.NewProduction()
 		streamingHub := streaming.NewHub(zapLogger)
-		consumerCfg := streaming.DefaultConsumerConfig(cfg.Kafka.Brokers)
+		// Use the pod hostname (or any other unique-per-instance identifier) as
+		// the consumer-group suffix so each replica subscribes independently and
+		// fans every CE out through its own in-memory hub. Without this, partitions
+		// are split across replicas and a WS client connected to pod A never sees
+		// events for partitions owned by pod B.
+		consumerCfg := streaming.DefaultConsumerConfig(cfg.Kafka.Brokers, os.Getenv("HOSTNAME"))
 		streamingConsumer = streaming.NewConsumer(streamingHub, consumerCfg, zapLogger)
 		apiServer.StreamHandler.SetStreamingHub(streamingHub)
 

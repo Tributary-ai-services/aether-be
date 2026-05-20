@@ -18,10 +18,21 @@ type ConsumerConfig struct {
 }
 
 // DefaultConsumerConfig returns config for the live-feed consumer group.
-func DefaultConsumerConfig(brokers []string) ConsumerConfig {
+//
+// groupSuffix lets each replica subscribe to its own per-pod consumer group
+// (typically the pod hostname). The WS hub is in-memory per pod, so without
+// a unique group every partition is owned by exactly one replica and CEs
+// consumed there can't reach WS connections terminated on a different pod.
+// Per-pod groups trade duplicate consume (N reads for N replicas) for correct
+// end-user fan-out. Pass "" to keep the shared single-group behavior.
+func DefaultConsumerConfig(brokers []string, groupSuffix string) ConsumerConfig {
+	groupID := "aether-be-live-feed"
+	if groupSuffix != "" {
+		groupID = groupID + "-" + groupSuffix
+	}
 	return ConsumerConfig{
 		Brokers: brokers,
-		GroupID: "aether-be-live-feed",
+		GroupID: groupID,
 		Topics:  topics.ConsumerTopics(),
 	}
 }
