@@ -523,8 +523,15 @@ func (s *AudiModalService) getAudiModalMapping(ctx context.Context, aetherTenant
 
 // makeRequest is a helper function to make HTTP requests to AudiModal
 func (s *AudiModalService) makeRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	return s.makeRequestWithHeaders(ctx, method, path, body, nil)
+}
+
+// makeRequestWithHeaders mirrors makeRequest but lets the caller add extra request headers
+// (e.g. X-Aether-Tenant-Id so AudiModal can mirror the canonical tenant id back onto its
+// activity CloudEvents).
+func (s *AudiModalService) makeRequestWithHeaders(ctx context.Context, method, path string, body interface{}, extra map[string]string) (*http.Response, error) {
 	url := s.baseURL + path
-	
+
 	var reqBody []byte
 	var err error
 	if body != nil {
@@ -533,16 +540,32 @@ func (s *AudiModalService) makeRequest(ctx context.Context, method, path string,
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", s.apiKey)
-	
+	for k, v := range extra {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+
 	return s.client.Do(req)
+}
+
+// aetherTenantHeader returns a header map carrying the canonical Aether tenant id under
+// X-Aether-Tenant-Id, or nil when the id is empty. AudiModal reads this header and writes
+// it into the `tenantid` extension of activity CloudEvents so downstream WS hub filters
+// match without needing a separate tenant-mapping lookup.
+func aetherTenantHeader(aetherTenantID string) map[string]string {
+	if aetherTenantID == "" {
+		return nil
+	}
+	return map[string]string{"X-Aether-Tenant-Id": aetherTenantID}
 }
 
 // SubmitProcessingJob submits a document processing job to AudiModal
@@ -680,9 +703,10 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID str
 
 			s.logger.Info("File registered, triggering text extraction",
 				zap.String("file_id", processResult.Data.ID),
-				zap.String("tenant_id", processResult.Data.TenantID))
+				zap.String("tenant_id", processResult.Data.TenantID),
+				zap.String("aether_tenant_id", tenantID))
 
-			if err := s.TriggerFileProcessingWithOptions(ctx, processResult.Data.TenantID, processResult.Data.ID, procOptions); err != nil {
+			if err := s.TriggerFileProcessingForAetherTenant(ctx, processResult.Data.TenantID, tenantID, processResult.Data.ID, procOptions); err != nil {
 				s.logger.Warn("Failed to trigger file processing - file registered but extraction not started",
 					zap.String("file_id", processResult.Data.ID),
 					zap.Error(err))
@@ -763,9 +787,21 @@ func (s *AudiModalService) TriggerFileProcessing(ctx context.Context, tenantUUID
 	return s.TriggerFileProcessingWithOptions(ctx, tenantUUID, fileID, nil)
 }
 
-// TriggerFileProcessingWithOptions triggers text extraction with custom options including DLP and redaction settings
+// TriggerFileProcessingWithOptions triggers text extraction with custom options including DLP and redaction settings.
+// canonicalTenantID is the upstream Aether tenant id (e.g. "tenant_1766596584"); when non-empty it's forwarded
+// as X-Aether-Tenant-Id so AudiModal stamps activity CloudEvents with the value the WS hub broadcasts on.
 func (s *AudiModalService) TriggerFileProcessingWithOptions(ctx context.Context, tenantUUID, fileID string, options *ProcessingOptions) error {
-	url := fmt.Sprintf("/api/v1/tenants/%s/files/%s/process", tenantUUID, fileID)
+	return s.triggerFileProcessing(ctx, tenantUUID, "", fileID, options)
+}
+
+// TriggerFileProcessingForAetherTenant is the canonical-aware variant; pass the upstream Aether tenant id
+// (tenant_<id>) so AudiModal stamps the activity CloudEvent with the same identifier the WS hub keys on.
+func (s *AudiModalService) TriggerFileProcessingForAetherTenant(ctx context.Context, tenantUUID, aetherTenantID, fileID string, options *ProcessingOptions) error {
+	return s.triggerFileProcessing(ctx, tenantUUID, aetherTenantID, fileID, options)
+}
+
+func (s *AudiModalService) triggerFileProcessing(ctx context.Context, tenantUUID, aetherTenantID, fileID string, options *ProcessingOptions) error {
+	path := fmt.Sprintf("/api/v1/tenants/%s/files/%s/process", tenantUUID, fileID)
 
 	// Use fixed_size_text as the default strategy since "auto" is not supported
 	req := map[string]interface{}{
@@ -792,10 +828,11 @@ func (s *AudiModalService) TriggerFileProcessingWithOptions(ctx context.Context,
 
 	s.logger.Info("Triggering file processing in AudiModal",
 		zap.String("tenant_uuid", tenantUUID),
+		zap.String("aether_tenant_id", aetherTenantID),
 		zap.String("file_id", fileID),
 		zap.Any("request", req))
 
-	resp, err := s.makeRequest(ctx, http.MethodPost, url, req)
+	resp, err := s.makeRequestWithHeaders(ctx, http.MethodPost, path, req, aetherTenantHeader(aetherTenantID))
 	if err != nil {
 		return fmt.Errorf("failed to trigger file processing: %w", err)
 	}
@@ -956,6 +993,13 @@ func (s *AudiModalService) RegisterFileFromS3(ctx context.Context, tenantID stri
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
+	// Forward the canonical Aether tenant id (e.g. tenant_1766596584) so
+	// AudiModal stamps activity CloudEvents with the same value the WS hub
+	// keys broadcasts on. Without this, audimodal emits its internal UUID
+	// and the hub's per-tenant filter drops every event before fan-out.
+	if tenantID != "" {
+		req.Header.Set("X-Aether-Tenant-Id", tenantID)
+	}
 
 	s.logger.Info("Registering S3 file with AudiModal",
 		zap.String("document_id", documentID),
