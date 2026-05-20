@@ -17,10 +17,12 @@ import (
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
 	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/database"
+	"github.com/Tributary-ai-services/aether-be/internal/events"
 	"github.com/Tributary-ai-services/aether-be/internal/handlers"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/metrics"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
+	"github.com/Tributary-ai-services/aether-be/internal/streaming"
 )
 
 func main() {
@@ -159,6 +161,53 @@ func main() {
 		appLogger,
 	)
 
+	// Initialize streaming event hub + Kafka consumer (if Kafka is enabled)
+	var streamingConsumer *streaming.Consumer
+	if cfg.Kafka.Enabled && len(cfg.Kafka.Brokers) > 0 {
+		zapLogger, _ := zap.NewProduction()
+		streamingHub := streaming.NewHub(zapLogger)
+		// Use the pod hostname (or any other unique-per-instance identifier) as
+		// the consumer-group suffix so each replica subscribes independently and
+		// fans every CE out through its own in-memory hub. Without this, partitions
+		// are split across replicas and a WS client connected to pod A never sees
+		// events for partitions owned by pod B.
+		consumerCfg := streaming.DefaultConsumerConfig(cfg.Kafka.Brokers, os.Getenv("HOSTNAME"))
+		streamingConsumer = streaming.NewConsumer(streamingHub, consumerCfg, zapLogger)
+		apiServer.StreamHandler.SetStreamingHub(streamingHub)
+
+		// Wire MCP CloudEvents publisher → tas.activity.mcp
+		mcpPublisher := events.NewMCPPublisher(events.MCPConfig{
+			Brokers: cfg.Kafka.Brokers,
+			Logger:  zapLogger,
+		})
+		apiServer.MCPHandler.SetMCPPublisher(mcpPublisher)
+		appLogger.Info("Streaming hub initialized — Live Streams will receive Kafka events")
+	} else {
+		appLogger.Info("Kafka disabled — Live Streams will use legacy Neo4j polling")
+	}
+
+	// Open TimescaleDB pool for Live Streams summary cards
+	if dsn := os.Getenv("TIMESCALE_DSN"); dsn != "" {
+		tsdb, err := sql.Open("postgres", dsn)
+		if err != nil {
+			appLogger.Warn("TimescaleDB pool open failed — /streams/stats will return unavailable", zap.Error(err))
+		} else {
+			tsdb.SetMaxOpenConns(5)
+			tsdb.SetMaxIdleConns(2)
+			tsdb.SetConnMaxLifetime(time.Hour)
+			if pingErr := tsdb.Ping(); pingErr != nil {
+				appLogger.Warn("TimescaleDB ping failed — /streams/stats will return unavailable", zap.Error(pingErr))
+				tsdb.Close()
+			} else {
+				statsService := services.NewStreamStatsService(tsdb, appLogger)
+				apiServer.StreamHandler.SetStatsService(statsService)
+				appLogger.Info("TimescaleDB stats service connected — /streams/stats backed by events_1m")
+			}
+		}
+	} else {
+		appLogger.Info("TIMESCALE_DSN unset — /streams/stats will return unavailable")
+	}
+
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -174,6 +223,12 @@ func main() {
 
 	go metricsCollector.Start(ctx)
 	appLogger.Info("Metrics collection started")
+
+	// Start streaming consumer (if enabled)
+	if streamingConsumer != nil {
+		streamingConsumer.Start(ctx)
+		appLogger.Info("Streaming consumer started — reading from Kafka activity + compliance topics")
+	}
 
 	// Start stale production cleanup worker
 	go apiServer.ProductionCleanupWorker.Start(ctx)
@@ -197,8 +252,12 @@ func main() {
 
 	appLogger.Info("Shutting down server...")
 
-	// Stop metrics collection and cleanup worker
-	cancel() // This stops the metrics collector and cleanup worker contexts
+	// Stop metrics collection, streaming consumer, and cleanup worker
+	cancel() // This stops the metrics collector, streaming consumer, and cleanup worker contexts
+	if streamingConsumer != nil {
+		streamingConsumer.Stop()
+		appLogger.Info("Streaming consumer stopped")
+	}
 	metricsCollector.Stop()
 	apiServer.ProductionCleanupWorker.Stop()
 	appLogger.Info("Metrics collection and production cleanup worker stopped")

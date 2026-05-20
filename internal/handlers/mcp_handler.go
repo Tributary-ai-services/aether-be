@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/Tributary-ai-services/aether-be/internal/config"
+	"github.com/Tributary-ai-services/aether-be/internal/events"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/middleware"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
+	"github.com/Tributary-ai-services/aether-shared/go-events/payloads"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -25,10 +27,18 @@ type MCPHandler struct {
 	serverInfos     []MCPServerInfo
 	cfg             *config.Config
 	logger          *zap.Logger
+	mcpPublisher    *events.MCPPublisher
 
 	// Health cache with TTL
 	healthMu    sync.RWMutex
 	healthCache map[string]healthCacheEntry
+}
+
+// SetMCPPublisher wires the CloudEvents publisher used to emit
+// com.tas.activity.mcp.tool_invoked. Pass nil to disable publishing —
+// MCPPublisher methods no-op on a nil receiver.
+func (h *MCPHandler) SetMCPPublisher(p *events.MCPPublisher) {
+	h.mcpPublisher = p
 }
 
 // healthCacheEntry holds a cached health check result with expiry
@@ -316,6 +326,11 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 		zap.String("connection_id", req.ConnectionID),
 	)
 
+	tenantID := stringFromCtx(c, "tenant_id")
+	userID := stringFromCtx(c, "user_id")
+	requestID := c.GetHeader("X-Request-ID")
+	start := time.Now()
+
 	// If a connectionId was provided and this is an infrastructure server, resolve credentials
 	if req.ConnectionID != "" {
 		if _, isInfra := infrastructureServerTypes[req.ServerID]; isInfra {
@@ -332,6 +347,7 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 			return
 		}
 		result, err := h.napkinService.InvokeTool(c.Request.Context(), req.Tool, req.Params)
+		h.publishToolInvoked(c.Request.Context(), tenantID, userID, requestID, req, start, err)
 		if err != nil {
 			h.logger.Error("Failed to invoke Napkin tool", zap.Error(err), zap.String("tool", req.Tool))
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Tool invocation failed: " + err.Error()})
@@ -344,6 +360,7 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 	// Check generic MCP clients
 	if client, ok := h.mcpClients[req.ServerID]; ok {
 		result, err := client.InvokeTool(c.Request.Context(), req.Tool, req.Params)
+		h.publishToolInvoked(c.Request.Context(), tenantID, userID, requestID, req, start, err)
 		if err != nil {
 			h.logger.Error("Failed to invoke tool", zap.String("server", req.ServerID), zap.Error(err), zap.String("tool", req.Tool))
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Tool invocation failed: " + err.Error()})
@@ -354,6 +371,30 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusNotFound, gin.H{"error": "Server not found or tool invocation not supported: " + req.ServerID})
+}
+
+// publishToolInvoked emits com.tas.activity.mcp.tool_invoked.
+func (h *MCPHandler) publishToolInvoked(ctx context.Context, tenantID, userID, requestID string, req MCPInvokeRequest, start time.Time, err error) {
+	payload := payloads.MCPToolInvoked{
+		ServerID:   req.ServerID,
+		ToolName:   req.Tool,
+		DurationMS: time.Since(start).Milliseconds(),
+		Success:    err == nil,
+	}
+	if err != nil {
+		payload.Error = err.Error()
+	}
+	h.mcpPublisher.PublishToolInvoked(ctx, tenantID, userID, requestID, payload)
+}
+
+// stringFromCtx pulls a Gin context key as a string, returning "" if absent.
+func stringFromCtx(c *gin.Context, key string) string {
+	if v, ok := c.Get(key); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // TestConnection tests connectivity through an MCP server's bridge using a lightweight tool invocation
