@@ -19,8 +19,10 @@ CREATE CONSTRAINT space_tenant_id_unique IF NOT EXISTS FOR (s:Space) REQUIRE s.t
 // Index on owner_id for finding spaces owned by a user/org
 CREATE INDEX space_owner_id_idx IF NOT EXISTS FOR (s:Space) ON (s.owner_id);
 
-// Index on type for filtering personal vs organization spaces
-CREATE INDEX space_type_idx IF NOT EXISTS FOR (s:Space) ON (s.type);
+// Index on space_type for filtering personal vs organization spaces
+// NOTE: the application stores the type under `space_type` (NewSpace -> space_type: $type),
+// NOT `type`. Indexing `space_type` to match actual query patterns (GetUserSpaces).
+CREATE INDEX space_type_idx IF NOT EXISTS FOR (s:Space) ON (s.space_type);
 
 // Index on status for filtering active/suspended/deleted spaces
 CREATE INDEX space_status_idx IF NOT EXISTS FOR (s:Space) ON (s.status);
@@ -28,11 +30,11 @@ CREATE INDEX space_status_idx IF NOT EXISTS FOR (s:Space) ON (s.status);
 // Index on owner_type for filtering user vs organization owned spaces
 CREATE INDEX space_owner_type_idx IF NOT EXISTS FOR (s:Space) ON (s.owner_type);
 
-// Composite index for common queries (owner + type)
-CREATE INDEX space_owner_type_composite_idx IF NOT EXISTS FOR (s:Space) ON (s.owner_id, s.type);
+// Composite index for common queries (owner + space_type)
+CREATE INDEX space_owner_type_composite_idx IF NOT EXISTS FOR (s:Space) ON (s.owner_id, s.space_type);
 
-// Composite index for active spaces by type
-CREATE INDEX space_status_type_composite_idx IF NOT EXISTS FOR (s:Space) ON (s.status, s.type);
+// Composite index for active spaces by space_type
+CREATE INDEX space_status_type_composite_idx IF NOT EXISTS FOR (s:Space) ON (s.status, s.space_type);
 
 // Full-text search index for Space name and description
 CREATE FULLTEXT INDEX space_name_description_fulltext IF NOT EXISTS FOR (s:Space) ON EACH [s.name, s.description];
@@ -72,7 +74,7 @@ WHERE name CONTAINS 'space' OR name CONTAINS 'user_personal' OR name CONTAINS 'n
 // Count existing Space nodes (should be run after migration)
 MATCH (s:Space)
 RETURN
-    s.type as space_type,
+    s.space_type as space_type,
     s.status as status,
     count(s) as count
 ORDER BY space_type, status;

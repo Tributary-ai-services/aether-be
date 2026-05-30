@@ -221,8 +221,9 @@ func (s *SpaceService) GetUserSpaces(ctx context.Context, userID string) ([]*mod
 		MATCH (u:User {keycloak_id: $keycloak_id})
 
 		// Personal spaces (direct ownership)
+		// COALESCE handles legacy spaces that stored the type under 'type' instead of 'space_type'
 		OPTIONAL MATCH (u)-[:OWNS]->(personalSpace:Space)
-		WHERE personalSpace.space_type = 'personal'
+		WHERE COALESCE(personalSpace.space_type, personalSpace.type) = 'personal'
 
 		// Organization spaces (via org membership)
 		OPTIONAL MATCH (u)-[orgMembership:MEMBER_OF]->(org:Organization)-[:HAS_SPACE]->(orgSpace:Space)
@@ -247,7 +248,7 @@ func (s *SpaceService) GetUserSpaces(ctx context.Context, userID string) ([]*mod
 		RETURN DISTINCT
 		       space_info.space.id as id,
 		       space_info.space.name as name,
-		       space_info.space.space_type as type,
+		       COALESCE(space_info.space.space_type, space_info.space.type) as type,
 		       space_info.space.tenant_id as tenant_id,
 		       space_info.space.visibility as visibility,
 		       space_info.space.status as status,
