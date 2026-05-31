@@ -64,6 +64,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # full history so golangci-lint new-from-merge-base can diff against origin/main
 
     - name: Start MinIO
       run: |

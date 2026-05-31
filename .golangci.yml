@@ -1,0 +1,22 @@
+# golangci-lint configuration
+#
+# The repo carries ~60 pre-existing findings (errcheck/unused/staticcheck/
+# gosimple/ineffassign) that were masked for years while the linter step was
+# unreachable (broken MinIO service container) and then emitting false
+# typecheck errors (golangci-lint too old for the go1.24 toolchain).
+#
+# Rather than block CI on that legacy debt, we baseline against main: only
+# issues introduced relative to the merge-base with origin/main are reported,
+# so new code stays clean while the backlog is paid down separately.
+#
+# NOTE: requires full git history in CI (actions/checkout fetch-depth: 0).
+
+run:
+  timeout: 5m
+
+issues:
+  # Only report issues introduced after the merge-base with main.
+  new-from-merge-base: origin/main
+  # Don't collapse/limit findings on new code — show them all.
+  max-issues-per-linter: 0
+  max-same-issues: 0
