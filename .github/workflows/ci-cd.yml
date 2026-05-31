@@ -127,8 +127,10 @@ jobs:
     
     - name: Wait for services and setup
       run: |
-        timeout 120s bash -c 'until cypher-shell -u neo4j -p password "RETURN 1"; do sleep 2; done'
-        timeout 60s bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+        # cypher-shell/redis-cli live inside the service containers, not on the runner host;
+        # poll host-reachable endpoints instead (Neo4j HTTP :7474, Redis TCP :6379).
+        timeout 120s bash -c 'until curl -sf http://localhost:7474 >/dev/null; do sleep 2; done'
+        timeout 60s bash -c 'until bash -c "</dev/tcp/localhost/6379" 2>/dev/null; do sleep 2; done'
         timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
         
         # Setup MinIO
