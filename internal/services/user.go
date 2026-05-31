@@ -940,9 +940,83 @@ func (s *UserService) recordToUserResponse(record interface{}) (*models.UserResp
 // Redis caching methods removed - no longer using Redis
 
 // UpdateUserPreferences updates user preferences
+// GetUserPreferences returns the persisted preferences for the given user.
+//
+// User.Preferences is stored as a JSON string on the User node (see
+// UpdateUser at line 505 for the storage convention). This re-marshals it
+// into the typed models.UserPreferences shape so handlers can return a
+// stable schema to the frontend even though storage is free-form.
+//
+// Returns an empty UserPreferences (not nil) when the user has never saved
+// preferences, so callers don't need a nil check.
+func (s *UserService) GetUserPreferences(ctx context.Context, userID string) (*models.UserPreferences, error) {
+	user, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	prefs := &models.UserPreferences{}
+	if user.Preferences == nil || len(user.Preferences) == 0 {
+		return prefs, nil
+	}
+
+	// Round-trip the free-form map through JSON into the typed struct so
+	// any keys the struct doesn't know about are dropped, and Settings.llm
+	// (or any other nested map) survives unchanged.
+	raw, err := json.Marshal(user.Preferences)
+	if err != nil {
+		s.logger.Warn("Failed to marshal stored preferences for user",
+			zap.String("user_id", userID), zap.Error(err))
+		return prefs, nil
+	}
+	if err := json.Unmarshal(raw, prefs); err != nil {
+		s.logger.Warn("Failed to unmarshal stored preferences into typed struct",
+			zap.String("user_id", userID), zap.Error(err))
+		return prefs, nil
+	}
+	return prefs, nil
+}
+
+// UpdateUserPreferences persists the given preferences to the User node.
+//
+// Stored as a JSON string in u.preferences, matching the convention used by
+// UpdateUser at line 505. Preferences are replaced wholesale: callers send
+// the complete object, not a patch.
 func (s *UserService) UpdateUserPreferences(ctx context.Context, userID string, preferences models.UserPreferences) (*models.UserPreferences, error) {
-	// Implementation would update user preferences in Neo4j
-	s.logger.Info("Updating user preferences", zap.String("user_id", userID))
+	preferencesBytes, err := json.Marshal(preferences)
+	if err != nil {
+		s.logger.Error("Failed to serialize user preferences",
+			zap.String("user_id", userID), zap.Error(err))
+		return nil, errors.InternalWithCause("Failed to serialize user preferences", err)
+	}
+
+	query := `
+		MATCH (u:User {id: $user_id})
+		SET u.preferences = $preferences,
+		    u.updated_at = datetime($updated_at)
+		RETURN u.id
+	`
+	params := map[string]interface{}{
+		"user_id":     userID,
+		"preferences": string(preferencesBytes),
+		"updated_at":  time.Now().UTC().Format(time.RFC3339),
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		s.logger.Error("Failed to update user preferences",
+			zap.String("user_id", userID), zap.Error(err))
+		return nil, errors.Database("Failed to update user preferences", err)
+	}
+	if len(result.Records) == 0 {
+		return nil, errors.NotFoundWithDetails("User not found", map[string]interface{}{
+			"user_id": userID,
+		})
+	}
+
+	s.logger.Info("User preferences updated",
+		zap.String("user_id", userID))
+
 	return &preferences, nil
 }
 
