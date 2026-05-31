@@ -366,7 +366,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		users.GET("/me", s.UserHandler.GetCurrentUser)
 		users.PUT("/me", s.UserHandler.UpdateCurrentUser)
 		users.DELETE("/me", s.UserHandler.DeleteCurrentUser)
-		users.GET("/me/preferences", s.UserHandler.UpdateUserPreferences) // TODO: Change to GET handler
+		users.GET("/me/preferences", s.UserHandler.GetUserPreferences)
 		users.PUT("/me/preferences", s.UserHandler.UpdateUserPreferences)
 		users.GET("/me/stats", s.UserHandler.GetUserStats)
 		users.GET("/me/spaces", s.UserHandler.GetUserSpaces)

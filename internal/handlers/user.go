@@ -266,6 +266,34 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// GetUserPreferences returns the current user's preferences.
+// @Summary Get user preferences
+// @Description Get preferences and settings for the authenticated user
+// @Tags users
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} models.UserPreferences
+// @Failure 401 {object} errors.APIError
+// @Failure 500 {object} errors.APIError
+// @Router /api/v1/users/me/preferences [get]
+func (h *UserHandler) GetUserPreferences(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+
+	prefs, err := h.userService.GetUserPreferences(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("Failed to get user preferences",
+			zap.String("user_id", userID), zap.Error(err))
+		handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, prefs)
+}
+
 // UpdateUserPreferences updates user preferences
 // @Summary Update user preferences
 // @Description Update user preferences and settings
