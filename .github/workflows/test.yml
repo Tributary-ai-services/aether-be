@@ -44,23 +44,12 @@ jobs:
         ports:
           - 6379:6379
       
-      # MinIO for S3-compatible storage testing
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin123
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 3
-        volumes:
-          - /tmp/minio-data:/data
-      
+      # NOTE: MinIO is NOT a service container. The official minio/minio image
+      # needs the `server /data` command to start, and GitHub Actions service
+      # containers cannot pass a command/args to the image — so the container
+      # would exit at init ("print usage and quit"). It is started as a step
+      # below ("Start MinIO") using the official image with the proper command.
+
       # Mock AudiModal service for integration tests
       audimodal-mock:
         image: wiremock/wiremock:latest
@@ -75,7 +64,15 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
+    - name: Start MinIO
+      run: |
+        docker run -d --name minio \
+          -p 9000:9000 -p 9001:9001 \
+          -e MINIO_ROOT_USER=minioadmin \
+          -e MINIO_ROOT_PASSWORD=minioadmin123 \
+          minio/minio:latest server /data --console-address ":9001"
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
