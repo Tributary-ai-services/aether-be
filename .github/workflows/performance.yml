@@ -153,6 +153,10 @@ jobs:
         
         # Run database migrations if they exist
         if [ -f "migrations/run_migrations.sh" ]; then
+          # cypher-shell only exists inside the neo4j service container; install a
+          # host shim that proxies into it so run_migrations.sh works unmodified.
+          printf '#!/usr/bin/env bash\nexec docker exec -i %s cypher-shell "$@"\n' "${{ job.services.neo4j.id }}" | sudo tee /usr/local/bin/cypher-shell >/dev/null
+          sudo chmod +x /usr/local/bin/cypher-shell
           cd migrations && ./run_migrations.sh
         fi
     
