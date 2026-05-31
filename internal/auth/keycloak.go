@@ -20,12 +20,12 @@ import (
 
 // KeycloakClient handles Keycloak OIDC authentication
 type KeycloakClient struct {
-	provider      *oidc.Provider
-	verifier      *oidc.IDTokenVerifier
-	oauth2Config  *oauth2.Config
-	logger        *logger.Logger
-	config        config.KeycloakConfig
-	allowedIssuers []string  // Support multiple issuer URLs for dev/prod environments
+	provider       *oidc.Provider
+	verifier       *oidc.IDTokenVerifier
+	oauth2Config   *oauth2.Config
+	logger         *logger.Logger
+	config         config.KeycloakConfig
+	allowedIssuers []string // Support multiple issuer URLs for dev/prod environments
 }
 
 // UserInfo represents user information from Keycloak

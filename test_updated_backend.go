@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -11,7 +12,7 @@ import (
 
 func main() {
 	fmt.Println("=== Testing Updated Backend Document Count Logic ===")
-	
+
 	uri := "bolt://localhost:7687"
 	username := "neo4j"
 	password := "password"
@@ -99,23 +100,23 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		
+
 		record, err := result.Single(ctx)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		return map[string]interface{}{
-			"doc_count": record.Values[0],
+			"doc_count":  record.Values[0],
 			"total_size": record.Values[1],
 		}, nil
 	})
 	if err != nil {
 		log.Fatalf("   ✗ Failed to create document with count update: %v", err)
 	}
-	
+
 	data := createResult.(map[string]interface{})
-	fmt.Printf("   ✓ Document created, counts updated: %v docs, %v bytes\n", 
+	fmt.Printf("   ✓ Document created, counts updated: %v docs, %v bytes\n",
 		data["doc_count"], data["total_size"])
 
 	// Verify counts
@@ -134,16 +135,16 @@ func main() {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"doc_count": record.Values[0],
+			"doc_count":  record.Values[0],
 			"total_size": record.Values[1],
 		}, nil
 	})
 	if err != nil {
 		log.Fatalf("   ✗ Failed to get counts: %v", err)
 	}
-	
+
 	countData := counts.(map[string]interface{})
-	fmt.Printf("   ✓ Verified counts: %v docs, %v bytes\n", 
+	fmt.Printf("   ✓ Verified counts: %v docs, %v bytes\n",
 		countData["doc_count"], countData["total_size"])
 
 	// Test deletion logic
@@ -184,16 +185,16 @@ func main() {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"doc_count": record.Values[0],
+			"doc_count":  record.Values[0],
 			"total_size": record.Values[1],
 		}, nil
 	})
 	if err != nil {
 		log.Fatalf("   ✗ Failed to get final counts: %v", err)
 	}
-	
+
 	finalData := finalCounts.(map[string]interface{})
-	fmt.Printf("   ✓ Final counts: %v docs, %v bytes (should be 0, 0)\n", 
+	fmt.Printf("   ✓ Final counts: %v docs, %v bytes (should be 0, 0)\n",
 		finalData["doc_count"], finalData["total_size"])
 
 	// Cleanup

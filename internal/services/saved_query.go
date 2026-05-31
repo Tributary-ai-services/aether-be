@@ -548,13 +548,13 @@ func (s *SavedQueryService) ExecuteSavedQuery(ctx context.Context, queryID, tena
 			    sq.updated_at = datetime($updated_at)
 		`
 		params := map[string]any{
-			"query_id":          queryID,
-			"last_executed_at":  sq.LastExecutedAt.Format(time.RFC3339),
-			"last_executed_by":  sq.LastExecutedBy,
-			"execution_count":   sq.ExecutionCount,
-			"avg_duration_ms":   sq.AvgDurationMs,
-			"last_row_count":    sq.LastRowCount,
-			"updated_at":        sq.UpdatedAt.Format(time.RFC3339),
+			"query_id":         queryID,
+			"last_executed_at": sq.LastExecutedAt.Format(time.RFC3339),
+			"last_executed_by": sq.LastExecutedBy,
+			"execution_count":  sq.ExecutionCount,
+			"avg_duration_ms":  sq.AvgDurationMs,
+			"last_row_count":   sq.LastRowCount,
+			"updated_at":       sq.UpdatedAt.Format(time.RFC3339),
 		}
 		_, err := s.neo4j.ExecuteQueryWithLogging(context.Background(), updateQuery, params)
 		if err != nil {

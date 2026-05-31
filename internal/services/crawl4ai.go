@@ -32,21 +32,21 @@ type Crawl4AIService struct {
 
 // Crawl4AIRequest represents a crawl request to Crawl4AI
 type Crawl4AIRequest struct {
-	URLs               []string `json:"urls"`
-	WordCountThreshold int      `json:"word_count_threshold,omitempty"`
-	ExcludedTags       []string `json:"excluded_tags,omitempty"`
-	ExcludeExternalLinks bool   `json:"exclude_external_links,omitempty"`
-	ExcludeExternalImages bool  `json:"exclude_external_images,omitempty"`
-	ProcessIframes     bool     `json:"process_iframes,omitempty"`
-	RemoveOverlay      bool     `json:"remove_overlay_elements,omitempty"`
-	Screenshot         bool     `json:"screenshot,omitempty"`
-	ScreenshotFullPage bool     `json:"screenshot_full_page,omitempty"`
+	URLs                  []string `json:"urls"`
+	WordCountThreshold    int      `json:"word_count_threshold,omitempty"`
+	ExcludedTags          []string `json:"excluded_tags,omitempty"`
+	ExcludeExternalLinks  bool     `json:"exclude_external_links,omitempty"`
+	ExcludeExternalImages bool     `json:"exclude_external_images,omitempty"`
+	ProcessIframes        bool     `json:"process_iframes,omitempty"`
+	RemoveOverlay         bool     `json:"remove_overlay_elements,omitempty"`
+	Screenshot            bool     `json:"screenshot,omitempty"`
+	ScreenshotFullPage    bool     `json:"screenshot_full_page,omitempty"`
 }
 
 // Crawl4AIResponse represents the response from Crawl4AI
 type Crawl4AIResponse struct {
-	Success bool              `json:"success"`
-	Results []Crawl4AIResult  `json:"results"`
+	Success bool             `json:"success"`
+	Results []Crawl4AIResult `json:"results"`
 }
 
 // Crawl4AIMarkdown represents the markdown content from Crawl4AI (can be object or string)
@@ -155,40 +155,40 @@ type Crawl4AIHealthResponse struct {
 
 // URLProbeResult contains the result of probing a URL for AI-friendly content
 type URLProbeResult struct {
-	URL                 string              `json:"url"`
-	Accessible          bool                `json:"accessible"`
-	StatusCode          int                 `json:"status_code,omitempty"`
-	HasLlmsTxt          bool                `json:"has_llms_txt"`
-	HasLlmsFullTxt      bool                `json:"has_llms_full_txt"`
-	HasAiTxt            bool                `json:"has_ai_txt"`
-	RobotsRules         *RobotsRules        `json:"robots_rules,omitempty"`
-	RequiresJavaScript  bool                `json:"requires_javascript"`
-	HasPaywall          bool                `json:"has_paywall"`
-	IsArchiveAvailable  bool                `json:"is_archive_available"`
-	ArchiveURL          string              `json:"archive_url,omitempty"`
-	RecommendedScraper  string              `json:"recommended_scraper"`
-	Reasoning           string              `json:"reasoning"`
-	LlmsTxtContent      *LlmsTxtContent     `json:"llms_txt_content,omitempty"`
-	AiTxtContent        *AiTxtContent       `json:"ai_txt_content,omitempty"`
-	Error               string              `json:"error,omitempty"`
+	URL                string          `json:"url"`
+	Accessible         bool            `json:"accessible"`
+	StatusCode         int             `json:"status_code,omitempty"`
+	HasLlmsTxt         bool            `json:"has_llms_txt"`
+	HasLlmsFullTxt     bool            `json:"has_llms_full_txt"`
+	HasAiTxt           bool            `json:"has_ai_txt"`
+	RobotsRules        *RobotsRules    `json:"robots_rules,omitempty"`
+	RequiresJavaScript bool            `json:"requires_javascript"`
+	HasPaywall         bool            `json:"has_paywall"`
+	IsArchiveAvailable bool            `json:"is_archive_available"`
+	ArchiveURL         string          `json:"archive_url,omitempty"`
+	RecommendedScraper string          `json:"recommended_scraper"`
+	Reasoning          string          `json:"reasoning"`
+	LlmsTxtContent     *LlmsTxtContent `json:"llms_txt_content,omitempty"`
+	AiTxtContent       *AiTxtContent   `json:"ai_txt_content,omitempty"`
+	Error              string          `json:"error,omitempty"`
 }
 
 // RobotsRules contains parsed robots.txt rules relevant to AI
 type RobotsRules struct {
-	DisallowedForAI  bool     `json:"disallowed_for_ai"`
-	DisallowedPaths  []string `json:"disallowed_paths,omitempty"`
-	AllowedPaths     []string `json:"allowed_paths,omitempty"`
-	CrawlDelay       int      `json:"crawl_delay,omitempty"`
-	Sitemaps         []string `json:"sitemaps,omitempty"`
+	DisallowedForAI bool     `json:"disallowed_for_ai"`
+	DisallowedPaths []string `json:"disallowed_paths,omitempty"`
+	AllowedPaths    []string `json:"allowed_paths,omitempty"`
+	CrawlDelay      int      `json:"crawl_delay,omitempty"`
+	Sitemaps        []string `json:"sitemaps,omitempty"`
 }
 
 // LlmsTxtContent contains parsed llms.txt content
 type LlmsTxtContent struct {
-	Title       string              `json:"title,omitempty"`
-	Description string              `json:"description,omitempty"`
-	Sections    []LlmsTxtSection    `json:"sections,omitempty"`
-	Links       []LlmsTxtLink       `json:"links,omitempty"`
-	Raw         string              `json:"raw,omitempty"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description,omitempty"`
+	Sections    []LlmsTxtSection `json:"sections,omitempty"`
+	Links       []LlmsTxtLink    `json:"links,omitempty"`
+	Raw         string           `json:"raw,omitempty"`
 }
 
 // LlmsTxtSection represents a section in llms.txt
@@ -783,10 +783,10 @@ func (s *Crawl4AIService) ScrapeURL(ctx context.Context, targetURL string, scrap
 // scrapeWithCrawl4AI scrapes a URL using Crawl4AI service
 func (s *Crawl4AIService) scrapeWithCrawl4AI(ctx context.Context, targetURL string, options map[string]interface{}, result *ScrapeResult) error {
 	crawlReq := Crawl4AIRequest{
-		URLs:               []string{targetURL},
-		WordCountThreshold: 10,
-		ExcludedTags:       DefaultExcludedTags, // Always exclude dangerous tags
-		ExcludeExternalLinks: false,
+		URLs:                  []string{targetURL},
+		WordCountThreshold:    10,
+		ExcludedTags:          DefaultExcludedTags, // Always exclude dangerous tags
+		ExcludeExternalLinks:  false,
 		ExcludeExternalImages: false,
 	}
 

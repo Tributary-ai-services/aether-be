@@ -88,7 +88,7 @@ func (s *AgentService) executeAgentDirect(ctx context.Context, agent *models.Age
 func (s *AgentService) buildLLMRequest(agent *models.Agent, req models.AgentExecuteRequest) map[string]interface{} {
 	// Start with system prompt
 	systemPrompt := "You are a helpful AI assistant."
-	
+
 	// Customize based on agent type
 	switch agent.Type {
 	case models.AgentTypeQA:
@@ -364,7 +364,7 @@ func (s *AgentService) handleNonStreamingResponse(resp *http.Response, request m
 
 func (s *AgentService) searchKnowledgeSources(ctx context.Context, query string, sourceIDs []string) []models.SourceReference {
 	sources := make([]models.SourceReference, 0)
-	
+
 	// If no specific sources provided, search all linked notebooks for the agent
 	searchSources := sourceIDs
 	if len(searchSources) == 0 {
@@ -372,7 +372,7 @@ func (s *AgentService) searchKnowledgeSources(ctx context.Context, query string,
 		// For now, return empty results for no sources
 		return sources
 	}
-	
+
 	// Search through each specified notebook
 	for _, notebookID := range searchSources {
 		// Get notebook info
@@ -383,7 +383,7 @@ func (s *AgentService) searchKnowledgeSources(ctx context.Context, query string,
 				zap.Error(err))
 			continue
 		}
-		
+
 		// Perform vector search on notebook content
 		// This would integrate with the embedding service for actual vector search
 		// For now, create a placeholder result
@@ -396,14 +396,14 @@ func (s *AgentService) searchKnowledgeSources(ctx context.Context, query string,
 		}
 		sources = append(sources, source)
 	}
-	
+
 	return sources
 }
 
 func calculateCost(tokens int, model string) float64 {
 	// Enhanced cost calculation based on model
 	costPer1000Tokens := 0.002 // Default for GPT-3.5-turbo
-	
+
 	switch model {
 	case "gpt-4", "gpt-4-32k":
 		costPer1000Tokens = 0.03
@@ -421,7 +421,7 @@ func calculateCost(tokens int, model string) float64 {
 		// Use default pricing for unknown models
 		costPer1000Tokens = 0.002
 	}
-	
+
 	return float64(tokens) / 1000.0 * costPer1000Tokens
 }
 

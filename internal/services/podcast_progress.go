@@ -25,7 +25,7 @@ const (
 
 // ProgressState represents the current progress of a podcast production
 type ProgressState struct {
-	Phase          string `json:"phase"`                     // tts_generating, assembling, uploading, completed, failed
+	Phase          string `json:"phase"` // tts_generating, assembling, uploading, completed, failed
 	ClipsTotal     int    `json:"clips_total"`
 	ClipsCompleted int    `json:"clips_completed"`
 	ClipsFailed    int    `json:"clips_failed"`

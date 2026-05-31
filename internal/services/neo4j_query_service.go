@@ -436,11 +436,11 @@ func convertNeo4jValue(val any) any {
 		return result
 	case neo4j.Relationship:
 		return map[string]any{
-			"_id":         v.ElementId,
-			"_type":       v.Type,
+			"_id":          v.ElementId,
+			"_type":        v.Type,
 			"_startNodeId": v.StartElementId,
 			"_endNodeId":   v.EndElementId,
-			"properties":  v.Props,
+			"properties":   v.Props,
 		}
 	case neo4j.Path:
 		nodes := make([]any, len(v.Nodes))

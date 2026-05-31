@@ -559,7 +559,9 @@ func (s *OAuthService) getCredential(ctx context.Context, credentialID, userID s
 	return nil, fmt.Errorf("credential not found")
 }
 
-func getStringFromRecord(record interface{ Get(string) (interface{}, bool) }, key string) (string, bool) {
+func getStringFromRecord(record interface {
+	Get(string) (interface{}, bool)
+}, key string) (string, bool) {
 	val, ok := record.Get(key)
 	if !ok || val == nil {
 		return "", false
@@ -744,11 +746,11 @@ func providerDisplayName(provider string) string {
 
 // OAuthConfig holds OAuth2 configuration for cloud drive providers
 type OAuthConfig struct {
-	GoogleClientID      string
-	GoogleClientSecret  string
-	MicrosoftClientID   string
+	GoogleClientID        string
+	GoogleClientSecret    string
+	MicrosoftClientID     string
 	MicrosoftClientSecret string
-	MicrosoftTenantID   string
-	EncryptionKey       string
-	RedirectBaseURL     string
+	MicrosoftTenantID     string
+	EncryptionKey         string
+	RedirectBaseURL       string
 }

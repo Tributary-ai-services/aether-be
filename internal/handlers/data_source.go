@@ -56,9 +56,9 @@ type ScrapeURLResponse struct {
 
 // HealthResponse represents the Crawl4AI health check response
 type Crawl4AIHealthResponse struct {
-	Success bool                            `json:"success"`
+	Success bool                             `json:"success"`
 	Data    *services.Crawl4AIHealthResponse `json:"data,omitempty"`
-	Error   string                          `json:"error,omitempty"`
+	Error   string                           `json:"error,omitempty"`
 }
 
 // ============================================================================

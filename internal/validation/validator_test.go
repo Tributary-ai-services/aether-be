@@ -459,7 +459,7 @@ func TestNeo4jCompatibleValidator(t *testing.T) {
 				} else {
 					assert.Error(t, err, "Expected settings to be Neo4j incompatible: %v", tc.settings)
 					if err != nil {
-						assert.Contains(t, err.Error(), "complex nested objects", 
+						assert.Contains(t, err.Error(), "complex nested objects",
 							"Error should mention complex nested objects: %s", err.Error())
 					}
 				}

@@ -8,29 +8,29 @@ import (
 
 // MLModel represents a machine learning model in the system
 type MLModel struct {
-	ID              string                 `json:"id" neo4j:"id"`
-	Name            string                 `json:"name" neo4j:"name"`
-	Type            string                 `json:"type" neo4j:"type"` // Classification, NER, Sentiment, ComputerVision
-	Status          string                 `json:"status" neo4j:"status"` // deployed, training, testing, inactive
-	Version         string                 `json:"version" neo4j:"version"`
-	Accuracy        float64                `json:"accuracy" neo4j:"accuracy"`
-	TrainingData    string                 `json:"training_data" neo4j:"training_data"` // e.g., "45K documents"
-	Predictions     int64                  `json:"predictions" neo4j:"predictions"`
-	MediaTypes      []string               `json:"media_types" neo4j:"media_types"` // document, image, audio, video
-	Description     string                 `json:"description" neo4j:"description"`
-	Parameters      map[string]interface{} `json:"parameters" neo4j:"parameters"`
-	CreatedAt       time.Time              `json:"created_at" neo4j:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at" neo4j:"updated_at"`
-	CreatedBy       string                 `json:"created_by" neo4j:"created_by"`
-	TenantID        string                 `json:"tenant_id" neo4j:"tenant_id"`
-	OrganizationID  string                 `json:"organization_id" neo4j:"organization_id"`
+	ID             string                 `json:"id" neo4j:"id"`
+	Name           string                 `json:"name" neo4j:"name"`
+	Type           string                 `json:"type" neo4j:"type"`     // Classification, NER, Sentiment, ComputerVision
+	Status         string                 `json:"status" neo4j:"status"` // deployed, training, testing, inactive
+	Version        string                 `json:"version" neo4j:"version"`
+	Accuracy       float64                `json:"accuracy" neo4j:"accuracy"`
+	TrainingData   string                 `json:"training_data" neo4j:"training_data"` // e.g., "45K documents"
+	Predictions    int64                  `json:"predictions" neo4j:"predictions"`
+	MediaTypes     []string               `json:"media_types" neo4j:"media_types"` // document, image, audio, video
+	Description    string                 `json:"description" neo4j:"description"`
+	Parameters     map[string]interface{} `json:"parameters" neo4j:"parameters"`
+	CreatedAt      time.Time              `json:"created_at" neo4j:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at" neo4j:"updated_at"`
+	CreatedBy      string                 `json:"created_by" neo4j:"created_by"`
+	TenantID       string                 `json:"tenant_id" neo4j:"tenant_id"`
+	OrganizationID string                 `json:"organization_id" neo4j:"organization_id"`
 }
 
 // MLExperiment represents a machine learning experiment
 type MLExperiment struct {
 	ID                  string                 `json:"id" neo4j:"id"`
 	Name                string                 `json:"name" neo4j:"name"`
-	Status              string                 `json:"status" neo4j:"status"` // running, completed, failed, paused
+	Status              string                 `json:"status" neo4j:"status"`     // running, completed, failed, paused
 	Progress            float64                `json:"progress" neo4j:"progress"` // 0-100%
 	ModelID             string                 `json:"model_id" neo4j:"model_id"`
 	StartDate           time.Time              `json:"start_date" neo4j:"start_date"`
@@ -68,12 +68,12 @@ type MLPerformanceMetrics struct {
 
 // CreateMLModelRequest represents the request to create a new ML model
 type CreateMLModelRequest struct {
-	Name         string                 `json:"name" binding:"required"`
-	Type         string                 `json:"type" binding:"required,oneof=Classification NER Sentiment ComputerVision"`
-	Version      string                 `json:"version" binding:"required"`
-	MediaTypes   []string               `json:"media_types" binding:"required"`
-	Description  string                 `json:"description"`
-	Parameters   map[string]interface{} `json:"parameters"`
+	Name        string                 `json:"name" binding:"required"`
+	Type        string                 `json:"type" binding:"required,oneof=Classification NER Sentiment ComputerVision"`
+	Version     string                 `json:"version" binding:"required"`
+	MediaTypes  []string               `json:"media_types" binding:"required"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
 }
 
 // UpdateMLModelRequest represents the request to update an ML model
@@ -87,19 +87,19 @@ type UpdateMLModelRequest struct {
 
 // CreateExperimentRequest represents the request to create a new experiment
 type CreateExperimentRequest struct {
-	Name               string                 `json:"name" binding:"required"`
-	ModelID            string                 `json:"model_id" binding:"required"`
-	TrainingDataset    string                 `json:"training_dataset" binding:"required"`
-	TestingDataset     string                 `json:"testing_dataset"`
-	Hyperparameters    map[string]interface{} `json:"hyperparameters"`
-	EstimatedDuration  int                    `json:"estimated_duration"` // minutes
+	Name              string                 `json:"name" binding:"required"`
+	ModelID           string                 `json:"model_id" binding:"required"`
+	TrainingDataset   string                 `json:"training_dataset" binding:"required"`
+	TestingDataset    string                 `json:"testing_dataset"`
+	Hyperparameters   map[string]interface{} `json:"hyperparameters"`
+	EstimatedDuration int                    `json:"estimated_duration"` // minutes
 }
 
 // UpdateExperimentRequest represents the request to update an experiment
 type UpdateExperimentRequest struct {
-	Status   string             `json:"status" binding:"omitempty,oneof=running completed failed paused"`
-	Progress float64            `json:"progress" binding:"omitempty,min=0,max=100"`
-	Metrics  map[string]float64 `json:"metrics"`
+	Status   string                 `json:"status" binding:"omitempty,oneof=running completed failed paused"`
+	Progress float64                `json:"progress" binding:"omitempty,min=0,max=100"`
+	Metrics  map[string]float64     `json:"metrics"`
 	Results  map[string]interface{} `json:"results"`
 }
 
@@ -129,7 +129,7 @@ func NewMLModel(req CreateMLModelRequest, userID, tenantID, orgID string) *MLMod
 // NewMLExperiment creates a new ML experiment with default values
 func NewMLExperiment(req CreateExperimentRequest, userID, tenantID, orgID string) *MLExperiment {
 	now := time.Now()
-	
+
 	var estimatedCompletion *time.Time
 	if req.EstimatedDuration > 0 {
 		completion := now.Add(time.Duration(req.EstimatedDuration) * time.Minute)

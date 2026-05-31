@@ -35,9 +35,9 @@ type User struct {
 	TutorialCompletedAt *time.Time `json:"tutorial_completed_at,omitempty"`
 
 	// Onboarding status tracking
-	OnboardingStatus    string     `json:"onboarding_status"` // "pending", "in_progress", "completed", "failed"
-	OnboardingError     string     `json:"onboarding_error,omitempty"`
-	OnboardingFailedAt  *time.Time `json:"onboarding_failed_at,omitempty"`
+	OnboardingStatus   string     `json:"onboarding_status"` // "pending", "in_progress", "completed", "failed"
+	OnboardingError    string     `json:"onboarding_error,omitempty"`
+	OnboardingFailedAt *time.Time `json:"onboarding_failed_at,omitempty"`
 
 	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`

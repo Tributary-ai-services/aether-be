@@ -46,9 +46,9 @@ func NewRouterHandler(routerConfig *config.RouterConfig, log *logger.Logger) (*R
 		Timeout: timeout,
 		Transport: &http.Transport{
 			ResponseHeaderTimeout: connectTimeout,
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     30 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       30 * time.Second,
 		},
 	}
 
@@ -117,7 +117,7 @@ func (h *RouterHandler) ProxyRequest(c *gin.Context, targetPath string) {
 
 	// Copy response status and body
 	c.Status(resp.StatusCode)
-	
+
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to read response body")
@@ -156,7 +156,7 @@ func (h *RouterHandler) copyHeaders(original *http.Request, proxy *http.Request,
 	if h.config.Service.UseServiceAuth && h.config.Service.APIKey != "" {
 		// Mode 1: Service-to-Service Authentication
 		proxy.Header.Set("X-API-Key", h.config.Service.APIKey)
-		
+
 		// Forward user context as metadata headers for audit/logging
 		if userID, exists := c.Get("user_id"); exists {
 			if uid, ok := userID.(string); ok && uid != "" {
@@ -168,7 +168,7 @@ func (h *RouterHandler) copyHeaders(original *http.Request, proxy *http.Request,
 				proxy.Header.Set("X-User-Email", email)
 			}
 		}
-		
+
 		h.logger.Debug("Using service-to-service authentication",
 			zap.String("auth_mode", "service"),
 			zap.Bool("user_context_forwarded", c.GetString("user_id") != ""))
@@ -206,7 +206,7 @@ func (h *RouterHandler) copyHeaders(original *http.Request, proxy *http.Request,
 	if original.URL.Scheme == "" {
 		proxy.Header.Set("X-Forwarded-Proto", "http") // Default for development
 	}
-	
+
 	// Add service identification header
 	proxy.Header.Set("X-Forwarded-Service", "aether-backend")
 }
@@ -249,7 +249,7 @@ func (h *RouterHandler) executeWithRetry(req *http.Request) (*http.Response, err
 		if attempt < maxRetries {
 			sleepTime := time.Duration(attempt+1) * time.Second
 			h.logger.Warn("Retrying proxy request",
-				zap.Int("attempt", attempt + 1),
+				zap.Int("attempt", attempt+1),
 				zap.Int("max_retries", maxRetries),
 				zap.Duration("sleep_time", sleepTime),
 				zap.String("error", lastErr.Error()))

@@ -24,14 +24,14 @@ func NewLoggingHandler(log *logger.Logger) *LoggingHandler {
 
 // FrontendLogEntry represents a log entry from the frontend
 type FrontendLogEntry struct {
-	Level      string                 `json:"level" binding:"required"`      // error, warn, info, debug
-	Message    string                 `json:"message" binding:"required"`    // Log message
-	Timestamp  *time.Time             `json:"timestamp"`                     // Client timestamp (optional)
-	URL        string                 `json:"url"`                           // Page URL
-	UserAgent  string                 `json:"user_agent"`                    // Browser user agent
-	SessionID  string                 `json:"session_id"`                    // Session identifier
-	StackTrace string                 `json:"stack_trace,omitempty"`         // Error stack trace
-	Extra      map[string]interface{} `json:"extra,omitempty"`               // Additional fields
+	Level      string                 `json:"level" binding:"required"`   // error, warn, info, debug
+	Message    string                 `json:"message" binding:"required"` // Log message
+	Timestamp  *time.Time             `json:"timestamp"`                  // Client timestamp (optional)
+	URL        string                 `json:"url"`                        // Page URL
+	UserAgent  string                 `json:"user_agent"`                 // Browser user agent
+	SessionID  string                 `json:"session_id"`                 // Session identifier
+	StackTrace string                 `json:"stack_trace,omitempty"`      // Error stack trace
+	Extra      map[string]interface{} `json:"extra,omitempty"`            // Additional fields
 }
 
 // LogBatchRequest represents a batch of log entries from the frontend

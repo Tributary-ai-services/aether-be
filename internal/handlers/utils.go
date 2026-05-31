@@ -45,23 +45,23 @@ func ensureUserExists(c *gin.Context, userService *services.UserService, logger 
 	// User doesn't exist, create them from JWT token info
 	if errors.IsNotFound(err) {
 		logger.Info("User not found in database, creating from JWT token", zap.String("keycloak_id", keycloakID))
-		
+
 		// Extract user info from JWT token context
 		email, _ := c.Get("user_email")
 		name, _ := c.Get("user_name")
 		username, _ := c.Get("username")
-		
+
 		emailStr, _ := email.(string)
 		nameStr, _ := name.(string)
 		usernameStr, _ := username.(string)
-		
+
 		if usernameStr == "" {
 			usernameStr = emailStr
 		}
 		if nameStr == "" {
 			nameStr = emailStr
 		}
-		
+
 		createReq := models.UserCreateRequest{
 			KeycloakID: keycloakID,
 			Email:      emailStr,
@@ -71,13 +71,13 @@ func ensureUserExists(c *gin.Context, userService *services.UserService, logger 
 				"theme": "light",
 			},
 		}
-		
+
 		newUser, createErr := userService.CreateUser(c.Request.Context(), createReq)
 		if createErr != nil {
 			logger.Error("Failed to auto-create user", zap.Error(createErr))
 			return "", createErr
 		}
-		
+
 		logger.Info("User auto-created successfully", zap.String("user_id", newUser.ID))
 		return newUser.ID, nil
 	}
@@ -388,7 +388,7 @@ func customRecoveryMiddleware(log *logger.Logger) gin.HandlerFunc {
 					zap.String("path", c.Request.URL.Path),
 					zap.String("client_ip", c.ClientIP()),
 					zap.Stack("stack"))
-					
+
 				// Return 502 like Gin's default recovery
 				c.AbortWithStatus(http.StatusBadGateway)
 			}
@@ -428,7 +428,7 @@ func debugRequestMiddleware(log *logger.Logger) gin.HandlerFunc {
 			zap.String("host", c.Request.Host),
 			zap.String("proto", c.Request.Proto),
 			zap.Any("all_headers", c.Request.Header))
-		
+
 		log.Info("Request entering middleware chain")
 		c.Next()
 		log.Info("Request exiting middleware chain",

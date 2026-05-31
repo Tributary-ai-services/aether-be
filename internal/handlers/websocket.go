@@ -19,8 +19,8 @@ import (
 
 // WebSocketHandler handles WebSocket connections for real-time updates
 type WebSocketHandler struct {
-	documentService   *services.DocumentService
-	audiModalService  *services.AudiModalService
+	documentService  *services.DocumentService
+	audiModalService *services.AudiModalService
 	logger           *logger.Logger
 	upgrader         websocket.Upgrader
 	connections      map[string]*WebSocketConnection // jobID -> connection
@@ -29,12 +29,12 @@ type WebSocketHandler struct {
 
 // WebSocketConnection represents a WebSocket connection tracking a specific job
 type WebSocketConnection struct {
-	conn      *websocket.Conn
-	jobID     string
-	userID    string
-	tenantID  string
-	lastSent  time.Time
-	done      chan bool
+	conn     *websocket.Conn
+	jobID    string
+	userID   string
+	tenantID string
+	lastSent time.Time
+	done     chan bool
 }
 
 // WebSocketMessage represents a message sent over WebSocket
@@ -53,7 +53,7 @@ func NewWebSocketHandler(documentService *services.DocumentService, audiModalSer
 	return &WebSocketHandler{
 		documentService:  documentService,
 		audiModalService: audiModalService,
-		logger:          log.WithService("websocket_handler"),
+		logger:           log.WithService("websocket_handler"),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				// In production, implement proper origin checking
@@ -93,8 +93,8 @@ func (h *WebSocketHandler) StreamJobStatus(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Starting WebSocket job status stream", 
-		zap.String("job_id", jobID), 
+	h.logger.Info("Starting WebSocket job status stream",
+		zap.String("job_id", jobID),
 		zap.String("user_id", userID),
 		zap.String("tenant_id", spaceContext.TenantID))
 
@@ -150,8 +150,8 @@ func (h *WebSocketHandler) startStatusMonitoring(ctx context.Context, wsConn *We
 			return
 		case <-ticker.C:
 			if err := h.sendJobStatusUpdate(ctx, wsConn); err != nil {
-				h.logger.Error("Failed to send status update", 
-					zap.String("job_id", wsConn.jobID), 
+				h.logger.Error("Failed to send status update",
+					zap.String("job_id", wsConn.jobID),
 					zap.Error(err))
 				return
 			}
@@ -190,7 +190,7 @@ func (h *WebSocketHandler) sendJobStatusUpdate(ctx context.Context, wsConn *WebS
 	}
 
 	wsConn.lastSent = time.Now()
-	
+
 	// If job is completed or failed, send final message and close
 	if message.Status == "completed" || message.Status == "failed" {
 		finalMsg := WebSocketMessage{
@@ -215,29 +215,29 @@ func (h *WebSocketHandler) getJobStatus(ctx context.Context, jobID string, tenan
 	if err == nil && chunks != nil && len(chunks.Data) > 0 {
 		// Job completed successfully
 		return map[string]interface{}{
-			"job_id":        jobID,
-			"status":        "completed",
-			"progress":      100.0,
-			"chunks_count":  len(chunks.Data),
-			"total_chunks":  chunks.Total,
-			"job_type":      "document_processing",
-			"completed_at":  time.Now(),
+			"job_id":       jobID,
+			"status":       "completed",
+			"progress":     100.0,
+			"chunks_count": len(chunks.Data),
+			"total_chunks": chunks.Total,
+			"job_type":     "document_processing",
+			"completed_at": time.Now(),
 		}, nil
 	}
 
 	// Job is still processing or doesn't exist
 	return map[string]interface{}{
-		"job_id":      jobID,
-		"status":      "processing",
-		"progress":    50.0, // In real implementation, calculate based on actual progress
-		"job_type":    "document_processing",
-		"started_at":  time.Now().Add(-30 * time.Second), // Mock start time
-		"estimated_completion": time.Now().Add(60 * time.Second), // Mock ETA
+		"job_id":               jobID,
+		"status":               "processing",
+		"progress":             50.0, // In real implementation, calculate based on actual progress
+		"job_type":             "document_processing",
+		"started_at":           time.Now().Add(-30 * time.Second), // Mock start time
+		"estimated_completion": time.Now().Add(60 * time.Second),  // Mock ETA
 	}, nil
 }
 
 // StreamDocumentStatus handles WebSocket connections for document processing status
-// @Summary Stream document status updates  
+// @Summary Stream document status updates
 // @Description Get real-time status updates for document processing via WebSocket
 // @Tags websocket
 // @Security Bearer
@@ -263,8 +263,8 @@ func (h *WebSocketHandler) StreamDocumentStatus(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Starting WebSocket document status stream", 
-		zap.String("document_id", documentID), 
+	h.logger.Info("Starting WebSocket document status stream",
+		zap.String("document_id", documentID),
 		zap.String("user_id", userID))
 
 	// Get document to find processing job ID
@@ -306,15 +306,15 @@ func (h *WebSocketHandler) StreamDocumentStatus(c *gin.Context) {
 			}
 
 			message := WebSocketMessage{
-				Type:   "document_status_update",
-				JobID:  documentID,
-				Status: doc.Status,
+				Type:     "document_status_update",
+				JobID:    documentID,
+				Status:   doc.Status,
 				Progress: calculateProgress(doc.Status),
 				Data: map[string]interface{}{
-					"document_id":    doc.ID,
-					"status":         doc.Status,
-					"chunk_count":    doc.ChunkCount,
-					"processing_time": doc.ProcessingTime,
+					"document_id":      doc.ID,
+					"status":           doc.Status,
+					"chunk_count":      doc.ChunkCount,
+					"processing_time":  doc.ProcessingTime,
 					"confidence_score": doc.ConfidenceScore,
 				},
 				Timestamp: time.Now(),

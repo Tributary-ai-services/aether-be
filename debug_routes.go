@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -38,10 +39,10 @@ func main() {
 	// Create a debug server
 	fmt.Println("=== DEBUG: Creating Gin router ===")
 	router := gin.New()
-	
+
 	// Add middlewares
 	router.Use(gin.Recovery())
-	
+
 	// Add a simple test route
 	fmt.Println("=== DEBUG: Adding test route ===")
 	router.GET("/test", func(c *gin.Context) {

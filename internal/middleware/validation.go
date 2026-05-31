@@ -415,12 +415,12 @@ func sanitizeStringValueForKey(value string, key string) string {
 	// Still applies XSS, SQL injection, and HTML stripping for security
 	if largeContentFields[key] {
 		options := validation.SanitizationOptions{
-			StripHTML:          false, // Keep HTML - it's markdown content
-			StripSQLInjection:  true,  // Still protect against SQL injection
-			StripXSS:           true,  // Still protect against XSS
-			StripControlChars:  true,  // Remove control chars
-			TrimWhitespace:     false, // Preserve whitespace in content
-			CollapseWhitespace: false, // Preserve formatting
+			StripHTML:          false,            // Keep HTML - it's markdown content
+			StripSQLInjection:  true,             // Still protect against SQL injection
+			StripXSS:           true,             // Still protect against XSS
+			StripControlChars:  true,             // Remove control chars
+			TrimWhitespace:     false,            // Preserve whitespace in content
+			CollapseWhitespace: false,            // Preserve formatting
 			MaxLength:          10 * 1024 * 1024, // 10MB max for content
 			PreserveCase:       true,
 		}
@@ -608,14 +608,14 @@ func truncateForLog(s string, maxLen int) string {
 func RequestSizeLimit(maxSize int64) gin.HandlerFunc {
 	log, _ := logger.New(logger.Config{Level: "debug"})
 	return func(c *gin.Context) {
-		log.Info("=== REQUEST SIZE LIMIT MIDDLEWARE ===", 
+		log.Info("=== REQUEST SIZE LIMIT MIDDLEWARE ===",
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.Request.URL.Path),
 			zap.Int64("content_length", c.Request.ContentLength),
 			zap.Int64("max_size", maxSize))
-			
+
 		if c.Request.ContentLength > maxSize {
-			log.Error("Request body too large", 
+			log.Error("Request body too large",
 				zap.Int64("content_length", c.Request.ContentLength),
 				zap.Int64("max_size", maxSize))
 			c.JSON(http.StatusRequestEntityTooLarge, errors.BadRequest("Request body too large"))

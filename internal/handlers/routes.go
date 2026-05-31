@@ -21,44 +21,44 @@ import (
 
 // APIServer represents the API server with all dependencies
 type APIServer struct {
-	Router               *gin.Engine
-	UserHandler          *UserHandler
-	NotebookHandler      *NotebookHandler
-	DocumentHandler      *DocumentHandler
-	ChunkHandler         *ChunkHandler
-	JobHandler           *JobHandler
-	WebSocketHandler     *WebSocketHandler
-	MLHandler            *MLHandler
-	WorkflowHandler      *WorkflowHandler
-	TeamHandler          *TeamHandler
-	OrganizationHandler  *OrganizationHandler
-	SpaceHandler         *SpaceHandler
-	AgentHandler         *AgentHandler
-	HealthHandler        *HealthHandler
-	StreamHandler        *StreamHandler
-	RouterHandler        *RouterHandler
-	LoggingHandler       *LoggingHandler
-	VectorSearchHandler  *VectorSearchHandler
-	ComplianceHandler    *ComplianceHandler
-	DataSourceHandler    *DataSourceHandler
-	SecurityHandler      *SecurityHandler
-	DatabaseHandler      *DatabaseHandler
-	SavedQueryHandler    *SavedQueryHandler
-	AIPlaygroundHandler  *AIPlaygroundHandler
-	ProductionHandler    *ProductionHandler
-	MCPHandler           *MCPHandler
-	ArgoHandler          *ArgoHandler
-	NotificationHandler  *NotificationHandler
-	OAuthHandler         *OAuthHandler
-	CloudDriveHandler    *CloudDriveHandler
-	InvitationHandler    *InvitationHandler
-	CommentHandler       *CommentHandler
-	ConversationHandler  *ConversationHandler
-	RegistrationHandler  *RegistrationHandler
-	SpaceService              *services.SpaceContextService
-	ProductionCleanupWorker  *services.ProductionCleanupWorker
-	Metrics                  *metrics.Metrics
-	logger                   *logger.Logger
+	Router                  *gin.Engine
+	UserHandler             *UserHandler
+	NotebookHandler         *NotebookHandler
+	DocumentHandler         *DocumentHandler
+	ChunkHandler            *ChunkHandler
+	JobHandler              *JobHandler
+	WebSocketHandler        *WebSocketHandler
+	MLHandler               *MLHandler
+	WorkflowHandler         *WorkflowHandler
+	TeamHandler             *TeamHandler
+	OrganizationHandler     *OrganizationHandler
+	SpaceHandler            *SpaceHandler
+	AgentHandler            *AgentHandler
+	HealthHandler           *HealthHandler
+	StreamHandler           *StreamHandler
+	RouterHandler           *RouterHandler
+	LoggingHandler          *LoggingHandler
+	VectorSearchHandler     *VectorSearchHandler
+	ComplianceHandler       *ComplianceHandler
+	DataSourceHandler       *DataSourceHandler
+	SecurityHandler         *SecurityHandler
+	DatabaseHandler         *DatabaseHandler
+	SavedQueryHandler       *SavedQueryHandler
+	AIPlaygroundHandler     *AIPlaygroundHandler
+	ProductionHandler       *ProductionHandler
+	MCPHandler              *MCPHandler
+	ArgoHandler             *ArgoHandler
+	NotificationHandler     *NotificationHandler
+	OAuthHandler            *OAuthHandler
+	CloudDriveHandler       *CloudDriveHandler
+	InvitationHandler       *InvitationHandler
+	CommentHandler          *CommentHandler
+	ConversationHandler     *ConversationHandler
+	RegistrationHandler     *RegistrationHandler
+	SpaceService            *services.SpaceContextService
+	ProductionCleanupWorker *services.ProductionCleanupWorker
+	Metrics                 *metrics.Metrics
+	logger                  *logger.Logger
 }
 
 // NewAPIServer creates a new API server with all routes configured
@@ -283,44 +283,44 @@ func NewAPIServer(
 	router.Use(metrics.HTTPMetricsMiddleware(metricsInstance, log))
 
 	server := &APIServer{
-		Router:               router,
-		UserHandler:          userHandler,
-		NotebookHandler:      notebookHandler,
-		DocumentHandler:      documentHandler,
-		ChunkHandler:         chunkHandler,
-		JobHandler:           jobHandler,
-		WebSocketHandler:     webSocketHandler,
-		MLHandler:            mlHandler,
-		WorkflowHandler:      workflowHandler,
-		TeamHandler:          teamHandler,
-		OrganizationHandler:  organizationHandler,
-		SpaceHandler:         spaceHandler,
-		AgentHandler:         agentHandler,
-		HealthHandler:        healthHandler,
-		StreamHandler:        streamHandler,
-		RouterHandler:        routerHandler,
-		LoggingHandler:       loggingHandler,
-		VectorSearchHandler:  vectorSearchHandler,
-		ComplianceHandler:    complianceHandler,
-		DataSourceHandler:    dataSourceHandler,
-		SecurityHandler:      securityHandler,
-		DatabaseHandler:      databaseHandler,
-		SavedQueryHandler:    savedQueryHandler,
-		AIPlaygroundHandler:  aiPlaygroundHandler,
-		ProductionHandler:    productionHandler,
-		MCPHandler:           mcpHandler,
-		ArgoHandler:          argoHandler,
-		NotificationHandler:  notificationHandler,
-		OAuthHandler:         oauthHandler,
-		CloudDriveHandler:    cloudDriveHandler,
-		InvitationHandler:    invitationHandler,
-		CommentHandler:       commentHandler,
-		ConversationHandler:  conversationHandler,
-		RegistrationHandler:  registrationHandler,
-		SpaceService:              spaceContextService,
-		ProductionCleanupWorker:  productionCleanupWorker,
-		Metrics:                  metricsInstance,
-		logger:                   log.WithService("api_server"),
+		Router:                  router,
+		UserHandler:             userHandler,
+		NotebookHandler:         notebookHandler,
+		DocumentHandler:         documentHandler,
+		ChunkHandler:            chunkHandler,
+		JobHandler:              jobHandler,
+		WebSocketHandler:        webSocketHandler,
+		MLHandler:               mlHandler,
+		WorkflowHandler:         workflowHandler,
+		TeamHandler:             teamHandler,
+		OrganizationHandler:     organizationHandler,
+		SpaceHandler:            spaceHandler,
+		AgentHandler:            agentHandler,
+		HealthHandler:           healthHandler,
+		StreamHandler:           streamHandler,
+		RouterHandler:           routerHandler,
+		LoggingHandler:          loggingHandler,
+		VectorSearchHandler:     vectorSearchHandler,
+		ComplianceHandler:       complianceHandler,
+		DataSourceHandler:       dataSourceHandler,
+		SecurityHandler:         securityHandler,
+		DatabaseHandler:         databaseHandler,
+		SavedQueryHandler:       savedQueryHandler,
+		AIPlaygroundHandler:     aiPlaygroundHandler,
+		ProductionHandler:       productionHandler,
+		MCPHandler:              mcpHandler,
+		ArgoHandler:             argoHandler,
+		NotificationHandler:     notificationHandler,
+		OAuthHandler:            oauthHandler,
+		CloudDriveHandler:       cloudDriveHandler,
+		InvitationHandler:       invitationHandler,
+		CommentHandler:          commentHandler,
+		ConversationHandler:     conversationHandler,
+		RegistrationHandler:     registrationHandler,
+		SpaceService:            spaceContextService,
+		ProductionCleanupWorker: productionCleanupWorker,
+		Metrics:                 metricsInstance,
+		logger:                  log.WithService("api_server"),
 	}
 
 	// Setup routes
@@ -517,7 +517,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		teams.GET("/:id", s.TeamHandler.GetTeam)
 		teams.PUT("/:id", s.TeamHandler.UpdateTeam)
 		teams.DELETE("/:id", s.TeamHandler.DeleteTeam)
-		
+
 		// Team member routes
 		teams.GET("/:id/members", s.TeamHandler.GetTeamMembers)
 		teams.POST("/:id/members", s.TeamHandler.InviteTeamMember)
@@ -533,7 +533,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		organizations.GET("/:id", s.OrganizationHandler.GetOrganization)
 		organizations.PUT("/:id", s.OrganizationHandler.UpdateOrganization)
 		organizations.DELETE("/:id", s.OrganizationHandler.DeleteOrganization)
-		
+
 		// Organization member routes
 		organizations.GET("/:id/members", s.OrganizationHandler.GetOrganizationMembers)
 		organizations.POST("/:id/members", s.OrganizationHandler.InviteOrganizationMember)
@@ -754,7 +754,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		workflows.GET("/:id", s.WorkflowHandler.GetWorkflow)
 		workflows.PUT("/:id", s.WorkflowHandler.UpdateWorkflow)
 		workflows.DELETE("/:id", s.WorkflowHandler.DeleteWorkflow)
-		
+
 		// Workflow execution
 		workflows.POST("/:id/execute", s.WorkflowHandler.ExecuteWorkflow)
 		workflows.PUT("/:id/status", s.WorkflowHandler.UpdateWorkflowStatus)
@@ -789,15 +789,15 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		streams.PUT("/sources/:id", s.StreamHandler.UpdateStreamSource)
 		streams.DELETE("/sources/:id", s.StreamHandler.DeleteStreamSource)
 		streams.PUT("/sources/:id/status", s.StreamHandler.UpdateStreamSourceStatus)
-		
+
 		// Live event management
 		streams.POST("/sources/:id/events", s.StreamHandler.IngestEvent)
 		streams.GET("/events", s.StreamHandler.GetLiveEvents)
 		streams.GET("/events/:id", s.StreamHandler.GetLiveEvent)
-		
+
 		// Real-time WebSocket streaming
 		streams.GET("/live", s.StreamHandler.StreamEvents)
-		
+
 		// Stream analytics
 		streams.GET("/analytics", s.StreamHandler.GetStreamAnalytics)
 		streams.GET("/analytics/realtime", s.StreamHandler.GetRealtimeAnalytics)
@@ -870,7 +870,7 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 			authRouter.POST("/completions", s.RouterHandler.Completions)
 			authRouter.POST("/messages", s.RouterHandler.Messages)
 		}
-		
+
 		// Note: When UseServiceAuth=true, the RouterHandler will automatically
 		// use service authentication regardless of which tier the request comes from
 	}

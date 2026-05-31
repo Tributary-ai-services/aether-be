@@ -35,18 +35,18 @@ type UpdateCommentRequest struct {
 
 // CommentResponse represents a comment in API responses
 type CommentResponse struct {
-	ID           string             `json:"id"`
-	Content      string             `json:"content"`
-	AuthorID     string             `json:"authorId"`
+	ID           string              `json:"id"`
+	Content      string              `json:"content"`
+	AuthorID     string              `json:"authorId"`
 	Author       *PublicUserResponse `json:"author,omitempty"`
-	ResourceID   string             `json:"resourceId"`
-	ResourceType string             `json:"resourceType"`
-	ParentID     string             `json:"parentId,omitempty"`
-	Mentions     []string           `json:"mentions,omitempty"`
-	Edited       bool               `json:"edited"`
-	Replies      []*CommentResponse `json:"replies,omitempty"`
-	CreatedAt    time.Time          `json:"createdAt"`
-	UpdatedAt    time.Time          `json:"updatedAt"`
+	ResourceID   string              `json:"resourceId"`
+	ResourceType string              `json:"resourceType"`
+	ParentID     string              `json:"parentId,omitempty"`
+	Mentions     []string            `json:"mentions,omitempty"`
+	Edited       bool                `json:"edited"`
+	Replies      []*CommentResponse  `json:"replies,omitempty"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
 }
 
 // CommentListResponse represents a paginated list of comments

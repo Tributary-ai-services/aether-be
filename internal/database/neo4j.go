@@ -176,7 +176,7 @@ func (c *Neo4jClient) validateNeo4jSlice(key string, value interface{}) error {
 		if elem == nil {
 			continue
 		}
-		
+
 		switch reflect.TypeOf(elem).Kind() {
 		case reflect.String, reflect.Bool:
 			continue

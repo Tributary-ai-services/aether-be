@@ -11,24 +11,24 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	Server     ServerConfig
-	Neo4j      DatabaseConfig
-	Postgres   PostgresConfig
-	Redis      RedisConfig
-	Keycloak   KeycloakConfig
-	Storage    StorageConfig
-	Kafka      KafkaConfig
-	Monitoring MonitoringConfig
-	Logger     LoggingConfig
-	AudiModal  AudiModalConfig
-	Embedding  EmbeddingConfig
-	DeepLake   DeepLakeConfig
-	OpenAI     OpenAIConfig
-	Compliance ComplianceConfig
-	Router     RouterConfig
-	Crawl4AI   Crawl4AIConfig
-	DBHub      DBHubConfig
-	Napkin     NapkinConfig
+	Server                ServerConfig
+	Neo4j                 DatabaseConfig
+	Postgres              PostgresConfig
+	Redis                 RedisConfig
+	Keycloak              KeycloakConfig
+	Storage               StorageConfig
+	Kafka                 KafkaConfig
+	Monitoring            MonitoringConfig
+	Logger                LoggingConfig
+	AudiModal             AudiModalConfig
+	Embedding             EmbeddingConfig
+	DeepLake              DeepLakeConfig
+	OpenAI                OpenAIConfig
+	Compliance            ComplianceConfig
+	Router                RouterConfig
+	Crawl4AI              Crawl4AIConfig
+	DBHub                 DBHubConfig
+	Napkin                NapkinConfig
 	PostgresMCP           MCPServerConfig
 	FilesystemMCP         MCPServerConfig
 	MemoryMCP             MCPServerConfig
@@ -113,12 +113,12 @@ type RedisConfig struct {
 
 // KeycloakConfig holds Keycloak OIDC configuration
 type KeycloakConfig struct {
-	URL            string
-	Realm          string
-	ClientID       string
-	ClientSecret   string
-	AdminUsername  string
-	AdminPassword  string
+	URL           string
+	Realm         string
+	ClientID      string
+	ClientSecret  string
+	AdminUsername string
+	AdminPassword string
 }
 
 // StorageConfig holds S3/MinIO configuration
@@ -153,17 +153,17 @@ type LoggingConfig struct {
 
 // AudiModalConfig holds AudiModal API configuration
 type AudiModalConfig struct {
-	BaseURL              string
-	APIKey               string
-	Enabled              bool
-	DefaultStrategy      string
-	TenantManagement     bool
-	ProcessingTimeout    int
-	RetryAttempts        int
-	EnableWebhooks       bool
-	WebhookSecret        string
-	MaxConcurrentFiles   int
-	ChunkSizeLimit       int
+	BaseURL            string
+	APIKey             string
+	Enabled            bool
+	DefaultStrategy    string
+	TenantManagement   bool
+	ProcessingTimeout  int
+	RetryAttempts      int
+	EnableWebhooks     bool
+	WebhookSecret      string
+	MaxConcurrentFiles int
+	ChunkSizeLimit     int
 }
 
 // EmbeddingConfig holds embedding service configuration
@@ -197,25 +197,25 @@ type OpenAIConfig struct {
 
 // ComplianceConfig holds compliance scanning configuration
 type ComplianceConfig struct {
-	Enabled             bool
-	GDPREnabled         bool
-	HIPAAEnabled        bool
-	CCPAEnabled         bool
-	PIIDetectionEnabled bool
+	Enabled                   bool
+	GDPREnabled               bool
+	HIPAAEnabled              bool
+	CCPAEnabled               bool
+	PIIDetectionEnabled       bool
 	DataClassificationEnabled bool
-	BatchSize           int
-	ScanInterval        int
-	RetentionDays       int
-	MaskPII             bool
-	EncryptSensitive    bool
+	BatchSize                 int
+	ScanInterval              int
+	RetentionDays             int
+	MaskPII                   bool
+	EncryptSensitive          bool
 }
 
 // RouterConfig holds LLM router proxy configuration
 type RouterConfig struct {
-	Enabled     bool                 `json:"enabled"`
-	Service     RouterServiceConfig  `json:"service"`
-	Endpoints   RouterEndpoints      `json:"endpoints"`
-	ProxyRoutes []ProxyRoute         `json:"proxy_routes"`
+	Enabled     bool                `json:"enabled"`
+	Service     RouterServiceConfig `json:"service"`
+	Endpoints   RouterEndpoints     `json:"endpoints"`
+	ProxyRoutes []ProxyRoute        `json:"proxy_routes"`
 }
 
 // RouterServiceConfig holds router service connection configuration
@@ -230,13 +230,13 @@ type RouterServiceConfig struct {
 
 // RouterEndpoints holds router endpoint paths
 type RouterEndpoints struct {
-	Providers      string `json:"providers"`
-	ProviderDetail string `json:"provider_detail"`
-	Health         string `json:"health"`
-	Capabilities   string `json:"capabilities"`
+	Providers       string `json:"providers"`
+	ProviderDetail  string `json:"provider_detail"`
+	Health          string `json:"health"`
+	Capabilities    string `json:"capabilities"`
 	ChatCompletions string `json:"chat_completions"`
-	Completions    string `json:"completions"`
-	Messages       string `json:"messages"`
+	Completions     string `json:"completions"`
+	Messages        string `json:"messages"`
 }
 
 // ProxyRoute defines a proxy route mapping
@@ -329,12 +329,12 @@ func Load() (*Config, error) {
 			PoolSize: getEnvInt("REDIS_POOL_SIZE", 10),
 		},
 		Keycloak: KeycloakConfig{
-			URL:            getEnv("KEYCLOAK_URL", "http://localhost:8081"),
-			Realm:          getEnv("KEYCLOAK_REALM", "aether"),
-			ClientID:       getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
-			ClientSecret:   getEnv("KEYCLOAK_CLIENT_SECRET", ""),
-			AdminUsername:  getEnv("KEYCLOAK_ADMIN_USERNAME", "admin"),
-			AdminPassword:  getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin123"),
+			URL:           getEnv("KEYCLOAK_URL", "http://localhost:8081"),
+			Realm:         getEnv("KEYCLOAK_REALM", "aether"),
+			ClientID:      getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
+			ClientSecret:  getEnv("KEYCLOAK_CLIENT_SECRET", ""),
+			AdminUsername: getEnv("KEYCLOAK_ADMIN_USERNAME", "admin"),
+			AdminPassword: getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin123"),
 		},
 		Storage: StorageConfig{
 			Enabled:         getEnvBool("STORAGE_ENABLED", false),
@@ -359,17 +359,17 @@ func Load() (*Config, error) {
 			Format: getEnv("LOG_FORMAT", "json"),
 		},
 		AudiModal: AudiModalConfig{
-			BaseURL:              getEnv("AUDIMODAL_BASE_URL", "http://audimodal:8080"),
-			APIKey:               getEnv("AUDIMODAL_API_KEY", ""),
-			Enabled:              getEnvBool("AUDIMODAL_ENABLED", true),
-			DefaultStrategy:      getEnv("AUDIMODAL_DEFAULT_STRATEGY", "semantic"),
-			TenantManagement:     getEnvBool("AUDIMODAL_TENANT_MANAGEMENT", true),
-			ProcessingTimeout:    getEnvInt("AUDIMODAL_PROCESSING_TIMEOUT", 300),
-			RetryAttempts:        getEnvInt("AUDIMODAL_RETRY_ATTEMPTS", 3),
-			EnableWebhooks:       getEnvBool("AUDIMODAL_ENABLE_WEBHOOKS", true),
-			WebhookSecret:        getEnv("AUDIMODAL_WEBHOOK_SECRET", ""),
-			MaxConcurrentFiles:   getEnvInt("AUDIMODAL_MAX_CONCURRENT_FILES", 5),
-			ChunkSizeLimit:       getEnvInt("AUDIMODAL_CHUNK_SIZE_LIMIT", 4096),
+			BaseURL:            getEnv("AUDIMODAL_BASE_URL", "http://audimodal:8080"),
+			APIKey:             getEnv("AUDIMODAL_API_KEY", ""),
+			Enabled:            getEnvBool("AUDIMODAL_ENABLED", true),
+			DefaultStrategy:    getEnv("AUDIMODAL_DEFAULT_STRATEGY", "semantic"),
+			TenantManagement:   getEnvBool("AUDIMODAL_TENANT_MANAGEMENT", true),
+			ProcessingTimeout:  getEnvInt("AUDIMODAL_PROCESSING_TIMEOUT", 300),
+			RetryAttempts:      getEnvInt("AUDIMODAL_RETRY_ATTEMPTS", 3),
+			EnableWebhooks:     getEnvBool("AUDIMODAL_ENABLE_WEBHOOKS", true),
+			WebhookSecret:      getEnv("AUDIMODAL_WEBHOOK_SECRET", ""),
+			MaxConcurrentFiles: getEnvInt("AUDIMODAL_MAX_CONCURRENT_FILES", 5),
+			ChunkSizeLimit:     getEnvInt("AUDIMODAL_CHUNK_SIZE_LIMIT", 4096),
 		},
 		Embedding: EmbeddingConfig{
 			Provider:           getEnv("EMBEDDING_PROVIDER", "openai"),

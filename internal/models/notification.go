@@ -7,7 +7,7 @@ type Notification struct {
 	ID        string                 `json:"id" neo4j:"id"`
 	UserID    string                 `json:"user_id" neo4j:"user_id"`
 	TenantID  string                 `json:"tenant_id" neo4j:"tenant_id"`
-	Type      string                 `json:"type" neo4j:"type"`       // success, info, warning, error
+	Type      string                 `json:"type" neo4j:"type"` // success, info, warning, error
 	Title     string                 `json:"title" neo4j:"title"`
 	Message   string                 `json:"message" neo4j:"message"`
 	Source    string                 `json:"source" neo4j:"source"`
@@ -18,11 +18,11 @@ type Notification struct {
 
 // CreateNotificationRequest is the request body for creating a notification
 type CreateNotificationRequest struct {
-	UserID  string                 `json:"user_id" binding:"required"`
-	Type    string                 `json:"type" binding:"required,oneof=success info warning error"`
-	Title   string                 `json:"title" binding:"required"`
-	Message string                 `json:"message" binding:"required"`
-	Source  string                 `json:"source"`
+	UserID   string                 `json:"user_id" binding:"required"`
+	Type     string                 `json:"type" binding:"required,oneof=success info warning error"`
+	Title    string                 `json:"title" binding:"required"`
+	Message  string                 `json:"message" binding:"required"`
+	Source   string                 `json:"source"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 

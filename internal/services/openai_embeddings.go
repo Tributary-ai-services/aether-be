@@ -130,7 +130,7 @@ func (p *OpenAIEmbeddingProvider) GenerateEmbedding(ctx context.Context, text st
 	}
 
 	embedding := response.Data[0].Embedding
-	
+
 	p.log.Debug("Generated OpenAI embedding",
 		zap.Int("dimensions", len(embedding)),
 		zap.Int("prompt_tokens", response.Usage.PromptTokens),
@@ -149,7 +149,7 @@ func (p *OpenAIEmbeddingProvider) GenerateBatchEmbeddings(ctx context.Context, t
 	// Filter out empty texts
 	nonEmptyTexts := make([]string, 0, len(texts))
 	textIndices := make([]int, 0, len(texts))
-	
+
 	for i, text := range texts {
 		if text != "" {
 			nonEmptyTexts = append(nonEmptyTexts, text)
@@ -216,7 +216,7 @@ func (p *OpenAIEmbeddingProvider) GenerateBatchEmbeddings(ctx context.Context, t
 
 	// Create result array with proper indexing
 	result := make([][]float32, len(texts))
-	
+
 	for _, dataItem := range response.Data {
 		if dataItem.Index < len(textIndices) {
 			originalIndex := textIndices[dataItem.Index]

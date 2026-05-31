@@ -16,9 +16,10 @@ import (
 
 // MCPClientService is a generic HTTP client for any MCP server
 // that follows the TAS MCP HTTP pattern:
-//   GET  /health          - Health check
-//   GET  /mcp/tools/list  - List tools
-//   POST /mcp/tools/call  - Call a tool
+//
+//	GET  /health          - Health check
+//	GET  /mcp/tools/list  - List tools
+//	POST /mcp/tools/call  - Call a tool
 type MCPClientService struct {
 	name    string
 	baseURL string

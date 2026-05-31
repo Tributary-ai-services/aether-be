@@ -1125,26 +1125,26 @@ func (s *SpaceService) recordToSpaceMember(record interface{}, spaceID string) (
 
 // InconsistencyReport represents a detected inconsistency between embedded fields and relationships
 type InconsistencyReport struct {
-	EntityType         string `json:"entity_type"`          // "notebook" or "user"
-	EntityID           string `json:"entity_id"`            // ID of the entity
-	EmbeddedSpaceID    string `json:"embedded_space_id"`    // Space ID from embedded field
-	EmbeddedTenantID   string `json:"embedded_tenant_id"`   // Tenant ID from embedded field
-	RelationshipSpace  string `json:"relationship_space"`   // Space ID from relationship
-	RelationshipTenant string `json:"relationship_tenant"`  // Tenant ID from relationship Space
-	Issue              string `json:"issue"`                // Description of the inconsistency
+	EntityType         string `json:"entity_type"`         // "notebook" or "user"
+	EntityID           string `json:"entity_id"`           // ID of the entity
+	EmbeddedSpaceID    string `json:"embedded_space_id"`   // Space ID from embedded field
+	EmbeddedTenantID   string `json:"embedded_tenant_id"`  // Tenant ID from embedded field
+	RelationshipSpace  string `json:"relationship_space"`  // Space ID from relationship
+	RelationshipTenant string `json:"relationship_tenant"` // Tenant ID from relationship Space
+	Issue              string `json:"issue"`               // Description of the inconsistency
 }
 
 // ConsistencyCheckResult contains the results of a consistency check
 type ConsistencyCheckResult struct {
-	TotalNotebooks             int                    `json:"total_notebooks"`
-	TotalUsers                 int                    `json:"total_users"`
-	InconsistentNotebooks      int                    `json:"inconsistent_notebooks"`
-	InconsistentUsers          int                    `json:"inconsistent_users"`
-	OrphanedNotebooks          int                    `json:"orphaned_notebooks"`
-	OrphanedSpaces             int                    `json:"orphaned_spaces"`
-	UsersWithoutOwnsRelation   int                    `json:"users_without_owns_relation"`
-	Inconsistencies            []*InconsistencyReport `json:"inconsistencies"`
-	CheckedAt                  time.Time              `json:"checked_at"`
+	TotalNotebooks           int                    `json:"total_notebooks"`
+	TotalUsers               int                    `json:"total_users"`
+	InconsistentNotebooks    int                    `json:"inconsistent_notebooks"`
+	InconsistentUsers        int                    `json:"inconsistent_users"`
+	OrphanedNotebooks        int                    `json:"orphaned_notebooks"`
+	OrphanedSpaces           int                    `json:"orphaned_spaces"`
+	UsersWithoutOwnsRelation int                    `json:"users_without_owns_relation"`
+	Inconsistencies          []*InconsistencyReport `json:"inconsistencies"`
+	CheckedAt                time.Time              `json:"checked_at"`
 }
 
 // CheckConsistency performs a consistency check between embedded fields and relationships

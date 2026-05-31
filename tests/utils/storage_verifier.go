@@ -20,10 +20,10 @@ import (
 
 // StorageVerifier provides methods to verify file storage in MinIO and DeepLake
 type StorageVerifier struct {
-	s3Client      *s3.S3
-	bucketName    string
-	deeplakeURL   string
-	httpClient    *http.Client
+	s3Client    *s3.S3
+	bucketName  string
+	deeplakeURL string
+	httpClient  *http.Client
 }
 
 // NewStorageVerifier creates a new storage verifier
@@ -136,7 +136,7 @@ func (sv *StorageVerifier) VerifyEmbeddingsInDeepLake(t *testing.T, documentID s
 
 	// Query DeepLake for embeddings
 	url := fmt.Sprintf("%s/api/v1/embeddings?document_id=%s", sv.deeplakeURL, documentID)
-	
+
 	req, err := http.NewRequest("GET", url, nil)
 	require.NoError(t, err)
 
@@ -152,7 +152,7 @@ func (sv *StorageVerifier) VerifyEmbeddingsInDeepLake(t *testing.T, documentID s
 	require.NoError(t, err, "Should be able to parse embeddings response")
 
 	// Verify embedding count
-	require.GreaterOrEqual(t, len(embeddings), expectedChunks, 
+	require.GreaterOrEqual(t, len(embeddings), expectedChunks,
 		"Should have at least %d embeddings, got %d", expectedChunks, len(embeddings))
 
 	// Verify embedding structure
@@ -174,7 +174,7 @@ func (sv *StorageVerifier) VerifyEmbeddingSearch(t *testing.T, query string, doc
 
 	// Perform similarity search
 	url := fmt.Sprintf("%s/api/v1/embeddings/search", sv.deeplakeURL)
-	
+
 	searchPayload := map[string]interface{}{
 		"query":       query,
 		"document_id": documentID,
@@ -194,7 +194,7 @@ func (sv *StorageVerifier) VerifyEmbeddingSearch(t *testing.T, query string, doc
 		Query   string              `json:"query"`
 		Count   int                 `json:"count"`
 	}
-	
+
 	err = parseJSONResponse(resp.Body, &searchResults)
 	require.NoError(t, err, "Should be able to parse search results")
 
@@ -206,7 +206,7 @@ func (sv *StorageVerifier) VerifyEmbeddingSearch(t *testing.T, query string, doc
 	for i, result := range searchResults.Results {
 		require.NotEmpty(t, result.ID, "Search result %d should have ID", i)
 		require.Equal(t, documentID, result.DocumentID, "Search result %d should match document ID", i)
-		
+
 		// Verify metadata contains similarity score
 		similarity, ok := result.Metadata["similarity_score"]
 		require.True(t, ok, "Search result %d should have similarity score", i)
@@ -222,7 +222,7 @@ func (sv *StorageVerifier) VerifyNoEmbeddingsInDeepLake(t *testing.T, documentID
 	t.Helper()
 
 	url := fmt.Sprintf("%s/api/v1/embeddings?document_id=%s", sv.deeplakeURL, documentID)
-	
+
 	req, err := http.NewRequest("GET", url, nil)
 	require.NoError(t, err)
 
@@ -237,7 +237,7 @@ func (sv *StorageVerifier) VerifyNoEmbeddingsInDeepLake(t *testing.T, documentID
 		require.Empty(t, embeddings, "Should have no embeddings for document %s", documentID)
 	} else {
 		// 404 is also acceptable - no embeddings found
-		require.Equal(t, http.StatusNotFound, resp.StatusCode, 
+		require.Equal(t, http.StatusNotFound, resp.StatusCode,
 			"Expected 200 (empty) or 404 for document %s embeddings", documentID)
 	}
 
@@ -250,7 +250,7 @@ func (sv *StorageVerifier) VerifyStorageCleanup(t *testing.T, documentID string)
 
 	// List all objects with the document prefix
 	prefix := fmt.Sprintf("documents/%s/", documentID)
-	
+
 	listResp, err := sv.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket: aws.String(sv.bucketName),
 		Prefix: aws.String(prefix),
@@ -303,7 +303,7 @@ func parseJSONResponse(body io.Reader, target interface{}) error {
 
 func (sv *StorageVerifier) makeJSONRequest(method, url string, payload interface{}) (*http.Response, error) {
 	var body io.Reader
-	
+
 	if payload != nil {
 		jsonData, err := json.Marshal(payload)
 		if err != nil {

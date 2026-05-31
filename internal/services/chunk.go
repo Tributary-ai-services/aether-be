@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/zap"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.uber.org/zap"
 
 	"github.com/Tributary-ai-services/aether-be/internal/database"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
@@ -32,7 +32,7 @@ func NewChunkService(neo4j *database.Neo4jClient, logger *logger.Logger) *ChunkS
 // CreateChunk creates a new chunk
 func (s *ChunkService) CreateChunk(ctx context.Context, req models.ChunkCreateRequest, tenantID string) (*models.Chunk, error) {
 	chunk := models.NewChunk(req, tenantID)
-	
+
 	// Create chunk in Neo4j
 	query := `
 		CREATE (c:Chunk {
@@ -66,48 +66,48 @@ func (s *ChunkService) CreateChunk(ctx context.Context, req models.ChunkCreateRe
 		})
 		RETURN c
 	`
-	
+
 	params := map[string]interface{}{
-		"id":                   chunk.ID,
-		"tenant_id":            chunk.TenantID,
-		"file_id":              chunk.FileID,
-		"chunk_id":             chunk.ChunkID,
-		"chunk_type":           chunk.ChunkType,
-		"chunk_number":         chunk.ChunkNumber,
-		"content":              chunk.Content,
-		"content_hash":         chunk.ContentHash,
-		"size_bytes":           chunk.SizeBytes,
-		"processed_at":         chunk.ProcessedAt.Format(time.RFC3339),
-		"processed_by":         chunk.ProcessedBy,
-		"processing_time":      chunk.ProcessingTime,
-		"quality":              serializeQualityMetrics(chunk.Quality),
-		"language":             chunk.Language,
-		"language_confidence":  chunk.LanguageConf,
-		"content_category":     chunk.ContentCategory,
-		"sensitivity_level":    chunk.SensitivityLevel,
-		"classifications":      chunk.Classifications,
-		"embedding_status":     chunk.EmbeddingStatus,
-		"pii_detected":         chunk.PIIDetected,
-		"compliance_flags":     serializeStringSlice(chunk.ComplianceFlags),
-		"dlp_scan_status":      chunk.DLPScanStatus,
-		"context":              serializeStringMap(chunk.Context),
-		"schema_info":          serializeInterfaceMap(chunk.SchemaInfo),
-		"metadata":             serializeInterfaceMap(chunk.Metadata),
-		"created_at":           chunk.CreatedAt.Format(time.RFC3339),
-		"updated_at":           chunk.UpdatedAt.Format(time.RFC3339),
+		"id":                  chunk.ID,
+		"tenant_id":           chunk.TenantID,
+		"file_id":             chunk.FileID,
+		"chunk_id":            chunk.ChunkID,
+		"chunk_type":          chunk.ChunkType,
+		"chunk_number":        chunk.ChunkNumber,
+		"content":             chunk.Content,
+		"content_hash":        chunk.ContentHash,
+		"size_bytes":          chunk.SizeBytes,
+		"processed_at":        chunk.ProcessedAt.Format(time.RFC3339),
+		"processed_by":        chunk.ProcessedBy,
+		"processing_time":     chunk.ProcessingTime,
+		"quality":             serializeQualityMetrics(chunk.Quality),
+		"language":            chunk.Language,
+		"language_confidence": chunk.LanguageConf,
+		"content_category":    chunk.ContentCategory,
+		"sensitivity_level":   chunk.SensitivityLevel,
+		"classifications":     chunk.Classifications,
+		"embedding_status":    chunk.EmbeddingStatus,
+		"pii_detected":        chunk.PIIDetected,
+		"compliance_flags":    serializeStringSlice(chunk.ComplianceFlags),
+		"dlp_scan_status":     chunk.DLPScanStatus,
+		"context":             serializeStringMap(chunk.Context),
+		"schema_info":         serializeInterfaceMap(chunk.SchemaInfo),
+		"metadata":            serializeInterfaceMap(chunk.Metadata),
+		"created_at":          chunk.CreatedAt.Format(time.RFC3339),
+		"updated_at":          chunk.UpdatedAt.Format(time.RFC3339),
 	}
-	
+
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to create chunk", zap.Error(err))
 		return nil, errors.Database("Failed to create chunk", err)
 	}
-	
+
 	s.logger.Info("Chunk created successfully",
 		zap.String("chunk_id", chunk.ID),
 		zap.String("file_id", chunk.FileID),
 		zap.String("chunk_type", chunk.ChunkType))
-	
+
 	return chunk, nil
 }
 
@@ -124,24 +124,24 @@ func (s *ChunkService) GetChunkByID(ctx context.Context, chunkID string, tenantI
 		       c.context, c.schema_info, c.metadata,
 		       c.created_at, c.updated_at
 	`
-	
+
 	params := map[string]interface{}{
 		"chunk_id":  chunkID,
 		"tenant_id": tenantID,
 	}
-	
+
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to get chunk by ID", zap.String("chunk_id", chunkID), zap.Error(err))
 		return nil, errors.Database("Failed to retrieve chunk", err)
 	}
-	
+
 	if len(result.Records) == 0 {
 		return nil, errors.NotFoundWithDetails("Chunk not found", map[string]interface{}{
 			"chunk_id": chunkID,
 		})
 	}
-	
+
 	return s.recordToChunk(result.Records[0])
 }
 
@@ -154,7 +154,7 @@ func (s *ChunkService) ListChunksByFile(ctx context.Context, fileID string, tena
 	if offset < 0 {
 		offset = 0
 	}
-	
+
 	query := `
 		MATCH (c:Chunk {file_id: $file_id, tenant_id: $tenant_id})
 		RETURN c.id, c.file_id, c.chunk_id, c.chunk_type, c.chunk_number,
@@ -169,44 +169,44 @@ func (s *ChunkService) ListChunksByFile(ctx context.Context, fileID string, tena
 		SKIP $offset
 		LIMIT $limit
 	`
-	
+
 	params := map[string]interface{}{
 		"file_id":   fileID,
 		"tenant_id": tenantID,
 		"limit":     limit + 1, // Get one extra to check if there are more
 		"offset":    offset,
 	}
-	
+
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to list chunks", zap.Error(err))
 		return nil, errors.Database("Failed to list chunks", err)
 	}
-	
+
 	chunks := make([]*models.ChunkResponse, 0, len(result.Records))
 	hasMore := false
-	
+
 	for i, record := range result.Records {
 		if i >= limit {
 			hasMore = true
 			break
 		}
-		
+
 		chunk, err := s.recordToChunk(record)
 		if err != nil {
 			s.logger.Error("Failed to parse chunk record", zap.Error(err))
 			continue
 		}
-		
+
 		chunks = append(chunks, chunk.ToResponse())
 	}
-	
+
 	// Get total count
 	countQuery := `
 		MATCH (c:Chunk {file_id: $file_id, tenant_id: $tenant_id})
 		RETURN count(c) as total
 	`
-	
+
 	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{
 		"file_id":   fileID,
 		"tenant_id": tenantID,
@@ -215,7 +215,7 @@ func (s *ChunkService) ListChunksByFile(ctx context.Context, fileID string, tena
 		s.logger.Error("Failed to get chunk count", zap.Error(err))
 		return nil, errors.Database("Failed to get chunk count", err)
 	}
-	
+
 	total := 0
 	if len(countResult.Records) > 0 {
 		if totalValue, found := countResult.Records[0].Get("total"); found {
@@ -224,7 +224,7 @@ func (s *ChunkService) ListChunksByFile(ctx context.Context, fileID string, tena
 			}
 		}
 	}
-	
+
 	return &models.ChunkListResponse{
 		Chunks:  chunks,
 		Total:   total,
@@ -243,7 +243,7 @@ func (s *ChunkService) SearchChunks(ctx context.Context, req models.ChunkSearchR
 	if req.Offset < 0 {
 		req.Offset = 0
 	}
-	
+
 	// Build query conditions
 	whereConditions := []string{"c.tenant_id = $tenant_id"}
 	params := map[string]interface{}{
@@ -251,47 +251,47 @@ func (s *ChunkService) SearchChunks(ctx context.Context, req models.ChunkSearchR
 		"limit":     req.Limit + 1,
 		"offset":    req.Offset,
 	}
-	
+
 	if req.Query != "" {
 		whereConditions = append(whereConditions, "c.content CONTAINS $query")
 		params["query"] = req.Query
 	}
-	
+
 	if req.FileID != "" {
 		whereConditions = append(whereConditions, "c.file_id = $file_id")
 		params["file_id"] = req.FileID
 	}
-	
+
 	if req.ChunkType != "" {
 		whereConditions = append(whereConditions, "c.chunk_type = $chunk_type")
 		params["chunk_type"] = req.ChunkType
 	}
-	
+
 	if req.ContentCategory != "" {
 		whereConditions = append(whereConditions, "c.content_category = $content_category")
 		params["content_category"] = req.ContentCategory
 	}
-	
+
 	if req.Language != "" {
 		whereConditions = append(whereConditions, "c.language = $language")
 		params["language"] = req.Language
 	}
-	
+
 	if req.PIIDetected != nil {
 		whereConditions = append(whereConditions, "c.pii_detected = $pii_detected")
 		params["pii_detected"] = *req.PIIDetected
 	}
-	
+
 	if req.DLPScanStatus != "" {
 		whereConditions = append(whereConditions, "c.dlp_scan_status = $dlp_scan_status")
 		params["dlp_scan_status"] = req.DLPScanStatus
 	}
-	
+
 	whereClause := "WHERE " + fmt.Sprintf("(%s)", whereConditions[0])
 	for i := 1; i < len(whereConditions); i++ {
 		whereClause += " AND " + fmt.Sprintf("(%s)", whereConditions[i])
 	}
-	
+
 	query := fmt.Sprintf(`
 		MATCH (c:Chunk)
 		%s
@@ -307,31 +307,31 @@ func (s *ChunkService) SearchChunks(ctx context.Context, req models.ChunkSearchR
 		SKIP $offset
 		LIMIT $limit
 	`, whereClause)
-	
+
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to search chunks", zap.Error(err))
 		return nil, errors.Database("Failed to search chunks", err)
 	}
-	
+
 	chunks := make([]*models.ChunkResponse, 0, len(result.Records))
 	hasMore := false
-	
+
 	for i, record := range result.Records {
 		if i >= req.Limit {
 			hasMore = true
 			break
 		}
-		
+
 		chunk, err := s.recordToChunk(record)
 		if err != nil {
 			s.logger.Error("Failed to parse chunk record", zap.Error(err))
 			continue
 		}
-		
+
 		chunks = append(chunks, chunk.ToResponse())
 	}
-	
+
 	return &models.ChunkListResponse{
 		Chunks:  chunks,
 		Total:   len(chunks), // For search, we don't compute exact total
@@ -348,10 +348,10 @@ func (s *ChunkService) UpdateChunk(ctx context.Context, chunkID string, req mode
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Update chunk fields
 	chunk.Update(req)
-	
+
 	// Update in Neo4j
 	query := `
 		MATCH (c:Chunk {id: $chunk_id, tenant_id: $tenant_id})
@@ -366,29 +366,29 @@ func (s *ChunkService) UpdateChunk(ctx context.Context, chunkID string, req mode
 		    c.updated_at = datetime($updated_at)
 		RETURN c
 	`
-	
+
 	params := map[string]interface{}{
-		"chunk_id":             chunkID,
-		"tenant_id":            tenantID,
-		"content":              chunk.Content,
-		"quality":              serializeQualityMetrics(chunk.Quality),
-		"language":             chunk.Language,
-		"language_confidence":  chunk.LanguageConf,
-		"content_category":     chunk.ContentCategory,
-		"classifications":      chunk.Classifications,
-		"context":              serializeStringMap(chunk.Context),
-		"metadata":             serializeInterfaceMap(chunk.Metadata),
-		"updated_at":           chunk.UpdatedAt.Format(time.RFC3339),
+		"chunk_id":            chunkID,
+		"tenant_id":           tenantID,
+		"content":             chunk.Content,
+		"quality":             serializeQualityMetrics(chunk.Quality),
+		"language":            chunk.Language,
+		"language_confidence": chunk.LanguageConf,
+		"content_category":    chunk.ContentCategory,
+		"classifications":     chunk.Classifications,
+		"context":             serializeStringMap(chunk.Context),
+		"metadata":            serializeInterfaceMap(chunk.Metadata),
+		"updated_at":          chunk.UpdatedAt.Format(time.RFC3339),
 	}
-	
+
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to update chunk", zap.String("chunk_id", chunkID), zap.Error(err))
 		return nil, errors.Database("Failed to update chunk", err)
 	}
-	
+
 	s.logger.Info("Chunk updated successfully", zap.String("chunk_id", chunkID))
-	
+
 	return chunk, nil
 }
 
@@ -398,18 +398,18 @@ func (s *ChunkService) DeleteChunk(ctx context.Context, chunkID string, tenantID
 		MATCH (c:Chunk {id: $chunk_id, tenant_id: $tenant_id})
 		DETACH DELETE c
 	`
-	
+
 	params := map[string]interface{}{
 		"chunk_id":  chunkID,
 		"tenant_id": tenantID,
 	}
-	
+
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to delete chunk", zap.String("chunk_id", chunkID), zap.Error(err))
 		return errors.Database("Failed to delete chunk", err)
 	}
-	
+
 	s.logger.Info("Chunk deleted successfully", zap.String("chunk_id", chunkID))
 	return nil
 }
@@ -424,7 +424,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 	}
 
 	chunk := &models.Chunk{}
-	
+
 	// Parse basic fields
 	if id, found := rec.Get("c.id"); found && id != nil {
 		chunk.ID = id.(string)
@@ -457,7 +457,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 			chunk.SizeBytes = size
 		}
 	}
-	
+
 	// Parse position information
 	if startPos, found := rec.Get("c.start_position"); found && startPos != nil {
 		if pos, ok := startPos.(int64); ok {
@@ -481,7 +481,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 			chunk.LineNumber = &lineInt
 		}
 	}
-	
+
 	// Parse processing information
 	if processedAt, found := rec.Get("c.processed_at"); found && processedAt != nil {
 		if timeStr, ok := processedAt.(string); ok {
@@ -498,7 +498,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 			chunk.ProcessingTime = pt
 		}
 	}
-	
+
 	// Parse quality metrics (stored as JSON string)
 	if qualityStr, found := rec.Get("c.quality"); found && qualityStr != nil {
 		// Parse quality JSON - simplified for now
@@ -508,7 +508,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 			Uniqueness:   0.8,
 		}
 	}
-	
+
 	// Parse content analysis fields
 	if language, found := rec.Get("c.language"); found && language != nil {
 		chunk.Language = language.(string)
@@ -524,7 +524,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 	if sensitivityLevel, found := rec.Get("c.sensitivity_level"); found && sensitivityLevel != nil {
 		chunk.SensitivityLevel = sensitivityLevel.(string)
 	}
-	
+
 	// Parse embedding information
 	if embeddingStatus, found := rec.Get("c.embedding_status"); found && embeddingStatus != nil {
 		chunk.EmbeddingStatus = embeddingStatus.(string)
@@ -532,7 +532,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 	if embeddingModel, found := rec.Get("c.embedding_model"); found && embeddingModel != nil {
 		chunk.EmbeddingModel = embeddingModel.(string)
 	}
-	
+
 	// Parse compliance fields
 	if piiDetected, found := rec.Get("c.pii_detected"); found && piiDetected != nil {
 		if pii, ok := piiDetected.(bool); ok {
@@ -550,7 +550,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 	if dlpScanResult, found := rec.Get("c.dlp_scan_result"); found && dlpScanResult != nil {
 		chunk.DLPScanResult = dlpScanResult.(string)
 	}
-	
+
 	// Parse timestamps
 	if createdAt, found := rec.Get("c.created_at"); found && createdAt != nil {
 		if timeStr, ok := createdAt.(string); ok {
@@ -566,7 +566,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 			}
 		}
 	}
-	
+
 	// Initialize maps if nil
 	if chunk.Context == nil {
 		chunk.Context = make(map[string]string)
@@ -577,7 +577,7 @@ func (s *ChunkService) recordToChunk(record interface{}) (*models.Chunk, error) 
 	if chunk.Metadata == nil {
 		chunk.Metadata = make(map[string]interface{})
 	}
-	
+
 	return chunk, nil
 }
 

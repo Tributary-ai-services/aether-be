@@ -16,41 +16,41 @@ import (
 
 // ComplianceService handles data compliance scanning and validation
 type ComplianceService struct {
-	log              *logger.Logger
-	config           *config.ComplianceConfig
-	piiDetector      *PIIDetector
-	gdprScanner      *GDPRScanner
-	hipaaScanner     *HIPAAScanner
+	log                  *logger.Logger
+	config               *config.ComplianceConfig
+	piiDetector          *PIIDetector
+	gdprScanner          *GDPRScanner
+	hipaaScanner         *HIPAAScanner
 	classificationEngine *DataClassificationEngine
 }
 
 // ComplianceResult represents the result of compliance scanning
 type ComplianceResult struct {
-	ChunkID           string                 `json:"chunk_id"`
-	PIIDetected       bool                   `json:"pii_detected"`
-	PIIDetails        []PIIMatch             `json:"pii_details,omitempty"`
-	ComplianceFlags   []string               `json:"compliance_flags"`
+	ChunkID            string                 `json:"chunk_id"`
+	PIIDetected        bool                   `json:"pii_detected"`
+	PIIDetails         []PIIMatch             `json:"pii_details,omitempty"`
+	ComplianceFlags    []string               `json:"compliance_flags"`
 	DataClassification DataClassification     `json:"data_classification"`
-	RiskLevel         string                 `json:"risk_level"`
-	RequiredActions   []string               `json:"required_actions,omitempty"`
-	ScanTimestamp     time.Time              `json:"scan_timestamp"`
-	Metadata          map[string]interface{} `json:"metadata,omitempty"`
+	RiskLevel          string                 `json:"risk_level"`
+	RequiredActions    []string               `json:"required_actions,omitempty"`
+	ScanTimestamp      time.Time              `json:"scan_timestamp"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // PIIMatch represents a detected PII instance
 type PIIMatch struct {
-	Type       string  `json:"type"`        // email, ssn, phone, etc.
-	Value      string  `json:"value"`       // Masked/redacted value
-	Position   int     `json:"position"`    // Position in text
-	Confidence float64 `json:"confidence"`  // Detection confidence (0-1)
-	Context    string  `json:"context"`     // Surrounding context
+	Type       string  `json:"type"`       // email, ssn, phone, etc.
+	Value      string  `json:"value"`      // Masked/redacted value
+	Position   int     `json:"position"`   // Position in text
+	Confidence float64 `json:"confidence"` // Detection confidence (0-1)
+	Context    string  `json:"context"`    // Surrounding context
 }
 
 // DataClassification represents data classification results
 type DataClassification struct {
-	Level         string   `json:"level"`         // public, internal, confidential, restricted
-	Categories    []string `json:"categories"`    // personal, financial, health, etc.
-	Regulations   []string `json:"regulations"`   // GDPR, HIPAA, CCPA, etc.
+	Level         string   `json:"level"`          // public, internal, confidential, restricted
+	Categories    []string `json:"categories"`     // personal, financial, health, etc.
+	Regulations   []string `json:"regulations"`    // GDPR, HIPAA, CCPA, etc.
 	RetentionDays int      `json:"retention_days"` // Data retention requirement
 }
 
@@ -168,7 +168,7 @@ func (s *ComplianceService) ScanChunk(ctx context.Context, chunk *models.Chunk) 
 // BatchScanChunks performs compliance scanning on multiple chunks
 func (s *ComplianceService) BatchScanChunks(ctx context.Context, chunks []*models.Chunk) ([]*ComplianceResult, error) {
 	results := make([]*ComplianceResult, len(chunks))
-	
+
 	for i, chunk := range chunks {
 		result, err := s.ScanChunk(ctx, chunk)
 		if err != nil {
@@ -245,12 +245,12 @@ func (s *ComplianceService) determineRequiredActions(result *ComplianceResult) [
 // NewPIIDetector creates a new PII detector
 func NewPIIDetector(log *logger.Logger) *PIIDetector {
 	patterns := map[string]*regexp.Regexp{
-		"email":        regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`),
-		"ssn":          regexp.MustCompile(`\b\d{3}-?\d{2}-?\d{4}\b`),
-		"phone":        regexp.MustCompile(`\b\d{3}[-.]?\d{3}[-.]?\d{4}\b`),
-		"credit_card":  regexp.MustCompile(`\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b`),
-		"ip_address":   regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),
-		"passport":     regexp.MustCompile(`\b[A-Z]{1,2}\d{6,9}\b`),
+		"email":          regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`),
+		"ssn":            regexp.MustCompile(`\b\d{3}-?\d{2}-?\d{4}\b`),
+		"phone":          regexp.MustCompile(`\b\d{3}[-.]?\d{3}[-.]?\d{4}\b`),
+		"credit_card":    regexp.MustCompile(`\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b`),
+		"ip_address":     regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),
+		"passport":       regexp.MustCompile(`\b[A-Z]{1,2}\d{6,9}\b`),
 		"driver_license": regexp.MustCompile(`\b[A-Z]{1,2}\d{6,8}\b`),
 	}
 
@@ -269,10 +269,10 @@ func (d *PIIDetector) DetectPII(text string) ([]PIIMatch, error) {
 		for _, match := range found {
 			start, end := match[0], match[1]
 			value := text[start:end]
-			
+
 			// Mask the value for logging/storage
 			maskedValue := d.maskValue(value, piiType)
-			
+
 			// Get context (10 characters before and after)
 			contextStart := maxInt(0, start-10)
 			contextEnd := minInt(len(text), end+10)
@@ -464,7 +464,7 @@ func NewDataClassificationEngine(log *logger.Logger) *DataClassificationEngine {
 // ClassifyData classifies data based on content and context
 func (e *DataClassificationEngine) ClassifyData(content string, metadata map[string]interface{}) DataClassification {
 	lowerContent := strings.ToLower(content)
-	
+
 	classification := DataClassification{
 		Level:         "public",
 		Categories:    []string{},
@@ -488,11 +488,11 @@ func (e *DataClassificationEngine) ClassifyData(content string, metadata map[str
 				if e.isHigherLevel(rule.Level, classification.Level) {
 					classification.Level = rule.Level
 				}
-				
+
 				// Add categories and regulations
 				classification.Categories = append(classification.Categories, rule.Categories...)
 				classification.Regulations = append(classification.Regulations, rule.Regulations...)
-				
+
 				// Adjust retention based on category
 				if category == "health" {
 					classification.RetentionDays = 2555 // 7 years for health data

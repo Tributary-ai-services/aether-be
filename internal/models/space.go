@@ -25,13 +25,13 @@ const (
 // Space represents a top-level isolation boundary (Neo4j node)
 type Space struct {
 	// Identity
-	ID       string `json:"id" validate:"required"`       // "space_<timestamp>"
+	ID       string `json:"id" validate:"required"`        // "space_<timestamp>"
 	TenantID string `json:"tenant_id" validate:"required"` // "tenant_<timestamp>" - cross-service identifier
 
 	// Cross-Service Mapping
 	AudimodalTenantID string `json:"audimodal_tenant_id,omitempty"` // UUID returned by AudiModal on tenant creation
 	DeeplakeNamespace string `json:"deeplake_namespace,omitempty"`  // Same as TenantID (for clarity)
-	DeeplakeAPIKey    string `json:"-"`                              // API key with tenant_id embedded (not serialized)
+	DeeplakeAPIKey    string `json:"-"`                             // API key with tenant_id embedded (not serialized)
 
 	// Display
 	Name        string `json:"name" validate:"required,min=1,max=100"`
@@ -75,8 +75,8 @@ type SpaceQuotas struct {
 type SpaceMemberDTO struct {
 	UserID      string    `json:"user_id"`
 	SpaceID     string    `json:"space_id"`
-	Role        string    `json:"role"`                   // "owner", "admin", "member", "viewer"
-	Permissions []string  `json:"permissions,omitempty"`  // Explicit permissions
+	Role        string    `json:"role"`                  // "owner", "admin", "member", "viewer"
+	Permissions []string  `json:"permissions,omitempty"` // Explicit permissions
 	JoinedAt    time.Time `json:"joined_at"`
 	InvitedBy   string    `json:"invited_by,omitempty"`
 
@@ -150,18 +150,18 @@ func NewSpace(name, description string, spaceType SpaceType, ownerID string, own
 	timestamp := now.Unix()
 
 	space := &Space{
-		ID:       fmt.Sprintf("space_%d", timestamp),
-		TenantID: fmt.Sprintf("tenant_%d", timestamp),
-		Name:     name,
+		ID:          fmt.Sprintf("space_%d", timestamp),
+		TenantID:    fmt.Sprintf("tenant_%d", timestamp),
+		Name:        name,
 		Description: description,
-		Type:       spaceType,
-		Visibility: "private",
-		OwnerID:    ownerID,
-		OwnerType:  ownerType,
-		Status:     SpaceStatusActive,
-		Quotas:     DefaultSpaceQuotas(spaceType),
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		Type:        spaceType,
+		Visibility:  "private",
+		OwnerID:     ownerID,
+		OwnerType:   ownerType,
+		Status:      SpaceStatusActive,
+		Quotas:      DefaultSpaceQuotas(spaceType),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// Set DeeplakeNamespace to match TenantID
@@ -430,17 +430,17 @@ func HasPermissionLevel(granted, required string) bool {
 func DefaultSpaceSettings(spaceType SpaceType) map[string]interface{} {
 	if spaceType == SpaceTypePersonal {
 		return map[string]interface{}{
-			"allowSharing":     true,
+			"allowSharing":              true,
 			"defaultNotebookVisibility": "private",
 		}
 	}
 	// Organization space defaults
 	return map[string]interface{}{
-		"membersCanCreateNotebooks":    true,
-		"membersCanInvite":             false,
-		"defaultNotebookVisibility":    "private",
-		"allowExternalSharing":         false,
-		"requireApprovalForJoining":    true,
-		"twoFactorRequired":            false,
+		"membersCanCreateNotebooks": true,
+		"membersCanInvite":          false,
+		"defaultNotebookVisibility": "private",
+		"allowExternalSharing":      false,
+		"requireApprovalForJoining": true,
+		"twoFactorRequired":         false,
 	}
 }

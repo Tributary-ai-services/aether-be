@@ -18,9 +18,9 @@ import (
 
 // OrganizationService handles organization-related business logic
 type OrganizationService struct {
-	neo4j       *database.Neo4jClient
-	audiModal   *AudiModalService
-	logger      *logger.Logger
+	neo4j     *database.Neo4jClient
+	audiModal *AudiModalService
+	logger    *logger.Logger
 }
 
 // NewOrganizationService creates a new organization service
@@ -133,8 +133,8 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 
 		// Store tenant information in organization
 		org.SetTenantInfo(tenant.TenantID, tenant.APIKey)
-		s.logger.Info("Successfully created tenant for organization", 
-			zap.String("org_id", org.ID), 
+		s.logger.Info("Successfully created tenant for organization",
+			zap.String("org_id", org.ID),
 			zap.String("tenant_id", tenant.TenantID))
 	}
 
@@ -174,21 +174,21 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, req models
 	}
 
 	params := map[string]interface{}{
-		"id":              org.ID,
-		"name":            org.Name,
-		"slug":            org.Slug,
-		"description":     org.Description,
-		"avatar_url":      org.AvatarURL,
-		"website":         org.Website,
-		"location":        org.Location,
-		"visibility":      org.Visibility,
-		"tenant_id":       org.TenantID,
-		"tenant_api_key":  org.TenantAPIKey,
-		"billing":         billingJSON,
-		"settings":        settingsJSON,
-		"created_by":      org.CreatedBy,
-		"created_at":      org.CreatedAt.Format(time.RFC3339),
-		"updated_at":      org.UpdatedAt.Format(time.RFC3339),
+		"id":             org.ID,
+		"name":           org.Name,
+		"slug":           org.Slug,
+		"description":    org.Description,
+		"avatar_url":     org.AvatarURL,
+		"website":        org.Website,
+		"location":       org.Location,
+		"visibility":     org.Visibility,
+		"tenant_id":      org.TenantID,
+		"tenant_api_key": org.TenantAPIKey,
+		"billing":        billingJSON,
+		"settings":       settingsJSON,
+		"created_by":     org.CreatedBy,
+		"created_at":     org.CreatedAt.Format(time.RFC3339),
+		"updated_at":     org.UpdatedAt.Format(time.RFC3339),
 	}
 
 	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
@@ -1135,8 +1135,8 @@ func (s *OrganizationService) InviteOrganizationMember(ctx context.Context, orgI
 
 	member.Email = req.Email
 
-	s.logger.Info("Organization member invited successfully", 
-		zap.String("org_id", orgID), 
+	s.logger.Info("Organization member invited successfully",
+		zap.String("org_id", orgID),
 		zap.String("user_id", targetUserID.(string)),
 		zap.String("invited_by", invitedBy))
 
@@ -1202,7 +1202,7 @@ func (s *OrganizationService) UpdateOrganizationMemberRole(ctx context.Context, 
 	})
 
 	if err != nil {
-		s.logger.Error("Failed to update organization member role", zap.Error(err), 
+		s.logger.Error("Failed to update organization member role", zap.Error(err),
 			zap.String("org_id", orgID), zap.String("user_id", targetUserID))
 		return errors.DatabaseWithDetails("Failed to update member role", err, map[string]interface{}{
 			"org_id":  orgID,
@@ -1218,8 +1218,8 @@ func (s *OrganizationService) UpdateOrganizationMemberRole(ctx context.Context, 
 		})
 	}
 
-	s.logger.Info("Organization member role updated successfully", 
-		zap.String("org_id", orgID), 
+	s.logger.Info("Organization member role updated successfully",
+		zap.String("org_id", orgID),
 		zap.String("user_id", targetUserID),
 		zap.String("new_role", req.Role),
 		zap.String("updated_by", updatedBy))
@@ -1283,7 +1283,7 @@ func (s *OrganizationService) RemoveOrganizationMember(ctx context.Context, orgI
 	})
 
 	if err != nil {
-		s.logger.Error("Failed to remove organization member", zap.Error(err), 
+		s.logger.Error("Failed to remove organization member", zap.Error(err),
 			zap.String("org_id", orgID), zap.String("user_id", targetUserID))
 		return errors.DatabaseWithDetails("Failed to remove member", err, map[string]interface{}{
 			"org_id":  orgID,

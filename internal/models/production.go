@@ -114,28 +114,28 @@ type ProductionCreateRequest struct {
 
 // ProductionUpdateRequest represents a request to update a production
 type ProductionUpdateRequest struct {
-	Title  *string          `json:"title,omitempty" validate:"omitempty,safe_string,min=1,max=255"`
+	Title  *string           `json:"title,omitempty" validate:"omitempty,safe_string,min=1,max=255"`
 	Status *ProductionStatus `json:"status,omitempty" validate:"omitempty,oneof=processing queued rendering completed failed retrying"`
 }
 
 // ProductionResponse represents a production response
 type ProductionResponse struct {
-	ID              string           `json:"id"`
-	Title           string           `json:"title"`
-	Type            ProductionType   `json:"type"`
-	Format          ProductionFormat `json:"format"`
-	Status          ProductionStatus `json:"status"`
-	AgentID         string           `json:"agentId"`
-	AgentBuilderID  string           `json:"agentBuilderId,omitempty"`
-	NotebookID      string           `json:"notebookId"`
-	UserID          string           `json:"userId"`
-	SpaceType       SpaceType        `json:"spaceType"`
-	SpaceID         string           `json:"spaceId"`
-	SizeBytes       int64            `json:"sizeBytes"`
-	ExecutionID     string           `json:"executionId,omitempty"`
-	TokensUsed      int              `json:"tokensUsed"`
-	CostUSD         float64          `json:"costUsd"`
-	ResponseTimeMs  int              `json:"responseTimeMs"`
+	ID              string                 `json:"id"`
+	Title           string                 `json:"title"`
+	Type            ProductionType         `json:"type"`
+	Format          ProductionFormat       `json:"format"`
+	Status          ProductionStatus       `json:"status"`
+	AgentID         string                 `json:"agentId"`
+	AgentBuilderID  string                 `json:"agentBuilderId,omitempty"`
+	NotebookID      string                 `json:"notebookId"`
+	UserID          string                 `json:"userId"`
+	SpaceType       SpaceType              `json:"spaceType"`
+	SpaceID         string                 `json:"spaceId"`
+	SizeBytes       int64                  `json:"sizeBytes"`
+	ExecutionID     string                 `json:"executionId,omitempty"`
+	TokensUsed      int                    `json:"tokensUsed"`
+	CostUSD         float64                `json:"costUsd"`
+	ResponseTimeMs  int                    `json:"responseTimeMs"`
 	ErrorMessage    string                 `json:"errorMessage,omitempty"`
 	ProgressPhase   string                 `json:"progressPhase,omitempty"`
 	RetryCount      int                    `json:"retryCount"`
@@ -147,8 +147,8 @@ type ProductionResponse struct {
 	UpdatedAt       time.Time              `json:"updatedAt"`
 
 	// Optional related data
-	Agent    *AgentResponse    `json:"agent,omitempty"`
-	Notebook *NotebookResponse `json:"notebook,omitempty"`
+	Agent    *AgentResponse      `json:"agent,omitempty"`
+	Notebook *NotebookResponse   `json:"notebook,omitempty"`
 	Owner    *PublicUserResponse `json:"owner,omitempty"`
 
 	// Content (populated when fetching single production with content)
@@ -177,11 +177,11 @@ type ProductionSearchRequest struct {
 
 // ProducerExecuteRequest represents a request to execute a producer agent
 type ProducerExecuteRequest struct {
-	AgentID         string           `json:"agent_id" validate:"required,uuid"`
-	Title           string           `json:"title" validate:"required,safe_string,min=1,max=255"`
-	Type            ProductionType   `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
-	Format          ProductionFormat `json:"format" validate:"required,oneof=markdown html json text audio"`
-	SourceDocuments []string         `json:"source_documents,omitempty" validate:"dive,uuid"`
+	AgentID         string                 `json:"agent_id" validate:"required,uuid"`
+	Title           string                 `json:"title" validate:"required,safe_string,min=1,max=255"`
+	Type            ProductionType         `json:"type" validate:"required,oneof=summary qa outline insight custom podcast"`
+	Format          ProductionFormat       `json:"format" validate:"required,oneof=markdown html json text audio"`
+	SourceDocuments []string               `json:"source_documents,omitempty" validate:"dive,uuid"`
 	Context         map[string]interface{} `json:"context,omitempty"`
 }
 
@@ -193,10 +193,10 @@ type ProducerExecuteResponse struct {
 
 // ProducerPreferences represents user preferences for producers
 type ProducerPreferences struct {
-	Pinned   *PinnedProducers         `json:"pinned,omitempty"`
-	Order    *OrderedProducers        `json:"order,omitempty"`
-	Recent   []string                 `json:"recent,omitempty"`
-	Settings *ProducerSettingsPrefs   `json:"settings,omitempty"`
+	Pinned   *PinnedProducers       `json:"pinned,omitempty"`
+	Order    *OrderedProducers      `json:"order,omitempty"`
+	Recent   []string               `json:"recent,omitempty"`
+	Settings *ProducerSettingsPrefs `json:"settings,omitempty"`
 }
 
 // PinnedProducers represents pinned producer agents at different levels
@@ -222,16 +222,16 @@ type ProducerSettingsPrefs struct {
 // UpdateProducerPreferencesRequest represents a request to update producer preferences
 type UpdateProducerPreferencesRequest struct {
 	// Pin/unpin actions
-	PinGlobal      *string `json:"pin_global,omitempty" validate:"omitempty,uuid"`      // Agent ID to pin globally
-	UnpinGlobal    *string `json:"unpin_global,omitempty" validate:"omitempty,uuid"`    // Agent ID to unpin globally
-	PinToSpace     *string `json:"pin_to_space,omitempty" validate:"omitempty,uuid"`    // Agent ID to pin to current space
-	UnpinFromSpace *string `json:"unpin_from_space,omitempty" validate:"omitempty,uuid"` // Agent ID to unpin from current space
-	PinToNotebook  *string `json:"pin_to_notebook,omitempty" validate:"omitempty,uuid"` // Agent ID to pin to specified notebook
+	PinGlobal         *string `json:"pin_global,omitempty" validate:"omitempty,uuid"`          // Agent ID to pin globally
+	UnpinGlobal       *string `json:"unpin_global,omitempty" validate:"omitempty,uuid"`        // Agent ID to unpin globally
+	PinToSpace        *string `json:"pin_to_space,omitempty" validate:"omitempty,uuid"`        // Agent ID to pin to current space
+	UnpinFromSpace    *string `json:"unpin_from_space,omitempty" validate:"omitempty,uuid"`    // Agent ID to unpin from current space
+	PinToNotebook     *string `json:"pin_to_notebook,omitempty" validate:"omitempty,uuid"`     // Agent ID to pin to specified notebook
 	UnpinFromNotebook *string `json:"unpin_from_notebook,omitempty" validate:"omitempty,uuid"` // Agent ID to unpin
 
 	// Order actions (for drag-and-drop reordering)
-	SetOrderGlobal     []string `json:"set_order_global,omitempty"`      // Set global custom order of agent IDs
-	SetOrderForSpace   []string `json:"set_order_for_space,omitempty"`   // Set custom order for a specific space
+	SetOrderGlobal      []string `json:"set_order_global,omitempty"`       // Set global custom order of agent IDs
+	SetOrderForSpace    []string `json:"set_order_for_space,omitempty"`    // Set custom order for a specific space
 	SetOrderForNotebook []string `json:"set_order_for_notebook,omitempty"` // Set custom order for a specific notebook
 
 	// Context for pin/order operations
@@ -369,8 +369,8 @@ type BulkDeleteProductionsRequest struct {
 
 // BulkDeleteProductionsResponse represents the response from a bulk delete operation
 type BulkDeleteProductionsResponse struct {
-	Deleted []string             `json:"deleted"`
-	Failed  []BulkDeleteFailure  `json:"failed,omitempty"`
+	Deleted []string            `json:"deleted"`
+	Failed  []BulkDeleteFailure `json:"failed,omitempty"`
 }
 
 // BulkDeleteFailure represents a failed deletion in a bulk operation

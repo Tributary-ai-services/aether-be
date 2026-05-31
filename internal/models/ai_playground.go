@@ -20,15 +20,15 @@ type LLMCompletionRequest struct {
 
 // LLMCompletionResponse represents the response from an LLM completion
 type LLMCompletionResponse struct {
-	ID           string         `json:"id"`
-	Provider     string         `json:"provider"`
-	Model        string         `json:"model"`
-	Content      string         `json:"content"`
-	FinishReason string         `json:"finish_reason,omitempty"`
-	Usage        *LLMUsage      `json:"usage,omitempty"`
-	Metrics      *LLMMetrics    `json:"metrics,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
+	ID           string      `json:"id"`
+	Provider     string      `json:"provider"`
+	Model        string      `json:"model"`
+	Content      string      `json:"content"`
+	FinishReason string      `json:"finish_reason,omitempty"`
+	Usage        *LLMUsage   `json:"usage,omitempty"`
+	Metrics      *LLMMetrics `json:"metrics,omitempty"`
+	Error        string      `json:"error,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
 }
 
 // LLMUsage represents token usage statistics
@@ -46,10 +46,10 @@ type LLMMetrics struct {
 
 // LLMCompareRequest represents a request to compare multiple LLM completions
 type LLMCompareRequest struct {
-	SystemPrompt string              `json:"system_prompt,omitempty"`
-	UserPrompt   string              `json:"user_prompt" validate:"required"`
-	Models       []ModelConfig       `json:"models" validate:"required,min=1,max=4"`
-	Stream       bool                `json:"stream"`
+	SystemPrompt string        `json:"system_prompt,omitempty"`
+	UserPrompt   string        `json:"user_prompt" validate:"required"`
+	Models       []ModelConfig `json:"models" validate:"required,min=1,max=4"`
+	Stream       bool          `json:"stream"`
 }
 
 // ModelConfig represents configuration for a single model in comparison
@@ -76,15 +76,15 @@ type ProviderInfo struct {
 
 // ModelInfo represents information about a specific model
 type ModelInfo struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Provider         string   `json:"provider"`
-	Description      string   `json:"description,omitempty"`
-	MaxTokens        int      `json:"max_tokens,omitempty"`
-	InputCostPer1K   float64  `json:"input_cost_per_1k,omitempty"`
-	OutputCostPer1K  float64  `json:"output_cost_per_1k,omitempty"`
-	Capabilities     []string `json:"capabilities,omitempty"`
-	Enabled          bool     `json:"enabled"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Provider        string   `json:"provider"`
+	Description     string   `json:"description,omitempty"`
+	MaxTokens       int      `json:"max_tokens,omitempty"`
+	InputCostPer1K  float64  `json:"input_cost_per_1k,omitempty"`
+	OutputCostPer1K float64  `json:"output_cost_per_1k,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+	Enabled         bool     `json:"enabled"`
 }
 
 // ======================================================================
@@ -113,33 +113,33 @@ type AgentTestResponse struct {
 
 // ExecutionStep represents a single step in an agent's execution
 type ExecutionStep struct {
-	StepNumber int        `json:"step_number"`
-	Type       string     `json:"type"` // "reasoning", "tool_call", "tool_result", "response"
-	Content    string     `json:"content"`
-	ToolCall   *ToolCall  `json:"tool_call,omitempty"`
-	TimingMs   int64      `json:"timing_ms"`
-	Timestamp  time.Time  `json:"timestamp"`
+	StepNumber int       `json:"step_number"`
+	Type       string    `json:"type"` // "reasoning", "tool_call", "tool_result", "response"
+	Content    string    `json:"content"`
+	ToolCall   *ToolCall `json:"tool_call,omitempty"`
+	TimingMs   int64     `json:"timing_ms"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 // ToolCall represents a tool invocation by an agent
 type ToolCall struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	Input     map[string]interface{} `json:"input"`
-	Output    interface{}            `json:"output,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-	DurationMs int64                 `json:"duration_ms"`
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Input      map[string]interface{} `json:"input"`
+	Output     interface{}            `json:"output,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	DurationMs int64                  `json:"duration_ms"`
 }
 
 // AgentMetrics represents performance metrics for an agent test
 type AgentMetrics struct {
-	TotalDurationMs int64   `json:"total_duration_ms"`
-	TotalTokens     int     `json:"total_tokens"`
-	PromptTokens    int     `json:"prompt_tokens"`
-	CompletionTokens int    `json:"completion_tokens"`
-	EstimatedCost   float64 `json:"estimated_cost"`
-	ToolCallCount   int     `json:"tool_call_count"`
-	StepCount       int     `json:"step_count"`
+	TotalDurationMs  int64   `json:"total_duration_ms"`
+	TotalTokens      int     `json:"total_tokens"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	EstimatedCost    float64 `json:"estimated_cost"`
+	ToolCallCount    int     `json:"tool_call_count"`
+	StepCount        int     `json:"step_count"`
 }
 
 // AgentCompareRequest represents a request to compare multiple agents
@@ -159,15 +159,15 @@ type AgentCompareResponse struct {
 
 // TestableAgent represents an agent available for testing
 type TestableAgent struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Type        string   `json:"type"` // "system", "user", "shared"
-	OwnerID     string   `json:"owner_id,omitempty"`
-	Model       string   `json:"model"`
-	Tools       []string `json:"tools,omitempty"`
-	SystemPrompt string  `json:"system_prompt,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	Type         string    `json:"type"` // "system", "user", "shared"
+	OwnerID      string    `json:"owner_id,omitempty"`
+	Model        string    `json:"model"`
+	Tools        []string  `json:"tools,omitempty"`
+	SystemPrompt string    `json:"system_prompt,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // ======================================================================
@@ -184,41 +184,41 @@ type WorkflowTestRequest struct {
 
 // WorkflowTestResponse represents the response from testing a workflow
 type WorkflowTestResponse struct {
-	WorkflowID      string                  `json:"workflow_id"`
-	WorkflowName    string                  `json:"workflow_name"`
-	Status          string                  `json:"status"` // "running", "completed", "failed", "paused"
-	CurrentStep     int                     `json:"current_step,omitempty"`
-	TotalSteps      int                     `json:"total_steps"`
-	ExecutionSteps  []WorkflowExecutionStep `json:"execution_steps"`
-	FinalOutput     interface{}             `json:"final_output,omitempty"`
-	Metrics         *WorkflowMetrics        `json:"metrics,omitempty"`
-	Error           string                  `json:"error,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	CompletedAt     *time.Time              `json:"completed_at,omitempty"`
+	WorkflowID     string                  `json:"workflow_id"`
+	WorkflowName   string                  `json:"workflow_name"`
+	Status         string                  `json:"status"` // "running", "completed", "failed", "paused"
+	CurrentStep    int                     `json:"current_step,omitempty"`
+	TotalSteps     int                     `json:"total_steps"`
+	ExecutionSteps []WorkflowExecutionStep `json:"execution_steps"`
+	FinalOutput    interface{}             `json:"final_output,omitempty"`
+	Metrics        *WorkflowMetrics        `json:"metrics,omitempty"`
+	Error          string                  `json:"error,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	CompletedAt    *time.Time              `json:"completed_at,omitempty"`
 }
 
 // WorkflowExecutionStep represents a single step in workflow execution
 type WorkflowExecutionStep struct {
-	StepNumber  int                    `json:"step_number"`
-	StepName    string                 `json:"step_name"`
-	StepType    string                 `json:"step_type"` // "transform", "llm", "condition", "loop", etc.
-	Status      string                 `json:"status"`    // "pending", "running", "completed", "failed", "skipped"
-	Input       interface{}            `json:"input,omitempty"`
-	Output      interface{}            `json:"output,omitempty"`
-	Error       string                 `json:"error,omitempty"`
-	TimingMs    int64                  `json:"timing_ms,omitempty"`
-	StartedAt   *time.Time             `json:"started_at,omitempty"`
-	CompletedAt *time.Time             `json:"completed_at,omitempty"`
+	StepNumber  int         `json:"step_number"`
+	StepName    string      `json:"step_name"`
+	StepType    string      `json:"step_type"` // "transform", "llm", "condition", "loop", etc.
+	Status      string      `json:"status"`    // "pending", "running", "completed", "failed", "skipped"
+	Input       interface{} `json:"input,omitempty"`
+	Output      interface{} `json:"output,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	TimingMs    int64       `json:"timing_ms,omitempty"`
+	StartedAt   *time.Time  `json:"started_at,omitempty"`
+	CompletedAt *time.Time  `json:"completed_at,omitempty"`
 }
 
 // WorkflowMetrics represents performance metrics for a workflow execution
 type WorkflowMetrics struct {
-	TotalDurationMs  int64   `json:"total_duration_ms"`
-	StepsCompleted   int     `json:"steps_completed"`
-	StepsFailed      int     `json:"steps_failed"`
-	StepsSkipped     int     `json:"steps_skipped"`
-	TotalTokens      int     `json:"total_tokens,omitempty"`
-	EstimatedCost    float64 `json:"estimated_cost,omitempty"`
+	TotalDurationMs int64   `json:"total_duration_ms"`
+	StepsCompleted  int     `json:"steps_completed"`
+	StepsFailed     int     `json:"steps_failed"`
+	StepsSkipped    int     `json:"steps_skipped"`
+	TotalTokens     int     `json:"total_tokens,omitempty"`
+	EstimatedCost   float64 `json:"estimated_cost,omitempty"`
 }
 
 // WorkflowStepRequest represents a request to execute a single workflow step

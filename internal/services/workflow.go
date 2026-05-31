@@ -67,21 +67,21 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 		`
 
 		workflowParams := map[string]interface{}{
-			"id":               workflow.ID,
-			"name":             workflow.Name,
-			"description":      workflow.Description,
-			"status":           workflow.Status,
-			"type":             workflow.Type,
-			"version":          workflow.Version,
-			"configuration":    serializeParameters(workflow.Configuration),
-			"execution_count":  workflow.ExecutionCount,
-			"average_runtime":  workflow.AverageRuntime,
-			"success_rate":     workflow.SuccessRate,
-			"created_at":       workflow.CreatedAt,
-			"updated_at":       workflow.UpdatedAt,
-			"created_by":       workflow.CreatedBy,
-			"tenant_id":        workflow.TenantID,
-			"organization_id":  workflow.OrganizationID,
+			"id":              workflow.ID,
+			"name":            workflow.Name,
+			"description":     workflow.Description,
+			"status":          workflow.Status,
+			"type":            workflow.Type,
+			"version":         workflow.Version,
+			"configuration":   serializeParameters(workflow.Configuration),
+			"execution_count": workflow.ExecutionCount,
+			"average_runtime": workflow.AverageRuntime,
+			"success_rate":    workflow.SuccessRate,
+			"created_at":      workflow.CreatedAt,
+			"updated_at":      workflow.UpdatedAt,
+			"created_by":      workflow.CreatedBy,
+			"tenant_id":       workflow.TenantID,
+			"organization_id": workflow.OrganizationID,
 		}
 
 		_, err := tx.Run(ctx, workflowQuery, workflowParams)
@@ -660,8 +660,8 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string
 			execution.CurrentStep = "argo-pending"
 			execution.Output = map[string]any{
 				"argo_workflow_name": argoName,
-				"argo_namespace":    s.argoGenerator.namespace,
-				"message":           fmt.Sprintf("Workflow submitted to Argo as '%s'", argoName),
+				"argo_namespace":     s.argoGenerator.namespace,
+				"message":            fmt.Sprintf("Workflow submitted to Argo as '%s'", argoName),
 			}
 			s.logger.Info("Workflow submitted to Argo",
 				zap.String("workflow_id", workflowID),
@@ -891,14 +891,14 @@ func (s *WorkflowService) GetWorkflowAnalytics(ctx context.Context, spaceContext
 
 	// Build analytics response
 	analytics := &models.WorkflowAnalytics{
-		ID:                    fmt.Sprintf("workflow_analytics_%s_%d", period, time.Now().Unix()),
-		Period:                period,
-		Date:                  time.Now(),
-		TenantID:              spaceContext.TenantID,
-		OrganizationID:        spaceContext.SpaceID,
-		CreatedAt:             time.Now(),
-		WorkflowPerformance:   make(map[string]float64),
-		PopularTriggerTypes:   make(map[string]int64),
+		ID:                  fmt.Sprintf("workflow_analytics_%s_%d", period, time.Now().Unix()),
+		Period:              period,
+		Date:                time.Now(),
+		TenantID:            spaceContext.TenantID,
+		OrganizationID:      spaceContext.SpaceID,
+		CreatedAt:           time.Now(),
+		WorkflowPerformance: make(map[string]float64),
+		PopularTriggerTypes: make(map[string]int64),
 	}
 
 	// Process workflow results
@@ -1358,17 +1358,17 @@ func (s *WorkflowService) EvaluateUploadTriggers(ctx context.Context, document *
 
 		eventData := map[string]interface{}{
 			"workflow_id":        workflowID,
-			"trigger_id":        triggerID,
-			"document_id":       document.ID,
-			"file_name":         document.Name,
-			"mime_type":         document.MimeType,
-			"size_bytes":        document.SizeBytes,
-			"notebook_id":       document.NotebookID,
-			"tags":              document.Tags,
-			"storage_path":      document.StoragePath,
+			"trigger_id":         triggerID,
+			"document_id":        document.ID,
+			"file_name":          document.Name,
+			"mime_type":          document.MimeType,
+			"size_bytes":         document.SizeBytes,
+			"notebook_id":        document.NotebookID,
+			"tags":               document.Tags,
+			"storage_path":       document.StoragePath,
 			"output_notebook_id": outputNotebookID,
-			"tenant_id":         spaceContext.TenantID,
-			"space_id":          spaceContext.SpaceID,
+			"tenant_id":          spaceContext.TenantID,
+			"space_id":           spaceContext.SpaceID,
 		}
 
 		event := NewWorkflowEvent(EventWorkflowFileUploaded, workflowID.(string), "", eventData)
@@ -1515,15 +1515,15 @@ func (s *WorkflowService) EvaluateDocumentEventTriggers(ctx context.Context, doc
 		}
 
 		eventData := map[string]interface{}{
-			"workflow_id":   workflowID,
-			"trigger_id":   triggerID,
-			"document_id":  document.ID,
-			"event_type":   eventType,
-			"file_name":    document.Name,
-			"mime_type":    document.MimeType,
-			"notebook_id":  document.NotebookID,
-			"tenant_id":    spaceContext.TenantID,
-			"space_id":     spaceContext.SpaceID,
+			"workflow_id": workflowID,
+			"trigger_id":  triggerID,
+			"document_id": document.ID,
+			"event_type":  eventType,
+			"file_name":   document.Name,
+			"mime_type":   document.MimeType,
+			"notebook_id": document.NotebookID,
+			"tenant_id":   spaceContext.TenantID,
+			"space_id":    spaceContext.SpaceID,
 		}
 
 		event := NewWorkflowEvent(EventWorkflowDocumentEvent, workflowID.(string), "", eventData)
@@ -1742,15 +1742,15 @@ func (s *WorkflowService) PublishProductionArtifact(ctx context.Context, workflo
 	storagePath, _ := artifact["storage_path"].(string)
 
 	params := map[string]interface{}{
-		"id":            artifactID,
-		"workflow_id":   workflowID,
-		"execution_id":  executionID,
-		"name":          name,
-		"format":        format,
-		"storage_path":  storagePath,
-		"notebook_id":   destinationNotebookID,
-		"tenant_id":     spaceContext.TenantID,
-		"created_at":    time.Now(),
+		"id":           artifactID,
+		"workflow_id":  workflowID,
+		"execution_id": executionID,
+		"name":         name,
+		"format":       format,
+		"storage_path": storagePath,
+		"notebook_id":  destinationNotebookID,
+		"tenant_id":    spaceContext.TenantID,
+		"created_at":   time.Now(),
 	}
 
 	session := s.neo4j.Session(ctx)

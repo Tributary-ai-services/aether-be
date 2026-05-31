@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -40,7 +41,7 @@ func main() {
 	// Test 1: Create bucket with tenant naming
 	tenantID := "tenant_1234567890"
 	bucketName := fmt.Sprintf("aether-%s", extractTenantSuffix(tenantID))
-	
+
 	fmt.Printf("1. Creating bucket: %s\n", bucketName)
 	err = minioClient.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
 	if err != nil {
@@ -57,11 +58,11 @@ func main() {
 	// Test 2: Upload file with folder structure
 	objectName := "spaces/personal/notebooks/notebook_123/documents/doc_456/test-file.pdf"
 	fileContent := []byte("This is a test PDF content for MinIO diagnostic testing")
-	
+
 	fmt.Printf("\n2. Uploading file with path: %s\n", objectName)
-	_, err = minioClient.PutObject(ctx, bucketName, objectName, 
-		strings.NewReader(string(fileContent)), 
-		int64(len(fileContent)), 
+	_, err = minioClient.PutObject(ctx, bucketName, objectName,
+		strings.NewReader(string(fileContent)),
+		int64(len(fileContent)),
 		minio.PutObjectOptions{
 			ContentType: "application/pdf",
 		})
@@ -77,7 +78,7 @@ func main() {
 		Prefix:    prefix,
 		Recursive: true,
 	})
-	
+
 	count := 0
 	for object := range objectCh {
 		if object.Err != nil {
@@ -115,7 +116,7 @@ func main() {
 	if err != nil && err.Error() != "EOF" {
 		log.Fatalf("   ✗ Failed to read file content: %v", err)
 	}
-	
+
 	if string(buf) == string(updatedContent) {
 		fmt.Printf("   ✓ File content verified - update successful\n")
 	} else {

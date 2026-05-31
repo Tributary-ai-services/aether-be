@@ -61,8 +61,8 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Creating workflow", 
-		zap.String("name", req.Name), 
+	h.logger.Info("Creating workflow",
+		zap.String("name", req.Name),
 		zap.String("type", req.Type),
 		zap.String("user_id", userID))
 
@@ -116,9 +116,9 @@ func (h *WorkflowHandler) GetWorkflows(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Getting workflows", 
-		zap.String("user_id", userID), 
-		zap.Int("limit", limit), 
+	h.logger.Info("Getting workflows",
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
 		zap.Int("offset", offset))
 
 	workflows, total, err := h.workflowService.GetWorkflows(c.Request.Context(), spaceContext, limit, offset)
@@ -327,8 +327,8 @@ func (h *WorkflowHandler) ExecuteWorkflow(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Executing workflow", 
-		zap.String("workflow_id", workflowID), 
+	h.logger.Info("Executing workflow",
+		zap.String("workflow_id", workflowID),
 		zap.String("trigger_id", req.TriggerID),
 		zap.String("user_id", userID))
 
@@ -396,10 +396,10 @@ func (h *WorkflowHandler) GetWorkflowExecutions(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Getting workflow executions", 
+	h.logger.Info("Getting workflow executions",
 		zap.String("workflow_id", workflowID),
-		zap.String("user_id", userID), 
-		zap.Int("limit", limit), 
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
 		zap.Int("offset", offset))
 
 	executions, total, err := h.workflowService.GetWorkflowExecutions(c.Request.Context(), workflowID, spaceContext, limit, offset)
@@ -560,8 +560,8 @@ func (h *WorkflowHandler) UpdateWorkflowStatus(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Updating workflow status", 
-		zap.String("workflow_id", workflowID), 
+	h.logger.Info("Updating workflow status",
+		zap.String("workflow_id", workflowID),
 		zap.String("status", statusReq.Status),
 		zap.String("user_id", userID))
 

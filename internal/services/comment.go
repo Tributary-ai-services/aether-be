@@ -382,7 +382,9 @@ func (s *CommentService) publish(notebookID string, event *models.CommentEvent) 
 	}
 }
 
-func (s *CommentService) recordToCommentResponse(record interface{ Get(string) (interface{}, bool) }) *models.CommentResponse {
+func (s *CommentService) recordToCommentResponse(record interface {
+	Get(string) (interface{}, bool)
+}) *models.CommentResponse {
 	comment := &models.CommentResponse{}
 	if v, ok := record.Get("c.id"); ok && v != nil {
 		comment.ID = v.(string)

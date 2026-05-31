@@ -680,17 +680,17 @@ func extractAuthToken(c *gin.Context) string {
 func (h *AgentHandler) getUserTeams(c *gin.Context, userID string) ([]string, error) {
 	teamIDs, err := h.teamService.GetUserTeamIDs(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Error("Failed to get user team IDs", 
+		h.logger.Error("Failed to get user team IDs",
 			zap.String("user_id", userID),
 			zap.Error(err))
 		// Return empty slice rather than failing the request - user may not be in any teams
 		return []string{}, nil
 	}
-	
+
 	h.logger.Debug("Retrieved user teams for agent access control",
 		zap.String("user_id", userID),
 		zap.Int("team_count", len(teamIDs)))
-	
+
 	return teamIDs, nil
 }
 
@@ -719,13 +719,13 @@ func (h *AgentHandler) ListExecutions(c *gin.Context) {
 	agentID := c.Query("agent_id")
 	limit := 20
 	offset := 0
-	
+
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 100 {
 			limit = parsedLimit
 		}
 	}
-	
+
 	if offsetStr := c.Query("offset"); offsetStr != "" {
 		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -1098,14 +1098,14 @@ func (h *AgentHandler) GetAgentStats(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Agent ID is required"))
 		return
 	}
-	
+
 	// Get auth token for agent-builder proxy
 	authToken := extractAuthToken(c)
 	if authToken == "" {
 		c.JSON(http.StatusUnauthorized, errors.Unauthorized("Authorization token required"))
 		return
 	}
-	
+
 	// For now, return basic stats structure
 	// In the future, this should query agent-builder or Neo4j for actual stats
 	stats := gin.H{
@@ -1116,14 +1116,14 @@ func (h *AgentHandler) GetAgentStats(c *gin.Context) {
 		"avg_response_time_ms":  0,
 		"total_cost_usd":        0.0,
 		"last_executed_at":      nil,
-		"execution_trend": []interface{}{},  // Array of execution counts per day
+		"execution_trend":       []interface{}{}, // Array of execution counts per day
 		"performance_metrics": gin.H{
 			"p50_response_time_ms": 0,
 			"p95_response_time_ms": 0,
 			"p99_response_time_ms": 0,
 		},
 	}
-	
+
 	h.logger.Info("Agent stats retrieved",
 		zap.String("agent_id", agentID),
 	)

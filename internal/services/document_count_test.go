@@ -80,7 +80,7 @@ func TestDocumentCountAccuracyWithNeo4j(t *testing.T) {
 	t.Run("Initial document count should be zero", func(t *testing.ot) {
 		count := getDocumentCount(t, ctx, neo4jClient, notebook.ID)
 		assert.Equal(t, 0, count, "Initial document count should be 0")
-		
+
 		// Also verify through document list
 		listResp, err := documentService.ListDocumentsByNotebook(ctx, notebook.ID, userID, spaceContext, 0, 100)
 		assert.NoError(t, err)
@@ -153,7 +153,7 @@ func TestDocumentCountAccuracyWithNeo4j(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 2, listResp.Total, "List response total should be 2")
 		assert.Len(t, listResp.Documents, 2, "Should have exactly 2 documents in list")
-		
+
 		// Verify both documents are present
 		docIDs := make(map[string]bool)
 		for _, d := range listResp.Documents {

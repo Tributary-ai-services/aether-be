@@ -8,12 +8,12 @@ func TestThreatDetector_DetectThreats(t *testing.T) {
 	td := NewThreatDetector()
 
 	tests := []struct {
-		name           string
-		input          string
-		fieldName      string
-		expectThreats  bool
-		expectedTypes  []string
-		minSeverity    string
+		name          string
+		input         string
+		fieldName     string
+		expectThreats bool
+		expectedTypes []string
+		minSeverity   string
 	}{
 		{
 			name:          "clean input",

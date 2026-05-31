@@ -215,7 +215,7 @@ func (s *MLService) UpdateExperiment(ctx context.Context, experimentID string, r
 	if req.Status != "" {
 		setParts = append(setParts, "e.status = $status")
 		parameters["status"] = req.Status
-		
+
 		// If completed or failed, set end date
 		if req.Status == "completed" || req.Status == "failed" {
 			setParts = append(setParts, "e.end_date = $end_date")
@@ -401,7 +401,7 @@ func (s *MLService) GetAnalytics(ctx context.Context, spaceContext *models.Space
 
 	// Mock some additional analytics based on frontend requirements
 	analytics.DocumentsProcessed = 2400000 // 2.4M documents/month as shown in frontend
-	
+
 	return analytics, nil
 }
 

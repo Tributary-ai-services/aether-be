@@ -331,12 +331,12 @@ func (s *AIPlaygroundService) GetTestableAgents(ctx context.Context, tenantID, s
 	for result.Next(ctx) {
 		record := result.Record()
 		agent := models.TestableAgent{
-			ID:          getStringValue(record, "id"),
-			Name:        getStringValue(record, "name"),
-			Description: getStringValue(record, "description"),
-			Type:        getStringValue(record, "type"),
-			OwnerID:     getStringValue(record, "owner_id"),
-			Model:       getStringValue(record, "model"),
+			ID:           getStringValue(record, "id"),
+			Name:         getStringValue(record, "name"),
+			Description:  getStringValue(record, "description"),
+			Type:         getStringValue(record, "type"),
+			OwnerID:      getStringValue(record, "owner_id"),
+			Model:        getStringValue(record, "model"),
 			SystemPrompt: getStringValue(record, "system_prompt"),
 		}
 

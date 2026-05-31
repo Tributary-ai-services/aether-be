@@ -31,20 +31,20 @@ func NewGoogleDriveProvider(tokenSource oauth2.TokenSource, log *logger.Logger) 
 
 // Google Drive API response types
 type googleFileList struct {
-	NextPageToken string        `json:"nextPageToken"`
-	Files         []googleFile  `json:"files"`
+	NextPageToken string       `json:"nextPageToken"`
+	Files         []googleFile `json:"files"`
 }
 
 type googleFile struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	MimeType     string    `json:"mimeType"`
-	Size         string    `json:"size"`
-	ModifiedTime string    `json:"modifiedTime"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	MimeType     string `json:"mimeType"`
+	Size         string `json:"size"`
+	ModifiedTime string `json:"modifiedTime"`
 	Owners       []struct {
 		DisplayName string `json:"displayName"`
 	} `json:"owners"`
-	WebViewLink string `json:"webViewLink"`
+	WebViewLink string   `json:"webViewLink"`
 	Parents     []string `json:"parents"`
 }
 

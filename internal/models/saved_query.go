@@ -99,28 +99,28 @@ type SavedQueryExecuteRequest struct {
 
 // SavedQueryExecuteResponse represents the result of executing a saved query
 type SavedQueryExecuteResponse struct {
-	QueryID   string             `json:"query_id"`
-	QueryName string             `json:"query_name"`
-	Columns   []string           `json:"columns"`
-	Rows      []map[string]any   `json:"rows"`
-	RowCount  int                `json:"row_count"`
-	Truncated bool               `json:"truncated"`
-	Duration  int64              `json:"duration_ms"`
-	ExecutedAt time.Time         `json:"executed_at"`
+	QueryID    string           `json:"query_id"`
+	QueryName  string           `json:"query_name"`
+	Columns    []string         `json:"columns"`
+	Rows       []map[string]any `json:"rows"`
+	RowCount   int              `json:"row_count"`
+	Truncated  bool             `json:"truncated"`
+	Duration   int64            `json:"duration_ms"`
+	ExecutedAt time.Time        `json:"executed_at"`
 }
 
 // SavedQuerySearchRequest represents search/filter criteria for queries
 type SavedQuerySearchRequest struct {
-	Search      string          `json:"search,omitempty"`
-	DatabaseID  string          `json:"database_id,omitempty"`
-	Visibility  QueryVisibility `json:"visibility,omitempty"`
-	Tags        []string        `json:"tags,omitempty"`
-	Folder      string          `json:"folder,omitempty"`
-	OwnerID     string          `json:"owner_id,omitempty"`
-	Page        int             `json:"page,omitempty"`
-	PageSize    int             `json:"page_size,omitempty"`
-	SortBy      string          `json:"sort_by,omitempty" validate:"omitempty,oneof=name created_at updated_at execution_count last_executed_at"`
-	SortOrder   string          `json:"sort_order,omitempty" validate:"omitempty,oneof=asc desc"`
+	Search     string          `json:"search,omitempty"`
+	DatabaseID string          `json:"database_id,omitempty"`
+	Visibility QueryVisibility `json:"visibility,omitempty"`
+	Tags       []string        `json:"tags,omitempty"`
+	Folder     string          `json:"folder,omitempty"`
+	OwnerID    string          `json:"owner_id,omitempty"`
+	Page       int             `json:"page,omitempty"`
+	PageSize   int             `json:"page_size,omitempty"`
+	SortBy     string          `json:"sort_by,omitempty" validate:"omitempty,oneof=name created_at updated_at execution_count last_executed_at"`
+	SortOrder  string          `json:"sort_order,omitempty" validate:"omitempty,oneof=asc desc"`
 }
 
 // NewSavedQuery creates a new SavedQuery from a create request
@@ -290,19 +290,19 @@ func (q *SavedQuery) SetSharedWithTeamsFromJSON(jsonStr string) {
 func (q *SavedQuery) Duplicate(newOwnerID, newName string) *SavedQuery {
 	now := time.Now()
 	return &SavedQuery{
-		ID:              uuid.New().String(),
-		Name:            newName,
-		Description:     q.Description,
-		Query:           q.Query,
-		DatabaseID:      q.DatabaseID,
-		TenantID:        q.TenantID,
-		SpaceID:         q.SpaceID,
-		OwnerID:         newOwnerID,
-		Visibility:      QueryVisibilityPrivate, // Always start as private
-		Tags:            q.Tags,
-		Folder:          q.Folder,
-		ExecutionCount:  0,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:             uuid.New().String(),
+		Name:           newName,
+		Description:    q.Description,
+		Query:          q.Query,
+		DatabaseID:     q.DatabaseID,
+		TenantID:       q.TenantID,
+		SpaceID:        q.SpaceID,
+		OwnerID:        newOwnerID,
+		Visibility:     QueryVisibilityPrivate, // Always start as private
+		Tags:           q.Tags,
+		Folder:         q.Folder,
+		ExecutionCount: 0,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }

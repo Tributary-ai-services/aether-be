@@ -80,20 +80,20 @@ func (s *StreamService) CreateStreamSource(ctx context.Context, req models.Creat
 	`
 
 	parameters := map[string]interface{}{
-		"id":               source.ID,
-		"name":             source.Name,
-		"type":             source.Type,
-		"provider":         source.Provider,
-		"status":           source.Status,
-		"configuration":    serializeParameters(source.Configuration),
-		"events_processed": source.EventsProcessed,
+		"id":                source.ID,
+		"name":              source.Name,
+		"type":              source.Type,
+		"provider":          source.Provider,
+		"status":            source.Status,
+		"configuration":     serializeParameters(source.Configuration),
+		"events_processed":  source.EventsProcessed,
 		"events_per_second": source.EventsPerSecond,
-		"error_count":      source.ErrorCount,
-		"created_at":       source.CreatedAt,
-		"updated_at":       source.UpdatedAt,
-		"created_by":       source.CreatedBy,
-		"tenant_id":        source.TenantID,
-		"organization_id":  source.OrganizationID,
+		"error_count":       source.ErrorCount,
+		"created_at":        source.CreatedAt,
+		"updated_at":        source.UpdatedAt,
+		"created_by":        source.CreatedBy,
+		"tenant_id":         source.TenantID,
+		"organization_id":   source.OrganizationID,
 	}
 
 	session := s.neo4j.Session(ctx)
@@ -505,14 +505,14 @@ func (s *StreamService) BroadcastEvent(event *models.LiveEvent) {
 				Event:     event,
 				Timestamp: time.Now(),
 			}
-			
+
 			// In a real implementation, you would send the message via WebSocket
 			// For now, we'll just log it
-			s.logger.Debug("Broadcasting event to connection", 
+			s.logger.Debug("Broadcasting event to connection",
 				zap.String("event_id", event.ID),
 				zap.String("connection_id", conn.ID),
 				zap.Any("message", message))
-			
+
 			conn.EventsDelivered++
 			conn.LastEventSent = time.Now()
 		}
@@ -523,14 +523,14 @@ func (s *StreamService) BroadcastEvent(event *models.LiveEvent) {
 func (s *StreamService) processEvents() {
 	for event := range s.eventChannel {
 		start := time.Now()
-		
+
 		// Process the event with available processors
 		processedEvent := event
 		for _, processor := range s.eventProcessors {
 			var err error
 			processedEvent, err = processor.ProcessEvent(context.Background(), processedEvent)
 			if err != nil {
-				s.logger.Error("Failed to process event", 
+				s.logger.Error("Failed to process event",
 					zap.String("event_id", event.ID),
 					zap.String("processor", processor.GetProcessorType()),
 					zap.Error(err))
@@ -552,7 +552,7 @@ func (s *StreamService) processEvents() {
 		// Broadcast to WebSocket connections
 		s.BroadcastEvent(processedEvent)
 
-		s.logger.Debug("Processed event", 
+		s.logger.Debug("Processed event",
 			zap.String("event_id", event.ID),
 			zap.Float64("processing_time_ms", processingTime))
 	}
@@ -813,44 +813,44 @@ func (s *StreamService) recordToLiveEvent(record *neo4j.Record, alias string) (*
 func (p *SentimentAnalysisProcessor) ProcessEvent(ctx context.Context, event *models.LiveEvent) (*models.LiveEvent, error) {
 	// Mock sentiment analysis - in real implementation, this would call an AI service
 	content := strings.ToLower(event.Content)
-	
+
 	// Simple keyword-based sentiment analysis for demo
 	positiveWords := []string{"good", "great", "excellent", "amazing", "wonderful", "fantastic", "love", "happy"}
 	negativeWords := []string{"bad", "terrible", "awful", "hate", "sad", "angry", "disappointed", "worst"}
-	
+
 	positiveCount := 0
 	negativeCount := 0
-	
+
 	for _, word := range positiveWords {
 		if strings.Contains(content, word) {
 			positiveCount++
 		}
 	}
-	
+
 	for _, word := range negativeWords {
 		if strings.Contains(content, word) {
 			negativeCount++
 		}
 	}
-	
+
 	if positiveCount > negativeCount {
 		event.Sentiment = "positive"
 		event.SentimentScore = 0.7 + (float64(positiveCount-negativeCount) * 0.1)
 	} else if negativeCount > positiveCount {
-		event.Sentiment = "negative" 
+		event.Sentiment = "negative"
 		event.SentimentScore = -0.7 - (float64(negativeCount-positiveCount) * 0.1)
 	} else {
 		event.Sentiment = "neutral"
 		event.SentimentScore = 0.0
 	}
-	
+
 	// Ensure score is within bounds
 	if event.SentimentScore > 1.0 {
 		event.SentimentScore = 1.0
 	} else if event.SentimentScore < -1.0 {
 		event.SentimentScore = -1.0
 	}
-	
+
 	// Set confidence based on word count
 	wordCount := len(strings.Fields(content))
 	if wordCount > 10 {
@@ -860,13 +860,13 @@ func (p *SentimentAnalysisProcessor) ProcessEvent(ctx context.Context, event *mo
 	} else {
 		event.Confidence = 0.5
 	}
-	
-	p.logger.Debug("Processed sentiment", 
+
+	p.logger.Debug("Processed sentiment",
 		zap.String("event_id", event.ID),
 		zap.String("sentiment", event.Sentiment),
 		zap.Float64("score", event.SentimentScore),
 		zap.Float64("confidence", event.Confidence))
-	
+
 	return event, nil
 }
 
@@ -906,7 +906,7 @@ func (s *StreamService) UpdateStreamSourceStatus(ctx context.Context, sourceID, 
 	if result.Next(ctx) {
 		record := result.Record()
 		source := &models.StreamSource{}
-		
+
 		// Map fields from record to source
 		if id, ok := record.Get("id"); ok {
 			source.ID, _ = id.(string)
@@ -929,7 +929,7 @@ func (s *StreamService) UpdateStreamSourceStatus(ctx context.Context, sourceID, 
 		if orgID, ok := record.Get("organization_id"); ok {
 			source.OrganizationID, _ = orgID.(string)
 		}
-		
+
 		return source, nil
 	}
 
@@ -966,7 +966,7 @@ func (s *StreamService) GetLiveEventByID(ctx context.Context, eventID string, sp
 	if result.Next(ctx) {
 		record := result.Record()
 		event := &models.LiveEvent{}
-		
+
 		// Map fields from record to event
 		if id, ok := record.Get("id"); ok {
 			event.ID, _ = id.(string)
@@ -992,7 +992,7 @@ func (s *StreamService) GetLiveEventByID(ctx context.Context, eventID string, sp
 		if orgID, ok := record.Get("organization_id"); ok {
 			event.OrganizationID, _ = orgID.(string)
 		}
-		
+
 		return event, nil
 	}
 
@@ -1016,6 +1016,6 @@ func (s *StreamService) GetRealtimeAnalytics(ctx context.Context, spaceContext *
 
 	// Calculate real-time analytics
 	analytics := models.CalculateRealTimeAnalytics(sources, events, spaceContext.TenantID, spaceContext.SpaceID)
-	
+
 	return analytics, nil
 }

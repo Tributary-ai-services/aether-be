@@ -1125,7 +1125,7 @@ func (s *NotebookService) recordToNotebook(record interface{}) (*models.Notebook
 			createdAtTime = neo4jTime
 		}
 	}
-	
+
 	if updatedAt != nil {
 		if timeStr, ok := updatedAt.(string); ok {
 			if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
@@ -1215,7 +1215,7 @@ func (s *NotebookService) recordToNotebookResponse(record interface{}) (*models.
 	ownerUsername, hasOwnerUsername := neo4jRecord.Get("owner.username")
 	ownerFullName, hasOwnerFullName := neo4jRecord.Get("owner.full_name")
 	ownerAvatarURL, hasOwnerAvatarURL := neo4jRecord.Get("owner.avatar_url")
-	
+
 	if hasOwnerUsername || hasOwnerFullName || hasOwnerAvatarURL {
 		owner = &models.PublicUserResponse{
 			ID: s.getString(ownerID), // Use the owner_id from the notebook
@@ -1242,7 +1242,7 @@ func (s *NotebookService) recordToNotebookResponse(record interface{}) (*models.
 			createdAtTime = neo4jTime
 		}
 	}
-	
+
 	if updatedAt != nil {
 		if timeStr, ok := updatedAt.(string); ok {
 			if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
@@ -1317,6 +1317,7 @@ func (s *NotebookService) getInt64(value interface{}) int64 {
 
 // deserializeComplianceSettings converts a JSON string back to map[string]interface{}
 // This function is used by recordToNotebook and recordToNotebookResponse when they are fully implemented
+//
 //nolint:unused // Will be used when record parsing functions are implemented
 func (s *NotebookService) deserializeComplianceSettings(jsonString string) (map[string]interface{}, error) {
 	if jsonString == "" || jsonString == "{}" {

@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -54,10 +55,10 @@ func main() {
 	if result.Next(ctx) {
 		record := result.Record()
 		users, _ := record.Get("users")
-		teams, _ := record.Get("teams") 
+		teams, _ := record.Get("teams")
 		orgs, _ := record.Get("orgs")
 		relationships, _ := record.Get("relationships")
-		fmt.Printf("Users: %v, Teams: %v, Organizations: %v, Existing MEMBER_OF relationships: %v\n", 
+		fmt.Printf("Users: %v, Teams: %v, Organizations: %v, Existing MEMBER_OF relationships: %v\n",
 			users, teams, orgs, relationships)
 	}
 
@@ -83,7 +84,7 @@ func main() {
 		fmt.Printf("Created %v team owner relationships: %v\n", created, teamNames)
 	}
 
-	// Step 3: Fix team relationships by user id  
+	// Step 3: Fix team relationships by user id
 	fmt.Println("\n=== Fixing Team Relationships (by user id) ===")
 	result, err = session.Run(ctx, `
 		MATCH (t:Team), (u:User)

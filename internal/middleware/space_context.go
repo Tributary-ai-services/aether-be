@@ -59,7 +59,7 @@ func SpaceContextMiddleware(spaceService *services.SpaceContextService, log *log
 			zap.String("user_id", userID.(string)),
 			zap.String("space_type", spaceType),
 			zap.String("space_id", spaceID))
-			
+
 		req := models.SpaceContextRequest{
 			SpaceType: models.SpaceType(spaceType),
 			SpaceID:   spaceID,
@@ -120,7 +120,7 @@ func RequireSpaceContext(log *logger.Logger) gin.HandlerFunc {
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.Request.URL.Path),
 			zap.String("content_type", c.Request.Header.Get("Content-Type")))
-		
+
 		_, exists := c.Get(SpaceContextKey)
 		if !exists {
 			logger.Error("Space context required but not found",
@@ -134,7 +134,7 @@ func RequireSpaceContext(log *logger.Logger) gin.HandlerFunc {
 		}
 
 		logger.Info("Space context check passed")
-		
+
 		logger.Info("RequireSpaceContext proceeding to next middleware")
 		c.Next()
 		logger.Info("RequireSpaceContext middleware completed")

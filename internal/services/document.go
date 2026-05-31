@@ -283,7 +283,7 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 			s.logger.Error("Failed to submit processing job - cleaning up document",
 				zap.String("document_id", document.ID),
 				zap.Error(err))
-			
+
 			// Clean up: delete the uploaded file from storage
 			if deleteErr := s.storageService.DeleteFileFromBucket(ctx, bucketName, keyPath); deleteErr != nil {
 				s.logger.Error("Failed to clean up file after processing failure",
@@ -302,19 +302,19 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 			return nil, errors.ServiceUnavailable("Document processing service is currently unavailable. Please try again later.")
 		} else {
 			document.ProcessingJobID = job.ID
-			
+
 			// Check if job completed immediately (AudiModal case)
 			if job.Status == "completed" && job.Result != nil {
 				// Apply results immediately
 				s.logger.Info("Processing job completed immediately, applying results",
 					zap.String("document_id", document.ID),
 					zap.String("job_id", job.ID))
-				
+
 				// Extract processing results
 				extractedText := ""
 				processingTime := int64(0)
 				confidenceScore := 0.0
-				
+
 				if result := job.Result; result != nil {
 					if text, ok := result["extracted_text"].(string); ok {
 						extractedText = text
@@ -328,19 +328,19 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 						confidenceScore = cs
 					}
 				}
-				
+
 				// Update document with AI processing results
 				if updateErr := s.updateDocumentWithProcessingResults(ctx, document.ID, extractedText, processingTime, confidenceScore); updateErr != nil {
-					s.logger.Error("Failed to update document with processing results", 
+					s.logger.Error("Failed to update document with processing results",
 						zap.String("document_id", document.ID),
 						zap.Error(updateErr))
 				}
-				
+
 				document.Status = "processed"
 			} else {
 				document.Status = "processing"
 			}
-			
+
 			// Store AudiModal file ID as processing_job_id for webhook integration
 			audiModalFileID := job.ID // default to job ID
 			if job.Config != nil {
@@ -353,7 +353,7 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 						zap.String("job_id", job.ID))
 				}
 			}
-			
+
 			if statusErr := s.updateDocumentStatusWithJobID(ctx, document.ID, document.Status, job.Result, "", audiModalFileID); statusErr != nil {
 				s.logger.Error("Failed to update document status", zap.Error(statusErr))
 			}
@@ -362,7 +362,7 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 		// No processing service available - fail the upload
 		s.logger.Error("No processing service configured - cleaning up document",
 			zap.String("document_id", document.ID))
-		
+
 		// Clean up: delete the uploaded file from storage
 		if deleteErr := s.storageService.DeleteFileFromBucket(ctx, bucketName, keyPath); deleteErr != nil {
 			s.logger.Error("Failed to clean up file after processing service unavailable",
@@ -370,14 +370,14 @@ func (s *DocumentService) UploadDocument(ctx context.Context, req models.Documen
 				zap.String("key", keyPath),
 				zap.Error(deleteErr))
 		}
-		
+
 		// Clean up: delete the document record from database
 		if deleteErr := s.deleteDocumentRecord(ctx, document.ID); deleteErr != nil {
 			s.logger.Error("Failed to clean up document record after processing service unavailable",
 				zap.String("document_id", document.ID),
 				zap.Error(deleteErr))
 		}
-		
+
 		return nil, errors.ServiceUnavailable("Document processing service is not configured. Please contact support.")
 	}
 
@@ -799,7 +799,7 @@ func (s *DocumentService) SearchDocuments(ctx context.Context, req models.Docume
 		"d.tenant_id = $tenant_id",
 		"d.space_id = $space_id",
 	}
-	
+
 	params := map[string]interface{}{
 		"user_id":   userID,
 		"tenant_id": spaceCtx.TenantID,
@@ -905,23 +905,23 @@ func (s *DocumentService) UpdateProcessingResult(ctx context.Context, documentID
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
 	`
-	
+
 	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
 		"document_id": documentID,
 	})
 	if err != nil {
 		return errors.Database("Failed to get document tenant", err)
 	}
-	
+
 	if len(tenantResult.Records) == 0 {
 		return errors.NotFound("Document not found")
 	}
-	
+
 	tenantID := ""
 	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
 		tenantID = val.(string)
 	}
-	
+
 	return s.updateProcessingResultWithTenant(ctx, documentID, tenantID, status, result, errorMsg)
 }
 
@@ -943,7 +943,7 @@ func (s *DocumentService) updateProcessingResultWithTenant(ctx context.Context, 
 		if text, ok := result["extracted_text"].(string); ok {
 			// Validate extracted text is not placeholder/sample content
 			if s.isPlaceholderText(text) {
-				s.logger.Warn("Detected placeholder text in processing result - rejecting update", 
+				s.logger.Warn("Detected placeholder text in processing result - rejecting update",
 					zap.String("document_id", documentID),
 					zap.String("text_preview", text[:min(100, len(text))]),
 				)
@@ -1064,18 +1064,18 @@ func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, doc
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
 	`
-	
+
 	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
 		"document_id": documentID,
 	})
 	if err != nil {
 		return err
 	}
-	
+
 	if len(tenantResult.Records) == 0 {
 		return errors.NotFound("Document not found")
 	}
-	
+
 	tenantID := ""
 	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
 		tenantID = val.(string)
@@ -1086,20 +1086,20 @@ func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, doc
 		"d.status = $status",
 		"d.updated_at = datetime($updated_at)",
 	}
-	
+
 	params := map[string]interface{}{
 		"document_id": documentID,
 		"tenant_id":   tenantID,
 		"status":      status,
 		"updated_at":  time.Now().Format(time.RFC3339),
 	}
-	
+
 	// Add processing_job_id if provided
 	if processingJobID != "" {
 		setClauses = append(setClauses, "d.processing_job_id = $processing_job_id")
 		params["processing_job_id"] = processingJobID
 	}
-	
+
 	// Add processing result if provided
 	if result != nil && len(result) > 0 {
 		resultJSON, err := json.Marshal(result)
@@ -1108,27 +1108,27 @@ func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, doc
 		}
 		setClauses = append(setClauses, "d.processing_result = $processing_result")
 		params["processing_result"] = string(resultJSON)
-		
+
 		// Extract text if available in result
 		if extractedText, ok := result["extracted_text"].(string); ok {
 			setClauses = append(setClauses, "d.extracted_text = $extracted_text")
 			params["extracted_text"] = extractedText
 		}
 	}
-	
+
 	// Add error message if provided
 	if errorMsg != "" {
 		setClauses = append(setClauses, "d.error_message = $error_message")
 		params["error_message"] = errorMsg
 	}
-	
+
 	// Build and execute the update query
 	query := fmt.Sprintf(`
 		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
 		SET %s
 		RETURN d.id
 	`, strings.Join(setClauses, ", "))
-	
+
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
 		s.logger.Error("Failed to update document status",
@@ -1138,12 +1138,12 @@ func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, doc
 			zap.Error(err))
 		return errors.Database("Failed to update document status", err)
 	}
-	
+
 	s.logger.Info("Document status updated successfully",
 		zap.String("document_id", documentID),
 		zap.String("status", status),
 		zap.String("processing_job_id", processingJobID))
-	
+
 	return nil
 }
 
@@ -1153,18 +1153,18 @@ func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, 
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
 	`
-	
+
 	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
 		"document_id": documentID,
 	})
 	if err != nil {
 		return err
 	}
-	
+
 	if len(tenantResult.Records) == 0 {
 		return errors.NotFound("Document not found")
 	}
-	
+
 	tenantID := ""
 	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
 		tenantID = val.(string)
@@ -1175,14 +1175,14 @@ func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, 
 		"d.status = $status",
 		"d.updated_at = datetime($updated_at)",
 	}
-	
+
 	params := map[string]interface{}{
 		"document_id": documentID,
 		"tenant_id":   tenantID,
 		"status":      status,
 		"updated_at":  time.Now().Format(time.RFC3339),
 	}
-	
+
 	// Add processing result if provided
 	if result != nil && len(result) > 0 {
 		resultJSON, err := json.Marshal(result)
@@ -1191,29 +1191,29 @@ func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, 
 		}
 		setClauses = append(setClauses, "d.processing_result = $processing_result")
 		params["processing_result"] = string(resultJSON)
-		
+
 		// Extract text if available in result
 		if extractedText, ok := result["extracted_text"].(string); ok {
 			setClauses = append(setClauses, "d.extracted_text = $extracted_text")
 			params["extracted_text"] = extractedText
-			
+
 			// Update search text with extracted content
 			setClauses = append(setClauses, "d.search_text = d.name + ' ' + COALESCE(d.description, '') + ' ' + $extracted_text")
 		}
-		
+
 		// Set processed_at for processed status
 		if status == "processed" {
 			setClauses = append(setClauses, "d.processed_at = datetime($processed_at)")
 			params["processed_at"] = time.Now().Format(time.RFC3339)
 		}
 	}
-	
+
 	// Add error message if provided
 	if errorMsg != "" {
 		setClauses = append(setClauses, "d.error = $error")
 		params["error"] = errorMsg
 	}
-	
+
 	query := fmt.Sprintf(`
 		MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
 		SET %s
@@ -1240,27 +1240,27 @@ func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
 		ORDER BY d.updated_at DESC
 		LIMIT 50
 	`
-	
+
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{})
 	if err != nil {
 		return err
 	}
-	
+
 	if len(result.Records) == 0 {
 		s.logger.Info("No processing documents found to refresh")
 		return nil
 	}
-	
+
 	s.logger.Info("Refreshing processing results for documents", zap.Int("count", len(result.Records)))
-	
+
 	for _, record := range result.Records {
 		documentID, _ := record.Get("d.id")
 		jobID, _ := record.Get("d.processing_job_id")
-		
+
 		if documentID != nil && jobID != nil {
 			docID := documentID.(string)
 			processingJobID := jobID.(string)
-			
+
 			// Get updated job status from AudiModal
 			if s.processingService != nil {
 				job, jobErr := s.processingService.GetProcessingJob(ctx, processingJobID)
@@ -1269,7 +1269,7 @@ func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
 					extractedText := ""
 					processingTime := int64(100)
 					confidenceScore := 0.95
-					
+
 					if result := job.Result; result != nil {
 						if text, ok := result["extracted_text"].(string); ok && text != "" {
 							extractedText = text
@@ -1283,11 +1283,11 @@ func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
 							confidenceScore = cs
 						}
 					}
-					
+
 					// Update document with real AI processing results
 					if extractedText != "" && extractedText != "Processing in progress..." {
 						if updateErr := s.updateDocumentWithProcessingResults(ctx, docID, extractedText, processingTime, confidenceScore); updateErr != nil {
-							s.logger.Error("Failed to update document with processing results", 
+							s.logger.Error("Failed to update document with processing results",
 								zap.String("document_id", docID),
 								zap.Error(updateErr))
 						} else {
@@ -1301,7 +1301,7 @@ func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -1312,18 +1312,18 @@ func (s *DocumentService) updateDocumentWithProcessingResults(ctx context.Contex
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
 	`
-	
+
 	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
 		"document_id": documentID,
 	})
 	if err != nil {
 		return err
 	}
-	
+
 	if len(tenantResult.Records) == 0 {
 		return errors.NotFound("Document not found")
 	}
-	
+
 	tenantID := ""
 	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
 		tenantID = val.(string)
@@ -1341,7 +1341,7 @@ func (s *DocumentService) updateDocumentWithProcessingResults(ctx context.Contex
 		    d.search_text = d.name + ' ' + COALESCE(d.description, '') + ' ' + $extracted_text
 		RETURN d
 	`
-	
+
 	params := map[string]interface{}{
 		"document_id":      documentID,
 		"tenant_id":        tenantID,
@@ -1362,18 +1362,18 @@ func (s *DocumentService) updateDocumentStorage(ctx context.Context, documentID,
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
 	`
-	
+
 	tenantResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, tenantQuery, map[string]interface{}{
 		"document_id": documentID,
 	})
 	if err != nil {
 		return err
 	}
-	
+
 	if len(tenantResult.Records) == 0 {
 		return errors.NotFound("Document not found")
 	}
-	
+
 	tenantID := ""
 	if val, ok := tenantResult.Records[0].Get("tenant_id"); ok && val != nil {
 		tenantID = val.(string)
@@ -1598,7 +1598,7 @@ func hasGetMethod(record interface{}) bool {
 	}
 	recordValue := reflect.ValueOf(record)
 	recordType := recordValue.Type()
-	
+
 	// Check if it has a Get method
 	_, hasGet := recordType.MethodByName("Get")
 	return hasGet
@@ -1607,14 +1607,14 @@ func hasGetMethod(record interface{}) bool {
 // Generic record processor that works with any type that has Get(string) method
 func (s *DocumentService) recordToDocumentResponseGeneric(record interface{}) (*models.DocumentResponse, error) {
 	recordValue := reflect.ValueOf(record)
-	
+
 	// Helper function to safely get values using reflection
 	getValue := func(key string) interface{} {
 		getMethod := recordValue.MethodByName("Get")
 		if !getMethod.IsValid() {
 			return nil
 		}
-		
+
 		results := getMethod.Call([]reflect.Value{reflect.ValueOf(key)})
 		if len(results) >= 2 {
 			// Get method typically returns (value, found)
@@ -1627,7 +1627,7 @@ func (s *DocumentService) recordToDocumentResponseGeneric(record interface{}) (*
 		}
 		return nil
 	}
-	
+
 	// Helper function to safely get string values
 	getString := func(key string) string {
 		if val := getValue(key); val != nil {
@@ -1718,7 +1718,7 @@ func (s *DocumentService) recordToDocumentResponse(record interface{}) (*models.
 	// Cast record to proper type - handle multiple possible record types
 	var neo4jRecord neo4j.Record
 	var ok bool
-	
+
 	// Try different possible types
 	switch r := record.(type) {
 	case neo4j.Record:
@@ -1733,12 +1733,12 @@ func (s *DocumentService) recordToDocumentResponse(record interface{}) (*models.
 			// If it has a Get method like neo4j.Record, we can work with it directly
 			return s.recordToDocumentResponseGeneric(record)
 		}
-		s.logger.Error("Invalid record type in recordToDocumentResponse", 
+		s.logger.Error("Invalid record type in recordToDocumentResponse",
 			zap.String("type", fmt.Sprintf("%T", record)),
 			zap.String("expected", "neo4j.Record"))
 		return nil, fmt.Errorf("invalid record type: %T", record)
 	}
-	
+
 	if !ok {
 		return nil, fmt.Errorf("failed to convert record to neo4j.Record")
 	}
@@ -1805,17 +1805,17 @@ func (s *DocumentService) recordToDocumentResponse(record interface{}) (*models.
 
 	// Build the DocumentResponse
 	doc := &models.DocumentResponse{
-		ID:           getString("d.id"),
-		Name:         getString("d.name"),
-		Description:  getString("d.description"),
-		Type:         getString("d.type"),
-		Status:       getString("d.status"),
-		OriginalName: getString("d.original_name"),
-		MimeType:     getString("d.mime_type"),
-		SizeBytes:    getInt64("d.size_bytes"),
-		NotebookID:   getString("d.notebook_id"),
-		OwnerID:      getString("d.owner_id"),
-		Tags:         getStringArray("d.tags"),
+		ID:            getString("d.id"),
+		Name:          getString("d.name"),
+		Description:   getString("d.description"),
+		Type:          getString("d.type"),
+		Status:        getString("d.status"),
+		OriginalName:  getString("d.original_name"),
+		MimeType:      getString("d.mime_type"),
+		SizeBytes:     getInt64("d.size_bytes"),
+		NotebookID:    getString("d.notebook_id"),
+		OwnerID:       getString("d.owner_id"),
+		Tags:          getStringArray("d.tags"),
 		ExtractedText: getString("d.extracted_text"),
 		ProcessingTime: func() *int64 {
 			if val, found := neo4jRecord.Get("d.processing_time"); found && val != nil {
@@ -1833,16 +1833,16 @@ func (s *DocumentService) recordToDocumentResponse(record interface{}) (*models.
 			}
 			return nil
 		}(),
-		ProcessedAt:  getTimePtr("d.processed_at"),
-		CreatedAt:    getTime("d.created_at"),
-		UpdatedAt:    getTime("d.updated_at"),
+		ProcessedAt: getTimePtr("d.processed_at"),
+		CreatedAt:   getTime("d.created_at"),
+		UpdatedAt:   getTime("d.updated_at"),
 	}
 
 	// Add owner information if available
 	ownerUsername := getString("owner.username")
 	ownerFullName := getString("owner.full_name")
 	ownerAvatarURL := getString("owner.avatar_url")
-	
+
 	if ownerUsername != "" || ownerFullName != "" {
 		doc.Owner = &models.PublicUserResponse{
 			ID:        doc.OwnerID,
@@ -1857,7 +1857,7 @@ func (s *DocumentService) recordToDocumentResponse(record interface{}) (*models.
 
 // DownloadDocumentFile downloads the file content for a document
 func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, userID string, spaceContext *models.SpaceContext) ([]byte, *models.Document, error) {
-	s.logger.Info("Starting document file download", 
+	s.logger.Info("Starting document file download",
 		zap.String("document_id", documentID),
 		zap.String("user_id", userID),
 	)
@@ -1865,7 +1865,7 @@ func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, 
 	// First, get the document to verify access and get storage info
 	document, err := s.GetDocumentByID(ctx, documentID, userID, spaceContext)
 	if err != nil {
-		s.logger.Error("Failed to get document for download", 
+		s.logger.Error("Failed to get document for download",
 			zap.String("document_id", documentID),
 			zap.Error(err),
 		)
@@ -1874,7 +1874,7 @@ func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, 
 
 	// Check if the document has storage path
 	if document.StoragePath == "" {
-		s.logger.Error("Document has no storage path", 
+		s.logger.Error("Document has no storage path",
 			zap.String("document_id", documentID),
 		)
 		return nil, nil, fmt.Errorf("document file not available for download")
@@ -1888,7 +1888,7 @@ func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, 
 		if len(parts) == 2 {
 			key = parts[1]
 		} else {
-			s.logger.Error("Invalid storage path format", 
+			s.logger.Error("Invalid storage path format",
 				zap.String("document_id", documentID),
 				zap.String("storage_path", document.StoragePath),
 			)
@@ -1909,7 +1909,7 @@ func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, 
 
 	fileData, err := s.storageService.DownloadFileFromTenantBucket(ctx, spaceContext.TenantID, key)
 	if err != nil {
-		s.logger.Error("Failed to download file from storage", 
+		s.logger.Error("Failed to download file from storage",
 			zap.String("document_id", documentID),
 			zap.String("key", key),
 			zap.String("tenant_id", spaceContext.TenantID),
@@ -1918,7 +1918,7 @@ func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, 
 		return nil, nil, fmt.Errorf("failed to download file: %w", err)
 	}
 
-	s.logger.Info("Document file downloaded successfully", 
+	s.logger.Info("Document file downloaded successfully",
 		zap.String("document_id", documentID),
 		zap.String("original_name", document.OriginalName),
 		zap.Int("size_bytes", len(fileData)),
@@ -1929,7 +1929,7 @@ func (s *DocumentService) DownloadDocumentFile(ctx context.Context, documentID, 
 
 // ReprocessDocument resubmits a document for text extraction processing
 func (s *DocumentService) ReprocessDocument(ctx context.Context, document *models.Document, spaceContext *models.SpaceContext) (*models.ProcessingJob, error) {
-	s.logger.Info("Starting document reprocessing", 
+	s.logger.Info("Starting document reprocessing",
 		zap.String("document_id", document.ID),
 		zap.String("original_name", document.OriginalName),
 		zap.String("tenant_id", spaceContext.TenantID),
@@ -1962,18 +1962,18 @@ func (s *DocumentService) ReprocessDocument(ctx context.Context, document *model
 
 	// Create processing job
 	job := &models.ProcessingJob{
-		ID:          uuid.New().String(),
-		DocumentID:  document.ID,
-		Type:        "reprocess_document",
-		Status:      "pending",
-		Priority:    1, // High priority for reprocessing
+		ID:         uuid.New().String(),
+		DocumentID: document.ID,
+		Type:       "reprocess_document",
+		Status:     "pending",
+		Priority:   1, // High priority for reprocessing
 		Config: map[string]interface{}{
 			"original_name": document.OriginalName,
-			"mime_type": document.MimeType,
-			"reprocessing": true,
-			"reason": "manual_reprocess",
-			"created_by": spaceContext.UserID,
-			"tenant_id": spaceContext.TenantID,
+			"mime_type":     document.MimeType,
+			"reprocessing":  true,
+			"reason":        "manual_reprocess",
+			"created_by":    spaceContext.UserID,
+			"tenant_id":     spaceContext.TenantID,
 		},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -1988,10 +1988,10 @@ func (s *DocumentService) ReprocessDocument(ctx context.Context, document *model
 				zap.String("job_id", job.ID),
 				zap.Error(err),
 			)
-			
+
 			// Revert document status back to its previous state
 			_ = s.updateDocumentStatus(ctx, document.ID, document.Status, nil, "")
-			
+
 			return nil, fmt.Errorf("failed to submit reprocessing job: %w", err)
 		}
 		job = submittedJob
@@ -2006,7 +2006,6 @@ func (s *DocumentService) ReprocessDocument(ctx context.Context, document *model
 	return job, nil
 }
 
-
 // clearDocumentProcessingData clears extracted text and processing results to prepare for reprocessing
 func (s *DocumentService) clearDocumentProcessingData(ctx context.Context, documentID, tenantID string) error {
 	query := `
@@ -2017,11 +2016,11 @@ func (s *DocumentService) clearDocumentProcessingData(ctx context.Context, docum
 		    d.updated_at = $updated_at
 		RETURN d.id
 	`
-	
+
 	params := map[string]interface{}{
 		"document_id": documentID,
-		"tenant_id": tenantID,
-		"updated_at": time.Now().UTC(),
+		"tenant_id":   tenantID,
+		"updated_at":  time.Now().UTC(),
 	}
 
 	result, err := s.neo4j.ExecuteQuery(ctx, query, params)
@@ -2031,11 +2030,11 @@ func (s *DocumentService) clearDocumentProcessingData(ctx context.Context, docum
 	if len(result.Records) == 0 {
 		return fmt.Errorf("document not found: %s", documentID)
 	}
-	
+
 	s.logger.Debug("Cleared document processing data for reprocessing",
 		zap.String("document_id", documentID),
 	)
-	
+
 	return nil
 }
 
@@ -2044,10 +2043,10 @@ func (s *DocumentService) isPlaceholderText(text string) bool {
 	if text == "" {
 		return false
 	}
-	
+
 	// Convert to lowercase for case-insensitive matching
 	lowerText := strings.ToLower(text)
-	
+
 	// Common placeholder/sample text patterns
 	placeholderPatterns := []string{
 		"this is a sample",
@@ -2062,14 +2061,14 @@ func (s *DocumentService) isPlaceholderText(text string) bool {
 		"demo content",
 		"example text",
 	}
-	
+
 	// Check for placeholder patterns
 	for _, pattern := range placeholderPatterns {
 		if strings.Contains(lowerText, pattern) {
 			return true
 		}
 	}
-	
+
 	// Check for suspiciously short generic text (less than 50 chars and contains common generic words)
 	if len(text) < 50 {
 		genericWords := []string{"document", "processed", "extracted", "analyzed", "sample", "test", "demo"}
@@ -2084,20 +2083,20 @@ func (s *DocumentService) isPlaceholderText(text string) bool {
 			return true
 		}
 	}
-	
+
 	// Check for exact matches to known placeholder text
 	knownPlaceholders := []string{
 		"This is a sample PDF document processed by AudiModal ML service. The document contains important information that has been extracted and analyzed.",
 		"Sample document content for testing purposes.",
 		"Default extracted text.",
 	}
-	
+
 	for _, placeholder := range knownPlaceholders {
 		if text == placeholder {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -2121,7 +2120,7 @@ func (s *DocumentService) monitorProcessingResult(ctx context.Context, documentI
 				zap.String("metric", "processing_success"),
 			)
 		}
-		
+
 	case "failed":
 		s.logger.Error("Document processing failed",
 			zap.String("document_id", documentID),
@@ -2129,10 +2128,10 @@ func (s *DocumentService) monitorProcessingResult(ctx context.Context, documentI
 			zap.String("error_message", errorMsg),
 			zap.String("alert", "processing_failure"),
 		)
-		
+
 		// Record failure metrics
 		s.recordProcessingFailure(ctx, documentID, tenantID, errorMsg)
-		
+
 	case "error":
 		s.logger.Error("Document processing error",
 			zap.String("document_id", documentID),
@@ -2140,10 +2139,10 @@ func (s *DocumentService) monitorProcessingResult(ctx context.Context, documentI
 			zap.String("error_message", errorMsg),
 			zap.String("alert", "processing_error"),
 		)
-		
+
 		// Record error metrics
 		s.recordProcessingFailure(ctx, documentID, tenantID, errorMsg)
-		
+
 	default:
 		s.logger.Debug("Document processing status updated",
 			zap.String("document_id", documentID),
@@ -2167,12 +2166,12 @@ func (s *DocumentService) recordProcessingFailure(ctx context.Context, documentI
 		              f.created_at = $timestamp
 		RETURN f.failure_count as count
 	`
-	
+
 	params := map[string]interface{}{
-		"document_id": documentID,
-		"tenant_id": tenantID,
+		"document_id":   documentID,
+		"tenant_id":     tenantID,
 		"error_message": errorMsg,
-		"timestamp": time.Now().UTC(),
+		"timestamp":     time.Now().UTC(),
 	}
 
 	result, err := s.neo4j.ExecuteQuery(ctx, query, params)
@@ -2210,7 +2209,7 @@ func (s *DocumentService) scheduleRetryProcessing(ctx context.Context, documentI
 	// Calculate exponential backoff delay: 2^retryCount minutes
 	delayMinutes := int(math.Pow(2, float64(retryCount))) // 2, 4, 8 minutes
 	retryAt := time.Now().UTC().Add(time.Duration(delayMinutes) * time.Minute)
-	
+
 	s.logger.Info("Scheduling document processing retry",
 		zap.String("document_id", documentID),
 		zap.String("tenant_id", tenantID),
@@ -2233,15 +2232,15 @@ func (s *DocumentService) scheduleRetryProcessing(ctx context.Context, documentI
 		})
 		RETURN j.id as job_id
 	`
-	
+
 	jobID := uuid.New().String()
 	params := map[string]interface{}{
-		"job_id": jobID,
-		"document_id": documentID,
-		"tenant_id": tenantID,
+		"job_id":        jobID,
+		"document_id":   documentID,
+		"tenant_id":     tenantID,
 		"retry_attempt": retryCount,
-		"retry_at": retryAt,
-		"created_at": time.Now().UTC(),
+		"retry_at":      retryAt,
+		"created_at":    time.Now().UTC(),
 	}
 
 	_, err := s.neo4j.ExecuteQuery(ctx, query, params)
@@ -2262,7 +2261,7 @@ func (s *DocumentService) scheduleRetryProcessing(ctx context.Context, documentI
 func (s *DocumentService) handleScheduledRetry(documentID, tenantID, jobID string, retryAt time.Time) {
 	// Wait for the scheduled time
 	time.Sleep(time.Until(retryAt))
-	
+
 	// Create context for retry operation
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -2296,7 +2295,7 @@ func (s *DocumentService) handleScheduledRetry(documentID, tenantID, jobID strin
 	// Attempt reprocessing
 	spaceContext := &models.SpaceContext{
 		TenantID: tenantID,
-		UserID: document.OwnerID, // Use document owner for retry context
+		UserID:   document.OwnerID, // Use document owner for retry context
 	}
 
 	_, err = s.ReprocessDocument(ctx, document, spaceContext)
@@ -2332,10 +2331,10 @@ func (s *DocumentService) updateRetryJobStatus(ctx context.Context, jobID, statu
 		SET j.status = $status, j.updated_at = $updated_at
 		RETURN j.id
 	`
-	
+
 	params := map[string]interface{}{
-		"job_id": jobID,
-		"status": status,
+		"job_id":     jobID,
+		"status":     status,
 		"updated_at": time.Now().UTC(),
 	}
 
@@ -2364,10 +2363,10 @@ func (s *DocumentService) getDocumentForRetry(ctx context.Context, documentID, t
 		       d.space_id as space_id,
 		       d.tenant_id as tenant_id
 	`
-	
+
 	params := map[string]interface{}{
 		"document_id": documentID,
-		"tenant_id": tenantID,
+		"tenant_id":   tenantID,
 	}
 
 	result, err := s.neo4j.ExecuteQuery(ctx, query, params)

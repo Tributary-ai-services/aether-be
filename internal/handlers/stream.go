@@ -74,8 +74,8 @@ func (h *StreamHandler) CreateStreamSource(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Creating stream source", 
-		zap.String("name", req.Name), 
+	h.logger.Info("Creating stream source",
+		zap.String("name", req.Name),
 		zap.String("type", req.Type),
 		zap.String("provider", req.Provider),
 		zap.String("user_id", userID))
@@ -130,9 +130,9 @@ func (h *StreamHandler) GetStreamSources(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Getting stream sources", 
-		zap.String("user_id", userID), 
-		zap.Int("limit", limit), 
+	h.logger.Info("Getting stream sources",
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
 		zap.Int("offset", offset))
 
 	sources, total, err := h.streamService.GetStreamSources(c.Request.Context(), spaceContext, limit, offset)
@@ -347,7 +347,7 @@ func (h *StreamHandler) GetLiveEvents(c *gin.Context) {
 
 	// Parse filters
 	filters := models.StreamFilters{}
-	
+
 	if sourceIDs := c.Query("source_ids"); sourceIDs != "" {
 		filters.SourceIDs = parseCommaSeparated(sourceIDs)
 	}
@@ -366,9 +366,9 @@ func (h *StreamHandler) GetLiveEvents(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Getting live events", 
-		zap.String("user_id", userID), 
-		zap.Int("limit", limit), 
+	h.logger.Info("Getting live events",
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
 		zap.Int("offset", offset),
 		zap.Any("filters", filters))
 
@@ -405,12 +405,12 @@ func (h *StreamHandler) GetLiveEvents(c *gin.Context) {
 // @Router /api/v1/streams/events [post]
 func (h *StreamHandler) IngestEvent(c *gin.Context) {
 	var req struct {
-		SourceID   string                 `json:"source_id" binding:"required"`
-		EventType  string                 `json:"event_type" binding:"required"`
-		Content    string                 `json:"content" binding:"required"`
-		MediaType  string                 `json:"media_type" binding:"required"`
-		MediaURL   string                 `json:"media_url,omitempty"`
-		Metadata   map[string]interface{} `json:"metadata"`
+		SourceID  string                 `json:"source_id" binding:"required"`
+		EventType string                 `json:"event_type" binding:"required"`
+		Content   string                 `json:"content" binding:"required"`
+		MediaType string                 `json:"media_type" binding:"required"`
+		MediaURL  string                 `json:"media_url,omitempty"`
+		Metadata  map[string]interface{} `json:"metadata"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -431,7 +431,7 @@ func (h *StreamHandler) IngestEvent(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Ingesting live event", 
+	h.logger.Info("Ingesting live event",
 		zap.String("source_id", req.SourceID),
 		zap.String("event_type", req.EventType),
 		zap.String("media_type", req.MediaType),
@@ -522,7 +522,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 
 	// Parse filters from query parameters
 	filters := models.StreamFilters{}
-	
+
 	if sourceIDs := c.Query("source_ids"); sourceIDs != "" {
 		filters.SourceIDs = parseCommaSeparated(sourceIDs)
 	}
@@ -541,7 +541,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Starting WebSocket event stream", 
+	h.logger.Info("Starting WebSocket event stream",
 		zap.String("user_id", userID),
 		zap.String("tenant_id", spaceContext.TenantID),
 		zap.Any("filters", filters))
@@ -556,7 +556,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 
 	// Create stream connection
 	streamConn := models.NewStreamConnection(userID, spaceContext.TenantID, filters)
-	
+
 	// Register connection with stream service
 	h.streamService.AddStreamConnection(streamConn)
 	defer h.streamService.RemoveStreamConnection(streamConn.ID)
@@ -566,7 +566,7 @@ func (h *StreamHandler) StreamEvents(c *gin.Context) {
 		Type:      "connection_established",
 		Timestamp: time.Now(),
 	}
-	
+
 	if err := conn.WriteJSON(confirmationMsg); err != nil {
 		h.logger.Error("Failed to send connection confirmation", zap.Error(err))
 		return
@@ -740,13 +740,13 @@ func parseCommaSeparated(input string) []string {
 	if input == "" {
 		return nil
 	}
-	
+
 	parts := make([]string, 0)
 	for _, part := range strings.Split(input, ",") {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			parts = append(parts, trimmed)
 		}
 	}
-	
+
 	return parts
 }

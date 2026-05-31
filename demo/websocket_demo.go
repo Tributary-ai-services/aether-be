@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -22,14 +23,14 @@ var upgrader = websocket.Upgrader{
 
 func main() {
 	fmt.Println("🚀 Starting Aether WebSocket Demo Server...")
-	
+
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
 
 	// Serve demo HTML page
 	router.GET("/", serveDemoPage)
-	
+
 	// WebSocket endpoints for demo
 	router.GET("/demo/job-status", handleJobStatusDemo)
 	router.GET("/demo/live-stream", handleLiveStreamDemo)
@@ -43,7 +44,7 @@ func main() {
 	fmt.Println("  • ws://localhost:8888/demo/live-stream - Live event streaming")
 	fmt.Println("  • ws://localhost:8888/demo/document-status - Document processing")
 	fmt.Println("")
-	
+
 	log.Fatal(http.ListenAndServe(":8888", router))
 }
 
@@ -272,7 +273,7 @@ func serveDemoPage(c *gin.Context) {
     </script>
 </body>
 </html>`
-	
+
 	c.Header("Content-Type", "text/html")
 	c.String(http.StatusOK, html)
 }
@@ -292,12 +293,12 @@ func handleJobStatusDemo(c *gin.Context) {
 		for progress := 0; progress <= 100; progress += 5 {
 			status := "processing"
 			message := "Processing document..."
-			
+
 			if progress == 100 {
 				status = "completed"
 				message = "Document processing completed successfully!"
 			}
-			
+
 			jobUpdate := map[string]interface{}{
 				"type": "job_status",
 				"data": map[string]interface{}{
@@ -308,12 +309,12 @@ func handleJobStatusDemo(c *gin.Context) {
 				},
 				"timestamp": time.Now().Format(time.RFC3339),
 			}
-			
+
 			if err := conn.WriteJSON(jobUpdate); err != nil {
 				log.Printf("Error sending job update: %v", err)
 				return
 			}
-			
+
 			time.Sleep(2 * time.Second)
 		}
 	}()
@@ -343,14 +344,14 @@ func handleLiveStreamDemo(c *gin.Context) {
 		eventTypes := []string{"mention", "multimodal", "document", "video"}
 		sentiments := []string{"positive", "neutral", "negative"}
 		sentimentScores := map[string]float64{"positive": 0.85, "neutral": 0.05, "negative": -0.75}
-		
+
 		eventsProcessed := 0
-		
+
 		for {
 			// Send live event
 			eventType := eventTypes[eventsProcessed%len(eventTypes)]
 			sentiment := sentiments[eventsProcessed%len(sentiments)]
-			
+
 			event := models.LiveEvent{
 				ID:             fmt.Sprintf("demo-event-%d", eventsProcessed+1),
 				StreamSourceID: "demo-source-twitter",
@@ -372,26 +373,26 @@ func handleLiveStreamDemo(c *gin.Context) {
 				Event:     &event,
 				Timestamp: time.Now(),
 			}
-			
+
 			if err := conn.WriteJSON(eventMessage); err != nil {
 				log.Printf("Error sending live event: %v", err)
 				return
 			}
-			
+
 			eventsProcessed++
-			
+
 			// Send analytics update every 5 events
 			if eventsProcessed%5 == 0 {
 				analytics := models.StreamAnalytics{
-					ID:                   fmt.Sprintf("demo-analytics-%d", eventsProcessed),
-					Period:               "realtime",
-					Timestamp:            time.Now(),
-					ActiveStreams:        3,
-					TotalEventsProcessed: int64(eventsProcessed),
-					EventsPerSecond:      float64(eventsProcessed) / 10.0, // Rough calculation
-					MediaProcessed:       2400000 + int64(eventsProcessed*100),
+					ID:                    fmt.Sprintf("demo-analytics-%d", eventsProcessed),
+					Period:                "realtime",
+					Timestamp:             time.Now(),
+					ActiveStreams:         3,
+					TotalEventsProcessed:  int64(eventsProcessed),
+					EventsPerSecond:       float64(eventsProcessed) / 10.0, // Rough calculation
+					MediaProcessed:        2400000 + int64(eventsProcessed*100),
 					AverageProcessingTime: 125.5,
-					AverageAuditScore:    0.991,
+					AverageAuditScore:     0.991,
 					SentimentDistribution: map[string]int64{
 						"positive": int64(eventsProcessed / 3),
 						"neutral":  int64(eventsProcessed / 3),
@@ -410,13 +411,13 @@ func handleLiveStreamDemo(c *gin.Context) {
 					Analytics: &analytics,
 					Timestamp: time.Now(),
 				}
-				
+
 				if err := conn.WriteJSON(analyticsMessage); err != nil {
 					log.Printf("Error sending analytics: %v", err)
 					return
 				}
 			}
-			
+
 			time.Sleep(3 * time.Second)
 		}
 	}()
@@ -457,13 +458,13 @@ func handleDocumentStatusDemo(c *gin.Context) {
 			{95, "Finalizing results...", 1 * time.Second},
 			{100, "Document processing completed! Ready for search and analysis.", 0},
 		}
-		
+
 		for _, stage := range stages {
 			status := "processing"
 			if stage.progress == 100 {
 				status = "completed"
 			}
-			
+
 			docUpdate := map[string]interface{}{
 				"type": "document_status",
 				"data": map[string]interface{}{
@@ -475,12 +476,12 @@ func handleDocumentStatusDemo(c *gin.Context) {
 				},
 				"timestamp": time.Now().Format(time.RFC3339),
 			}
-			
+
 			if err := conn.WriteJSON(docUpdate); err != nil {
 				log.Printf("Error sending document update: %v", err)
 				return
 			}
-			
+
 			if stage.delay > 0 {
 				time.Sleep(stage.delay)
 			}

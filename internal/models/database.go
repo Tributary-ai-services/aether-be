@@ -52,9 +52,9 @@ type Database struct {
 	Protocol string       `json:"protocol,omitempty"` // Neo4j connection protocol (bolt, bolt+s, bolt+ssc, neo4j, neo4j+s, neo4j+ssc)
 
 	// Kubernetes references
-	SecretName      string `json:"secret_name"`      // K8s Secret with credentials
+	SecretName      string `json:"secret_name"` // K8s Secret with credentials
 	SecretNamespace string `json:"secret_namespace"`
-	CRDName         string `json:"crd_name"`         // Database CR name
+	CRDName         string `json:"crd_name"` // Database CR name
 	CRDNamespace    string `json:"crd_namespace"`
 
 	// Policy

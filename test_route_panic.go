@@ -1,11 +1,11 @@
 //go:build ignore
+
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
-
 
 	"github.com/Tributary-ai-services/aether-be/internal/auth"
 	"github.com/Tributary-ai-services/aether-be/internal/config"
