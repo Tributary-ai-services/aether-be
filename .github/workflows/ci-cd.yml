@@ -43,23 +43,22 @@ jobs:
         ports:
           - 6379:6379
       
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin123
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 3
-    
+      # NOTE: MinIO is NOT a service container. The official minio/minio image
+      # needs the `server /data` command, and GitHub Actions service containers
+      # cannot pass a command/args — so it is started as a step below.
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
+    - name: Start MinIO
+      run: |
+        docker run -d --name minio \
+          -p 9000:9000 -p 9001:9001 \
+          -e MINIO_ROOT_USER=minioadmin \
+          -e MINIO_ROOT_PASSWORD=minioadmin123 \
+          minio/minio:latest server /data --console-address ":9001"
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
