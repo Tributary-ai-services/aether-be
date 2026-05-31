@@ -52,10 +52,10 @@ type MCPRequest struct {
 
 // MCPResponse represents an MCP tool call response
 type MCPResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Result  *MCPResult  `json:"result,omitempty"`
-	Error   *MCPError   `json:"error,omitempty"`
+	JSONRPC string     `json:"jsonrpc"`
+	ID      int        `json:"id"`
+	Result  *MCPResult `json:"result,omitempty"`
+	Error   *MCPError  `json:"error,omitempty"`
 }
 
 // MCPResult represents the result of an MCP call

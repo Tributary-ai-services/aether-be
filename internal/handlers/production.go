@@ -906,7 +906,7 @@ type NotebookChatRequest struct {
 
 // NotebookChatMessage represents a message in the chat history
 type NotebookChatMessage struct {
-	Role    string `json:"role"`    // "user" or "assistant"
+	Role    string `json:"role"` // "user" or "assistant"
 	Content string `json:"content"`
 }
 

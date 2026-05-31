@@ -19,17 +19,17 @@ import (
 // EmbeddingIntegrationTestSuite tests end-to-end embedding generation
 type EmbeddingIntegrationTestSuite struct {
 	suite.Suite
-	config          *utils.TestConfig
+	config           *utils.TestConfig
 	embeddingService *services.EmbeddingService
 	deepLakeService  *services.DeepLakeService
 	openAIProvider   *services.OpenAIEmbeddingProvider
-	log             *logger.Logger
+	log              *logger.Logger
 }
 
 // SetupSuite prepares the test suite
 func (suite *EmbeddingIntegrationTestSuite) SetupSuite() {
 	suite.config = utils.SetupTestEnvironment(suite.T())
-	
+
 	// Initialize logger
 	var err error
 	suite.log, err = logger.NewDefault()
@@ -192,7 +192,7 @@ func (suite *EmbeddingIntegrationTestSuite) TestBatchEmbeddingService() {
 			ChunkID: "batch-chunk-002",
 			Content: "Second chunk with different content.",
 			Metadata: map[string]interface{}{
-				"document_id": "batch-doc-001", 
+				"document_id": "batch-doc-001",
 				"chunk_type":  "text",
 			},
 		},
@@ -260,7 +260,7 @@ func (suite *EmbeddingIntegrationTestSuite) TestDeepLakeIntegration() {
 	// Test similarity search
 	results, err := suite.deepLakeService.SearchSimilar(ctx, testEmbedding, 5, 0.7)
 	assert.NoError(suite.T(), err, "Should perform similarity search")
-	
+
 	if len(results) > 0 {
 		// Should find the vector we just stored
 		found := false
@@ -287,7 +287,7 @@ func (suite *EmbeddingIntegrationTestSuite) TestEmbeddingPerformance() {
 	start := time.Now()
 	_, err := suite.openAIProvider.GenerateEmbedding(ctx, "Performance test content")
 	singleDuration := time.Since(start)
-	
+
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), singleDuration < 10*time.Second, "Single embedding should complete within 10 seconds")
 
@@ -310,7 +310,7 @@ func (suite *EmbeddingIntegrationTestSuite) TestEmbeddingPerformance() {
 	suite.T().Logf("Single embedding time: %v", singleDuration)
 	suite.T().Logf("Batch embedding time: %v", batchDuration)
 	suite.T().Logf("Estimated individual time: %v", estimatedIndividualTime)
-	
+
 	if estimatedIndividualTime > batchDuration {
 		suite.T().Logf("Batch processing is more efficient (%.2fx faster)",
 			float64(estimatedIndividualTime)/float64(batchDuration))

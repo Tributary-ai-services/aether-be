@@ -363,7 +363,7 @@ var (
 	noscriptBlockRegex = regexp.MustCompile(`(?is)<noscript[^>]*>.*?</noscript>`)
 
 	// Event handlers (onclick, onerror, onload, onmouseover, onfocus, etc.)
-	eventHandlerRegex = regexp.MustCompile(`(?i)\s+on\w+\s*=\s*["'][^"']*["']`)
+	eventHandlerRegex         = regexp.MustCompile(`(?i)\s+on\w+\s*=\s*["'][^"']*["']`)
 	eventHandlerUnquotedRegex = regexp.MustCompile(`(?i)\s+on\w+\s*=\s*[^\s>]+`)
 
 	// JavaScript URLs
@@ -376,13 +376,13 @@ var (
 	dataURLXSSRegex = regexp.MustCompile(`(?i)data\s*:\s*text/html`)
 
 	// Dangerous tags (complete removal including content for some)
-	iframeRegex  = regexp.MustCompile(`(?is)<iframe[^>]*>.*?</iframe>|<iframe[^>]*/>|<iframe[^>]*>`)
-	objectRegex  = regexp.MustCompile(`(?is)<object[^>]*>.*?</object>|<object[^>]*/>|<object[^>]*>`)
-	embedRegex   = regexp.MustCompile(`(?i)<embed[^>]*>`)  // embed is typically self-closing
-	appletRegex  = regexp.MustCompile(`(?is)<applet[^>]*>.*?</applet>`)
-	formRegex    = regexp.MustCompile(`(?is)<form[^>]*>.*?</form>`)
-	inputRegex   = regexp.MustCompile(`(?i)<input[^>]*>`)
-	buttonRegex  = regexp.MustCompile(`(?is)<button[^>]*>.*?</button>|<button[^>]*/>|<button[^>]*>`)
+	iframeRegex    = regexp.MustCompile(`(?is)<iframe[^>]*>.*?</iframe>|<iframe[^>]*/>|<iframe[^>]*>`)
+	objectRegex    = regexp.MustCompile(`(?is)<object[^>]*>.*?</object>|<object[^>]*/>|<object[^>]*>`)
+	embedRegex     = regexp.MustCompile(`(?i)<embed[^>]*>`) // embed is typically self-closing
+	appletRegex    = regexp.MustCompile(`(?is)<applet[^>]*>.*?</applet>`)
+	formRegex      = regexp.MustCompile(`(?is)<form[^>]*>.*?</form>`)
+	inputRegex     = regexp.MustCompile(`(?i)<input[^>]*>`)
+	buttonRegex    = regexp.MustCompile(`(?is)<button[^>]*>.*?</button>|<button[^>]*/>|<button[^>]*>`)
 	svgScriptRegex = regexp.MustCompile(`(?is)<svg[^>]*>.*?</svg>`)
 
 	// Base tag (can redirect resources)

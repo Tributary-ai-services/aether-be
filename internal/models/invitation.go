@@ -5,7 +5,7 @@ import "time"
 // Invitation represents an invitation to share a resource
 type Invitation struct {
 	ID           string    `json:"id"`
-	Type         string    `json:"type"`         // "notebook_share"
+	Type         string    `json:"type"` // "notebook_share"
 	InviterID    string    `json:"inviterId"`
 	InviteeEmail string    `json:"inviteeEmail"`
 	ResourceID   string    `json:"resourceId"`

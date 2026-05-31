@@ -51,18 +51,18 @@ func TestABFramework(t *testing.T) {
 				MinimumImprovement: 5.0,
 			},
 			{
-				Name:              "processing_time",
-				Type:              MetricTypeHistogram,
-				Target:            MetricTargetLowerIsBetter,
+				Name:               "processing_time",
+				Type:               MetricTypeHistogram,
+				Target:             MetricTargetLowerIsBetter,
 				MaximumDegradation: 10.0,
 			},
 		},
 		Config: ExperimentConfig{
-			MinimumSampleSize:    1000,
-			ConfidenceLevel:      0.95,
-			PowerLevel:           0.80,
+			MinimumSampleSize:     1000,
+			ConfidenceLevel:       0.95,
+			PowerLevel:            0.80,
 			AllowEarlyTermination: true,
-			MaxDuration:          14 * 24 * time.Hour,
+			MaxDuration:           14 * 24 * time.Hour,
 		},
 	}
 
@@ -98,7 +98,7 @@ func TestABFramework(t *testing.T) {
 
 func TestTrafficSplitter(t *testing.T) {
 	splitter := NewTrafficSplitter()
-	
+
 	experiment := &Experiment{
 		ID:          "test_experiment",
 		Name:        "Test Experiment",
@@ -116,17 +116,17 @@ func TestTrafficSplitter(t *testing.T) {
 			},
 		},
 	}
-	
+
 	splitter.ConfigureExperiment(experiment)
-	
+
 	// Test variant assignment consistency
 	userID := "test_user_123"
 	variant1, err := splitter.GetVariant(experiment.ID, userID)
 	require.NoError(t, err)
-	
+
 	variant2, err := splitter.GetVariant(experiment.ID, userID)
 	require.NoError(t, err)
-	
+
 	// Same user should always get same variant
 	assert.Equal(t, variant1.ID, variant2.ID)
 	assert.Contains(t, []string{"control", "treatment"}, variant1.ID)
@@ -134,22 +134,22 @@ func TestTrafficSplitter(t *testing.T) {
 
 func TestMetricsCollector(t *testing.T) {
 	collector := NewMetricsCollector()
-	
+
 	experimentID := "test_experiment"
 	variantID := "test_variant"
 	metricName := "test_metric"
-	
+
 	// Test metric recording
 	err := collector.RecordMetric(experimentID, variantID, metricName, 100.0)
 	require.NoError(t, err)
-	
+
 	err = collector.RecordMetric(experimentID, variantID, metricName, 200.0)
 	require.NoError(t, err)
-	
+
 	// Verify metrics are stored
 	key := fmt.Sprintf("%s_%s", variantID, metricName)
 	values := collector.data[experimentID][key]
-	
+
 	assert.Len(t, values, 2)
 	assert.Equal(t, 100.0, values[0])
 	assert.Equal(t, 200.0, values[1])
@@ -157,16 +157,16 @@ func TestMetricsCollector(t *testing.T) {
 
 func TestExperimentValidation(t *testing.T) {
 	framework := NewABTestingFramework()
-	
+
 	// Test invalid experiment - no ID
 	invalidExperiment := &Experiment{
 		Name: "Test Experiment",
 	}
-	
+
 	err := framework.CreateExperiment(invalidExperiment)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "experiment ID is required")
-	
+
 	// Test invalid experiment - traffic percentages don't sum to 100
 	invalidTrafficExperiment := &Experiment{
 		ID:   "test_experiment",
@@ -178,7 +178,7 @@ func TestExperimentValidation(t *testing.T) {
 		Metrics:  []MetricDefinition{{Name: "test_metric"}},
 		Duration: time.Hour,
 	}
-	
+
 	err = framework.CreateExperiment(invalidTrafficExperiment)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "must sum to 100")
@@ -186,7 +186,7 @@ func TestExperimentValidation(t *testing.T) {
 
 func TestExperimentStates(t *testing.T) {
 	framework := NewABTestingFramework()
-	
+
 	experiment := &Experiment{
 		ID:       "state_test",
 		Name:     "State Test",
@@ -197,22 +197,22 @@ func TestExperimentStates(t *testing.T) {
 		},
 		Metrics: []MetricDefinition{{Name: "test_metric"}},
 	}
-	
+
 	// Create experiment
 	err := framework.CreateExperiment(experiment)
 	require.NoError(t, err)
 	assert.Equal(t, ExperimentStatusDraft, experiment.Status)
-	
+
 	// Start experiment
 	err = framework.StartExperiment(experiment.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ExperimentStatusRunning, experiment.Status)
-	
+
 	// Try to start already running experiment
 	err = framework.StartExperiment(experiment.ID)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in draft status")
-	
+
 	// Stop experiment
 	err = framework.StopExperiment(experiment.ID)
 	require.NoError(t, err)

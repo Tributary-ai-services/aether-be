@@ -7,12 +7,12 @@ import (
 
 // DetectedThreat represents a security threat found in input
 type DetectedThreat struct {
-	Type           string `json:"type"`            // sql_injection, xss, html_injection, control_chars
-	Severity       string `json:"severity"`        // low, medium, high, critical
+	Type           string `json:"type"`     // sql_injection, xss, html_injection, control_chars
+	Severity       string `json:"severity"` // low, medium, high, critical
 	FieldName      string `json:"field_name"`
 	Pattern        string `json:"pattern"`
 	MatchedContent string `json:"matched_content"`
-	Action         string `json:"action"`          // sanitized, isolated, rejected
+	Action         string `json:"action"` // sanitized, isolated, rejected
 }
 
 // ThreatDetector provides threat detection capabilities

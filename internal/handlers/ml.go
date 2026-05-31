@@ -61,8 +61,8 @@ func (h *MLHandler) CreateModel(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Creating ML model", 
-		zap.String("name", req.Name), 
+	h.logger.Info("Creating ML model",
+		zap.String("name", req.Name),
 		zap.String("type", req.Type),
 		zap.String("user_id", userID))
 
@@ -116,9 +116,9 @@ func (h *MLHandler) GetModels(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Getting ML models", 
-		zap.String("user_id", userID), 
-		zap.Int("limit", limit), 
+	h.logger.Info("Getting ML models",
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
 		zap.Int("offset", offset))
 
 	models, total, err := h.mlService.GetModels(c.Request.Context(), spaceContext, limit, offset)
@@ -366,8 +366,8 @@ func (h *MLHandler) CreateExperiment(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Creating ML experiment", 
-		zap.String("name", req.Name), 
+	h.logger.Info("Creating ML experiment",
+		zap.String("name", req.Name),
 		zap.String("model_id", req.ModelID),
 		zap.String("user_id", userID))
 
@@ -425,9 +425,9 @@ func (h *MLHandler) GetExperiments(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Getting ML experiments", 
-		zap.String("user_id", userID), 
-		zap.Int("limit", limit), 
+	h.logger.Info("Getting ML experiments",
+		zap.String("user_id", userID),
+		zap.Int("limit", limit),
 		zap.Int("offset", offset))
 
 	experiments, total, err := h.mlService.GetExperiments(c.Request.Context(), spaceContext, limit, offset)

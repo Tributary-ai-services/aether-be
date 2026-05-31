@@ -30,7 +30,7 @@ type Document struct {
 	// Content and processing
 	ExtractedText    string                 `json:"extracted_text,omitempty"`
 	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
-	ProcessingTime   *int64                 `json:"processingTime,omitempty"` // Processing duration in milliseconds
+	ProcessingTime   *int64                 `json:"processingTime,omitempty"`  // Processing duration in milliseconds
 	ConfidenceScore  *float64               `json:"confidenceScore,omitempty"` // AI confidence score (0.0-1.0)
 	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
 
@@ -48,12 +48,12 @@ type Document struct {
 	Tags       []string `json:"tags,omitempty"`
 
 	// Processing information
-	ProcessingJobID      string     `json:"processing_job_id,omitempty"`
-	ProcessedAt          *time.Time `json:"processed_at,omitempty"`
-	ChunkingStrategy     string     `json:"chunking_strategy,omitempty"`     // Strategy used for chunking
-	ChunkCount           int        `json:"chunk_count" validate:"min=0"`    // Number of chunks created
-	AverageChunkSize     int64      `json:"average_chunk_size,omitempty" validate:"min=0"` // Average chunk size in bytes
-	ChunkQualityScore    *float64   `json:"chunk_quality_score,omitempty" validate:"omitempty,min=0,max=1"` // Average quality across all chunks
+	ProcessingJobID   string     `json:"processing_job_id,omitempty"`
+	ProcessedAt       *time.Time `json:"processed_at,omitempty"`
+	ChunkingStrategy  string     `json:"chunking_strategy,omitempty"`                                    // Strategy used for chunking
+	ChunkCount        int        `json:"chunk_count" validate:"min=0"`                                   // Number of chunks created
+	AverageChunkSize  int64      `json:"average_chunk_size,omitempty" validate:"min=0"`                  // Average chunk size in bytes
+	ChunkQualityScore *float64   `json:"chunk_quality_score,omitempty" validate:"omitempty,min=0,max=1"` // Average quality across all chunks
 
 	// Timestamps
 	CreatedAt time.Time `json:"created_at"`
@@ -86,30 +86,30 @@ type DocumentUpdateRequest struct {
 
 // DocumentResponse represents a document response
 type DocumentResponse struct {
-	ID               string                 `json:"id"`
-	Name             string                 `json:"name"`
-	Description      string                 `json:"description,omitempty"`
-	Type             string                 `json:"type"`
-	Status           string                 `json:"status"`
-	SecurityStatus   DocumentSecurityStatus `json:"security_status,omitempty"`
-	OriginalName     string                 `json:"original_name"`
-	MimeType         string                 `json:"mime_type"`
-	SizeBytes        int64                  `json:"size_bytes"`
-	ExtractedText    string                 `json:"extracted_text,omitempty"`
-	ProcessingResult map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
-	ProcessingTime   *int64                 `json:"processingTime,omitempty"` // Processing duration in milliseconds
-	ConfidenceScore  *float64               `json:"confidenceScore,omitempty"` // AI confidence score (0.0-1.0)
-	Metadata         map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
-	NotebookID           string                 `json:"notebook_id"`
-	OwnerID              string                 `json:"owner_id"`
-	Tags                 []string               `json:"tags,omitempty"`
-	ProcessedAt          *time.Time             `json:"processed_at,omitempty"`
-	ChunkingStrategy     string                 `json:"chunking_strategy,omitempty"`
-	ChunkCount           int                    `json:"chunk_count"`
-	AverageChunkSize     int64                  `json:"average_chunk_size,omitempty"`
-	ChunkQualityScore    *float64               `json:"chunk_quality_score,omitempty"`
-	CreatedAt            time.Time              `json:"created_at"`
-	UpdatedAt            time.Time              `json:"updated_at"`
+	ID                string                 `json:"id"`
+	Name              string                 `json:"name"`
+	Description       string                 `json:"description,omitempty"`
+	Type              string                 `json:"type"`
+	Status            string                 `json:"status"`
+	SecurityStatus    DocumentSecurityStatus `json:"security_status,omitempty"`
+	OriginalName      string                 `json:"original_name"`
+	MimeType          string                 `json:"mime_type"`
+	SizeBytes         int64                  `json:"size_bytes"`
+	ExtractedText     string                 `json:"extracted_text,omitempty"`
+	ProcessingResult  map[string]interface{} `json:"processing_result,omitempty" validate:"omitempty,neo4j_compatible"`
+	ProcessingTime    *int64                 `json:"processingTime,omitempty"`  // Processing duration in milliseconds
+	ConfidenceScore   *float64               `json:"confidenceScore,omitempty"` // AI confidence score (0.0-1.0)
+	Metadata          map[string]interface{} `json:"metadata,omitempty" validate:"omitempty,neo4j_compatible"`
+	NotebookID        string                 `json:"notebook_id"`
+	OwnerID           string                 `json:"owner_id"`
+	Tags              []string               `json:"tags,omitempty"`
+	ProcessedAt       *time.Time             `json:"processed_at,omitempty"`
+	ChunkingStrategy  string                 `json:"chunking_strategy,omitempty"`
+	ChunkCount        int                    `json:"chunk_count"`
+	AverageChunkSize  int64                  `json:"average_chunk_size,omitempty"`
+	ChunkQualityScore *float64               `json:"chunk_quality_score,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 
 	// Optional fields for detailed responses
 	Owner    *PublicUserResponse `json:"owner,omitempty"`
@@ -141,8 +141,8 @@ type DocumentSearchRequest struct {
 // DocumentUploadRequest represents a document upload request
 type DocumentUploadRequest struct {
 	DocumentCreateRequest
-	FileData           []byte                 `json:"-"`                               // File content (not included in JSON)
-	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`   // DLP and compliance settings
+	FileData           []byte                 `json:"-"`                             // File content (not included in JSON)
+	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"` // DLP and compliance settings
 }
 
 // DocumentBase64UploadRequest represents a base64 encoded document upload request
@@ -153,7 +153,6 @@ type DocumentBase64UploadRequest struct {
 	MimeType           string                 `json:"mime_type" validate:"required"`           // MIME type of the file
 	ComplianceSettings map[string]interface{} `json:"compliance_settings,omitempty"`           // DLP and compliance settings
 }
-
 
 // DocumentStats represents document statistics
 type DocumentStats struct {

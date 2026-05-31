@@ -283,7 +283,7 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 		WITH t, r.role as user_role, count(*) as member_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
 		WITH t, user_role, member_count, count(n) as notebook_count
-		RETURN t, user_role, member_count, notebook_count`, 
+		RETURN t, user_role, member_count, notebook_count`,
 		fmt.Sprintf("%s", setParts[0]))
 
 	for i := 1; i < len(setParts); i++ {
@@ -296,8 +296,8 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 		WITH t, r.role as user_role, count(*) as member_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
 		WITH t, user_role, member_count, count(n) as notebook_count
-		RETURN t, user_role, member_count, notebook_count`, 
-		fmt.Sprintf("%s, %s", setParts[0], setParts[i]))
+		RETURN t, user_role, member_count, notebook_count`,
+			fmt.Sprintf("%s, %s", setParts[0], setParts[i]))
 	}
 
 	params["user_id"] = userID
@@ -643,8 +643,8 @@ func (s *TeamService) InviteTeamMember(ctx context.Context, teamID string, req m
 
 	member.Email = req.Email
 
-	s.logger.Info("Team member invited successfully", 
-		zap.String("team_id", teamID), 
+	s.logger.Info("Team member invited successfully",
+		zap.String("team_id", teamID),
 		zap.String("user_id", targetUserID.(string)),
 		zap.String("invited_by", invitedBy))
 
@@ -707,7 +707,7 @@ func (s *TeamService) UpdateTeamMemberRole(ctx context.Context, teamID string, t
 	})
 
 	if err != nil {
-		s.logger.Error("Failed to update team member role", zap.Error(err), 
+		s.logger.Error("Failed to update team member role", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("user_id", targetUserID))
 		return errors.DatabaseWithDetails("Failed to update member role", err, map[string]interface{}{
 			"team_id": teamID,
@@ -723,8 +723,8 @@ func (s *TeamService) UpdateTeamMemberRole(ctx context.Context, teamID string, t
 		})
 	}
 
-	s.logger.Info("Team member role updated successfully", 
-		zap.String("team_id", teamID), 
+	s.logger.Info("Team member role updated successfully",
+		zap.String("team_id", teamID),
 		zap.String("user_id", targetUserID),
 		zap.String("new_role", req.Role),
 		zap.String("updated_by", updatedBy))
@@ -785,7 +785,7 @@ func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targe
 	})
 
 	if err != nil {
-		s.logger.Error("Failed to remove team member", zap.Error(err), 
+		s.logger.Error("Failed to remove team member", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("user_id", targetUserID))
 		return errors.DatabaseWithDetails("Failed to remove member", err, map[string]interface{}{
 			"team_id": teamID,
@@ -801,8 +801,8 @@ func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targe
 		})
 	}
 
-	s.logger.Info("Team member removed successfully", 
-		zap.String("team_id", teamID), 
+	s.logger.Info("Team member removed successfully",
+		zap.String("team_id", teamID),
 		zap.String("user_id", targetUserID),
 		zap.String("removed_by", removedBy))
 
@@ -833,7 +833,7 @@ func (s *TeamService) GetUserTeamIDs(ctx context.Context, userID string) ([]stri
 		}
 	}
 
-	s.logger.Debug("Retrieved user team IDs", 
+	s.logger.Debug("Retrieved user team IDs",
 		zap.String("user_id", userID),
 		zap.Int("team_count", len(teamIDs)),
 		zap.Strings("team_ids", teamIDs))
@@ -874,8 +874,8 @@ func (s *TeamService) IsUserTeamAdmin(ctx context.Context, userID, teamID string
 
 	// Check if role is admin or owner
 	isAdmin := roleStr == "admin" || roleStr == "owner"
-	
-	s.logger.Debug("Checked team admin status", 
+
+	s.logger.Debug("Checked team admin status",
 		zap.String("user_id", userID),
 		zap.String("team_id", teamID),
 		zap.String("role", roleStr),

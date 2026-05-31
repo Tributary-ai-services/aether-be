@@ -13,13 +13,13 @@ type Chunk struct {
 	FileID   string `json:"file_id" validate:"required,uuid"`
 
 	// Chunk identification
-	ChunkID     string `json:"chunk_id" validate:"required"`     // Unique identifier within file
-	ChunkType   string `json:"chunk_type" validate:"required"`   // text, table, image, etc.
-	ChunkNumber int    `json:"chunk_number" validate:"min=0"`    // Sequential number within file
+	ChunkID     string `json:"chunk_id" validate:"required"`   // Unique identifier within file
+	ChunkType   string `json:"chunk_type" validate:"required"` // text, table, image, etc.
+	ChunkNumber int    `json:"chunk_number" validate:"min=0"`  // Sequential number within file
 
 	// Content
 	Content     string `json:"content" validate:"required"`
-	ContentHash string `json:"content_hash,omitempty"`          // Hash of content for deduplication
+	ContentHash string `json:"content_hash,omitempty"` // Hash of content for deduplication
 	SizeBytes   int64  `json:"size_bytes" validate:"min=0"`
 
 	// Position information
@@ -34,8 +34,8 @@ type Chunk struct {
 
 	// Processing metadata
 	ProcessedAt    time.Time `json:"processed_at"`
-	ProcessedBy    string    `json:"processed_by"`                      // Strategy name
-	ProcessingTime int64     `json:"processing_time" validate:"min=0"`  // Time in milliseconds
+	ProcessedBy    string    `json:"processed_by"`                     // Strategy name
+	ProcessingTime int64     `json:"processing_time" validate:"min=0"` // Time in milliseconds
 
 	// Quality metrics
 	Quality ChunkQualityMetrics `json:"quality"`
@@ -48,10 +48,10 @@ type Chunk struct {
 	Classifications  []string `json:"classifications,omitempty"`
 
 	// Embedding information
-	EmbeddingStatus string    `json:"embedding_status" validate:"oneof=pending processing completed failed skipped"`
-	EmbeddingModel  string    `json:"embedding_model,omitempty"`
-	EmbeddingVector []float64 `json:"embedding_vector,omitempty"`
-	EmbeddingDim    int       `json:"embedding_dimension,omitempty" validate:"min=0"`
+	EmbeddingStatus string     `json:"embedding_status" validate:"oneof=pending processing completed failed skipped"`
+	EmbeddingModel  string     `json:"embedding_model,omitempty"`
+	EmbeddingVector []float64  `json:"embedding_vector,omitempty"`
+	EmbeddingDim    int        `json:"embedding_dimension,omitempty" validate:"min=0"`
 	EmbeddedAt      *time.Time `json:"embedded_at,omitempty"`
 
 	// Compliance and security
@@ -159,16 +159,16 @@ type ChunkListResponse struct {
 
 // ChunkSearchRequest represents a request to search for chunks
 type ChunkSearchRequest struct {
-	Query           string `json:"query,omitempty"`
-	FileID          string `json:"file_id,omitempty" validate:"omitempty,uuid"`
-	ChunkType       string `json:"chunk_type,omitempty"`
-	ContentCategory string `json:"content_category,omitempty"`
-	Language        string `json:"language,omitempty"`
-	PIIDetected     *bool  `json:"pii_detected,omitempty"`
-	DLPScanStatus   string `json:"dlp_scan_status,omitempty"`
+	Query           string  `json:"query,omitempty"`
+	FileID          string  `json:"file_id,omitempty" validate:"omitempty,uuid"`
+	ChunkType       string  `json:"chunk_type,omitempty"`
+	ContentCategory string  `json:"content_category,omitempty"`
+	Language        string  `json:"language,omitempty"`
+	PIIDetected     *bool   `json:"pii_detected,omitempty"`
+	DLPScanStatus   string  `json:"dlp_scan_status,omitempty"`
 	MinQuality      float64 `json:"min_quality,omitempty" validate:"min=0,max=1"`
-	Limit           int    `json:"limit,omitempty" validate:"min=1,max=100"`
-	Offset          int    `json:"offset,omitempty" validate:"min=0"`
+	Limit           int     `json:"limit,omitempty" validate:"min=1,max=100"`
+	Offset          int     `json:"offset,omitempty" validate:"min=0"`
 }
 
 // ProcessingJob represents a document processing job
@@ -191,29 +191,29 @@ type ProcessingJob struct {
 // NewChunk creates a new chunk instance
 func NewChunk(req ChunkCreateRequest, tenantID string) *Chunk {
 	now := time.Now()
-	
+
 	chunk := &Chunk{
-		ID:             uuid.New().String(),
-		TenantID:       tenantID,
-		FileID:         req.FileID,
-		ChunkID:        req.ChunkID,
-		ChunkType:      req.ChunkType,
-		ChunkNumber:    req.ChunkNumber,
-		Content:        req.Content,
-		ContentHash:    req.ContentHash,
-		SizeBytes:      req.SizeBytes,
-		ProcessedAt:    now,
-		ProcessedBy:    req.Strategy,
-		ProcessingTime: 0, // Will be set during processing
-		Quality:        req.Quality,
+		ID:              uuid.New().String(),
+		TenantID:        tenantID,
+		FileID:          req.FileID,
+		ChunkID:         req.ChunkID,
+		ChunkType:       req.ChunkType,
+		ChunkNumber:     req.ChunkNumber,
+		Content:         req.Content,
+		ContentHash:     req.ContentHash,
+		SizeBytes:       req.SizeBytes,
+		ProcessedAt:     now,
+		ProcessedBy:     req.Strategy,
+		ProcessingTime:  0, // Will be set during processing
+		Quality:         req.Quality,
 		EmbeddingStatus: "pending",
-		PIIDetected:    false,
-		DLPScanStatus:  "pending",
-		Context:        req.Context,
-		SchemaInfo:     req.SchemaInfo,
-		Metadata:       req.Metadata,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		PIIDetected:     false,
+		DLPScanStatus:   "pending",
+		Context:         req.Context,
+		SchemaInfo:      req.SchemaInfo,
+		Metadata:        req.Metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	if chunk.Context == nil {
@@ -255,7 +255,7 @@ func (c *Chunk) Update(req ChunkUpdateRequest) {
 	if req.Metadata != nil {
 		c.Metadata = req.Metadata
 	}
-	
+
 	c.UpdatedAt = time.Now()
 }
 
@@ -280,7 +280,7 @@ func (c *Chunk) GetSensitivityLevel() string {
 // GetQualityScore returns an overall quality score for the chunk
 func (c *Chunk) GetQualityScore() float64 {
 	metrics := c.Quality
-	
+
 	// Weighted average of quality metrics
 	weights := map[string]float64{
 		"completeness":  0.25,
@@ -290,7 +290,7 @@ func (c *Chunk) GetQualityScore() float64 {
 		"language_conf": 0.10,
 		"complexity":    0.05,
 	}
-	
+
 	score := 0.0
 	score += metrics.Completeness * weights["completeness"]
 	score += metrics.Coherence * weights["coherence"]
@@ -298,7 +298,7 @@ func (c *Chunk) GetQualityScore() float64 {
 	score += metrics.Readability * weights["readability"]
 	score += metrics.LanguageConf * weights["language_conf"]
 	score += metrics.Complexity * weights["complexity"]
-	
+
 	return score
 }
 

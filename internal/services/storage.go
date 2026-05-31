@@ -89,7 +89,7 @@ func (s *S3StorageService) UploadFile(ctx context.Context, key string, data []by
 	start := time.Now()
 
 	s.logger.Warn("Server-side encryption disabled - MinIO KMS not configured")
-	
+
 	input := &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
@@ -371,11 +371,11 @@ func (s *S3StorageService) CopyFile(ctx context.Context, sourceKey, destKey stri
 
 	source := fmt.Sprintf("%s/%s", s.bucket, sourceKey)
 	s.logger.Warn("Server-side encryption disabled for copy operation - MinIO KMS not configured")
-	
+
 	input := &s3.CopyObjectInput{
-		Bucket:            aws.String(s.bucket),
-		Key:               aws.String(destKey),
-		CopySource:        aws.String(source),
+		Bucket:     aws.String(s.bucket),
+		Key:        aws.String(destKey),
+		CopySource: aws.String(source),
 		Metadata: map[string]string{
 			"copied-by": "aether-backend",
 			"copy-time": time.Now().Format(time.RFC3339),
@@ -428,11 +428,11 @@ func (s *S3StorageService) testConnection(ctx context.Context) error {
 			s.logger.Info("Bucket doesn't exist, creating it",
 				zap.String("bucket", s.bucket),
 			)
-			
+
 			createInput := &s3.CreateBucketInput{
 				Bucket: aws.String(s.bucket),
 			}
-			
+
 			_, createErr := s.client.CreateBucket(ctx, createInput)
 			if createErr != nil {
 				s.logger.Error("Failed to create bucket",
@@ -441,11 +441,11 @@ func (s *S3StorageService) testConnection(ctx context.Context) error {
 				)
 				return fmt.Errorf("failed to create bucket: %w", createErr)
 			}
-			
+
 			s.logger.Info("Bucket created successfully",
 				zap.String("bucket", s.bucket),
 			)
-			
+
 			// Test connection again after creating bucket
 			_, err = s.client.HeadBucket(ctx, input)
 			if err != nil {
@@ -504,14 +504,14 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 	// Extract tenant suffix from tenant_1756161631 -> 1756161631
 	tenantSuffix := extractTenantSuffix(tenantID)
 	bucketName := fmt.Sprintf("aether-%s", tenantSuffix)
-	
-	s.logger.Info("Using tenant bucket", 
+
+	s.logger.Info("Using tenant bucket",
 		zap.String("bucket_name", bucketName),
 		zap.String("tenant_suffix", tenantSuffix))
 
 	// Ensure bucket exists
 	if err := s.ensureBucketExists(ctx, bucketName); err != nil {
-		s.logger.Error("Failed to ensure bucket exists", 
+		s.logger.Error("Failed to ensure bucket exists",
 			zap.String("bucket_name", bucketName),
 			zap.Error(err))
 		return "", fmt.Errorf("failed to ensure bucket exists: %w", err)
@@ -520,7 +520,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 	s.logger.Warn("Server-side encryption disabled for tenant bucket - MinIO KMS not configured",
 		zap.String("bucket", bucketName),
 		zap.String("tenant_id", tenantID))
-	
+
 	input := &s3.PutObjectInput{
 		Bucket:        aws.String(bucketName),
 		Key:           aws.String(key),
@@ -534,7 +534,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 		},
 	}
 
-	s.logger.Info("About to call S3 PutObject", 
+	s.logger.Info("About to call S3 PutObject",
 		zap.String("bucket", bucketName),
 		zap.String("key", key),
 		zap.Int("content_length", len(data)),
@@ -566,14 +566,14 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 			zap.String("endpoint", s.config.Endpoint),
 			zap.Error(err),
 		)
-		
+
 		// Log the full error chain
 		if strings.Contains(errMsg, "https response error") || strings.Contains(errMsg, "http response error") {
 			s.logger.Error("S3 HTTP response error detected",
 				zap.String("full_error", errMsg),
 			)
 		}
-		
+
 		// Extract detailed error information
 		var opErr *smithy.OperationError
 		if errors.As(err, &opErr) {
@@ -581,7 +581,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 				zap.String("service", opErr.Service()),
 				zap.String("operation", opErr.Operation()),
 			)
-			
+
 			// Check for S3 specific response error
 			var s3Err interface {
 				ServiceHostID() string
@@ -593,7 +593,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 					zap.String("s3_error", s3Err.Error()),
 				)
 			}
-			
+
 			// Try to get the underlying HTTP response error
 			var respErr *awshttp.ResponseError
 			if errors.As(opErr.Err, &respErr) {
@@ -603,7 +603,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 					zap.String("request_id", respErr.Response.Header.Get("x-amz-request-id")),
 					zap.String("host_id", respErr.Response.Header.Get("x-amz-id-2")),
 				)
-				
+
 				// Log all response headers for debugging
 				headers := make(map[string]string)
 				for k, v := range respErr.Response.Header {
@@ -616,7 +616,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 				)
 			}
 		}
-		
+
 		// Also try direct HTTP error extraction
 		var httpErr *awshttp.ResponseError
 		if errors.As(err, &httpErr) {
@@ -625,7 +625,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 				zap.String("status", httpErr.Response.Status),
 			)
 		}
-		
+
 		return "", fmt.Errorf("failed to upload file: %w", err)
 	}
 
@@ -643,7 +643,7 @@ func (s *S3StorageService) UploadFileToTenantBucket(ctx context.Context, tenantI
 // DownloadFileFromTenantBucket downloads a file from a tenant-specific S3 bucket
 func (s *S3StorageService) DownloadFileFromTenantBucket(ctx context.Context, tenantID, key string) ([]byte, error) {
 	start := time.Now()
-	
+
 	s.logger.Info("Starting tenant bucket file download",
 		zap.String("tenant_id", tenantID),
 		zap.String("key", key),
@@ -653,7 +653,7 @@ func (s *S3StorageService) DownloadFileFromTenantBucket(ctx context.Context, ten
 	tenantSuffix := extractTenantSuffix(tenantID)
 	bucketName := fmt.Sprintf("aether-%s", tenantSuffix)
 
-	s.logger.Info("Using tenant bucket", 
+	s.logger.Info("Using tenant bucket",
 		zap.String("bucket", bucketName),
 		zap.String("tenant_suffix", tenantSuffix),
 	)
@@ -718,7 +718,7 @@ func (s *S3StorageService) DeleteFileFromTenantBucket(ctx context.Context, tenan
 	tenantSuffix := extractTenantSuffix(tenantID)
 	bucketName := fmt.Sprintf("aether-%s", tenantSuffix)
 
-	s.logger.Info("Using tenant bucket for deletion", 
+	s.logger.Info("Using tenant bucket for deletion",
 		zap.String("bucket", bucketName),
 		zap.String("tenant_suffix", tenantSuffix),
 	)
@@ -849,7 +849,7 @@ func (s *S3StorageService) ensureBucketExists(ctx context.Context, bucketName st
 	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(bucketName),
 	})
-	
+
 	if err == nil {
 		// Bucket exists
 		s.logger.Debug("Bucket already exists",
@@ -897,7 +897,7 @@ func (s *S3StorageService) ensureBucketExists(ctx context.Context, bucketName st
 			)
 			return nil
 		}
-		
+
 		s.logger.Error("Failed to create tenant bucket",
 			zap.String("bucket", bucketName),
 			zap.Error(err),

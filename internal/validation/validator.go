@@ -184,14 +184,14 @@ func validateSafeString(fl validator.FieldLevel) bool {
 	// Check for actual SQL injection patterns (not common English words)
 	// These patterns are more specific to actual SQL injection attempts
 	dangerousPatterns := []string{
-		`"`,           // Double quotes (common in SQL)
-		`;`,           // Statement terminator
-		`--`,          // SQL comment
-		`/\*`,         // Multi-line comment start
-		`\*/`,         // Multi-line comment end
-		`xp_`,         // SQL Server extended procedures
-		`sp_`,         // SQL Server stored procedures
-		`\bexec\s+`,   // EXEC followed by whitespace (SQL execution)
+		`"`,              // Double quotes (common in SQL)
+		`;`,              // Statement terminator
+		`--`,             // SQL comment
+		`/\*`,            // Multi-line comment start
+		`\*/`,            // Multi-line comment end
+		`xp_`,            // SQL Server extended procedures
+		`sp_`,            // SQL Server stored procedures
+		`\bexec\s+`,      // EXEC followed by whitespace (SQL execution)
 		`\bexecute\s+\(`, // EXECUTE() function call
 	}
 

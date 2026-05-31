@@ -45,7 +45,7 @@ type FileListResult struct {
 type FileItem struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
-	Type       string    `json:"type"`       // "file" or "folder"
+	Type       string    `json:"type"` // "file" or "folder"
 	MimeType   string    `json:"mimeType"`
 	Size       int64     `json:"size"`
 	ModifiedAt time.Time `json:"modifiedAt"`

@@ -49,8 +49,8 @@ type ViolationResponse struct {
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
 	// Enhanced fields for frontend display
-	FileName       string   `json:"file_name,omitempty"`
-	ComplianceType string   `json:"compliance_type,omitempty"`
+	FileName       string `json:"file_name,omitempty"`
+	ComplianceType string `json:"compliance_type,omitempty"`
 }
 
 // ComplianceSummaryResponse represents aggregated compliance statistics
@@ -150,9 +150,9 @@ func (h *ComplianceHandler) GetViolations(c *gin.Context) {
 		"success": true,
 		"data":    violations,
 		"meta": gin.H{
-			"page":       page,
-			"page_size":  pageSize,
-			"total":      total,
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
 			"total_pages": (total + int64(pageSize) - 1) / int64(pageSize),
 		},
 	})

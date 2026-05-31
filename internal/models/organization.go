@@ -28,12 +28,12 @@ type Organization struct {
 	TenantAPIKey string `json:"-"` // Not serialized to JSON, stored securely
 
 	// Metadata
-	CreatedBy    string    `json:"created_by" validate:"required,uuid"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	MemberCount  int       `json:"member_count"`
-	TeamCount    int       `json:"team_count,omitempty"`
-	NotebookCount int      `json:"notebookCount,omitempty"` // Standardized on notebook naming
+	CreatedBy     string    `json:"created_by" validate:"required,uuid"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	MemberCount   int       `json:"member_count"`
+	TeamCount     int       `json:"team_count,omitempty"`
+	NotebookCount int       `json:"notebookCount,omitempty"` // Standardized on notebook naming
 
 	// Computed fields (not stored in database)
 	UserRole string `json:"user_role,omitempty"` // Current user's role in this organization
@@ -68,35 +68,35 @@ type OrganizationUpdateRequest struct {
 
 // OrganizationResponse represents an organization response with camelCase fields
 type OrganizationResponse struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	Slug           string                 `json:"slug"`
-	Description    string                 `json:"description"`
-	AvatarUrl      string                 `json:"avatarUrl,omitempty"` // camelCase for frontend
-	Website        string                 `json:"website,omitempty"`
-	Location       string                 `json:"location,omitempty"`
-	Visibility     string                 `json:"visibility"`
-	TenantID       string                 `json:"tenantId,omitempty"` // Include tenant ID for frontend
-	Billing        map[string]interface{} `json:"billing,omitempty"`
-	Settings       map[string]interface{} `json:"settings,omitempty"`
-	CreatedBy      string                 `json:"createdBy"` // camelCase for frontend
-	CreatedAt      time.Time              `json:"createdAt"`
-	UpdatedAt      time.Time              `json:"updatedAt"`
-	MemberCount    int                    `json:"memberCount"`
-	TeamCount      int                    `json:"teamCount,omitempty"`
-	NotebookCount   int                   `json:"notebookCount,omitempty"` // Standardized on notebook naming
-	UserRole       string                 `json:"userRole,omitempty"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Slug          string                 `json:"slug"`
+	Description   string                 `json:"description"`
+	AvatarUrl     string                 `json:"avatarUrl,omitempty"` // camelCase for frontend
+	Website       string                 `json:"website,omitempty"`
+	Location      string                 `json:"location,omitempty"`
+	Visibility    string                 `json:"visibility"`
+	TenantID      string                 `json:"tenantId,omitempty"` // Include tenant ID for frontend
+	Billing       map[string]interface{} `json:"billing,omitempty"`
+	Settings      map[string]interface{} `json:"settings,omitempty"`
+	CreatedBy     string                 `json:"createdBy"` // camelCase for frontend
+	CreatedAt     time.Time              `json:"createdAt"`
+	UpdatedAt     time.Time              `json:"updatedAt"`
+	MemberCount   int                    `json:"memberCount"`
+	TeamCount     int                    `json:"teamCount,omitempty"`
+	NotebookCount int                    `json:"notebookCount,omitempty"` // Standardized on notebook naming
+	UserRole      string                 `json:"userRole,omitempty"`
 }
 
 // OrganizationMember represents an organization member relationship
 type OrganizationMember struct {
-	UserID       string    `json:"user_id" validate:"required,uuid"`
-	OrgID        string    `json:"org_id" validate:"required,uuid"`
-	Role         string    `json:"role" validate:"required,oneof=owner admin member billing"`
-	JoinedAt     time.Time `json:"joined_at"`
-	InvitedBy    string    `json:"invited_by" validate:"omitempty,uuid"`
-	Title        string    `json:"title,omitempty" validate:"omitempty,safe_string,max=100"`
-	Department   string    `json:"department,omitempty" validate:"omitempty,safe_string,max=100"`
+	UserID     string    `json:"user_id" validate:"required,uuid"`
+	OrgID      string    `json:"org_id" validate:"required,uuid"`
+	Role       string    `json:"role" validate:"required,oneof=owner admin member billing"`
+	JoinedAt   time.Time `json:"joined_at"`
+	InvitedBy  string    `json:"invited_by" validate:"omitempty,uuid"`
+	Title      string    `json:"title,omitempty" validate:"omitempty,safe_string,max=100"`
+	Department string    `json:"department,omitempty" validate:"omitempty,safe_string,max=100"`
 
 	// Computed user data (joined from User model)
 	Name     string   `json:"name,omitempty"`
@@ -108,15 +108,15 @@ type OrganizationMember struct {
 
 // OrganizationMemberResponse represents an organization member response with camelCase fields
 type OrganizationMemberResponse struct {
-	UserID     string   `json:"userId"`
-	Name       string   `json:"name"`
-	Email      string   `json:"email"`
-	Role       string   `json:"role"`
+	UserID     string    `json:"userId"`
+	Name       string    `json:"name"`
+	Email      string    `json:"email"`
+	Role       string    `json:"role"`
 	JoinedAt   time.Time `json:"joinedAt"`
-	InvitedBy  string   `json:"invitedBy,omitempty"`
-	Title      string   `json:"title,omitempty"`
-	Department string   `json:"department,omitempty"`
-	Teams      []string `json:"teams,omitempty"`
+	InvitedBy  string    `json:"invitedBy,omitempty"`
+	Title      string    `json:"title,omitempty"`
+	Department string    `json:"department,omitempty"`
+	Teams      []string  `json:"teams,omitempty"`
 }
 
 // OrganizationInviteRequest represents a request to invite an organization member
@@ -137,7 +137,7 @@ type OrganizationMemberRoleUpdateRequest struct {
 // NewOrganization creates a new organization with default values
 func NewOrganization(req OrganizationCreateRequest, createdBy string) *Organization {
 	now := time.Now()
-	
+
 	// Generate slug if not provided
 	slug := req.Slug
 	if slug == "" {
@@ -166,24 +166,24 @@ func NewOrganization(req OrganizationCreateRequest, createdBy string) *Organizat
 // ToResponse converts an Organization to OrganizationResponse with camelCase fields
 func (o *Organization) ToResponse() *OrganizationResponse {
 	return &OrganizationResponse{
-		ID:              o.ID,
-		Name:            o.Name,
-		Slug:            o.Slug,
-		Description:     o.Description,
-		AvatarUrl:       o.AvatarURL,
-		Website:         o.Website,
-		Location:        o.Location,
-		Visibility:      o.Visibility,
-		TenantID:        o.TenantID, // Include tenant ID in response
-		Billing:         o.Billing,
-		Settings:        o.Settings,
-		CreatedBy:       o.CreatedBy,
-		CreatedAt:       o.CreatedAt,
-		UpdatedAt:       o.UpdatedAt,
-		MemberCount:     o.MemberCount,
-		TeamCount:       o.TeamCount,
-		NotebookCount:   o.NotebookCount, // Consistent notebook naming
-		UserRole:        o.UserRole,
+		ID:            o.ID,
+		Name:          o.Name,
+		Slug:          o.Slug,
+		Description:   o.Description,
+		AvatarUrl:     o.AvatarURL,
+		Website:       o.Website,
+		Location:      o.Location,
+		Visibility:    o.Visibility,
+		TenantID:      o.TenantID, // Include tenant ID in response
+		Billing:       o.Billing,
+		Settings:      o.Settings,
+		CreatedBy:     o.CreatedBy,
+		CreatedAt:     o.CreatedAt,
+		UpdatedAt:     o.UpdatedAt,
+		MemberCount:   o.MemberCount,
+		TeamCount:     o.TeamCount,
+		NotebookCount: o.NotebookCount, // Consistent notebook naming
+		UserRole:      o.UserRole,
 	}
 }
 
@@ -262,10 +262,10 @@ func (o *Organization) HasTenant() bool {
 // GetTenantInfo returns tenant information (without exposing API key)
 func (o *Organization) GetTenantInfo() map[string]interface{} {
 	return map[string]interface{}{
-		"tenant_id":    o.TenantID,
-		"has_api_key":  o.TenantAPIKey != "",
-		"space_type":   "organization",
-		"space_name":   o.Name,
+		"tenant_id":   o.TenantID,
+		"has_api_key": o.TenantAPIKey != "",
+		"space_type":  "organization",
+		"space_name":  o.Name,
 	}
 }
 
@@ -292,10 +292,10 @@ func DefaultOrganizationSettings() map[string]interface{} {
 // DefaultOrganizationBilling returns default billing information for a new organization
 func DefaultOrganizationBilling(billingEmail string) map[string]interface{} {
 	return map[string]interface{}{
-		"plan":         "free",
-		"seats":        3,
-		"billingEmail": billingEmail,
-		"nextBillingDate": nil,
+		"plan":               "free",
+		"seats":              3,
+		"billingEmail":       billingEmail,
+		"nextBillingDate":    nil,
 		"subscriptionStatus": "active",
 	}
 }
@@ -315,7 +315,7 @@ func generateSlug(name string) string {
 	for len(slug) > 0 && slug[len(slug)-1] == '-' {
 		slug = slug[:len(slug)-1]
 	}
-	
+
 	// Convert to lowercase
 	result := ""
 	for _, r := range slug {
@@ -325,7 +325,7 @@ func generateSlug(name string) string {
 			result += string(r)
 		}
 	}
-	
+
 	return result
 }
 

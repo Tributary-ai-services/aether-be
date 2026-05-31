@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -81,20 +82,20 @@ func main() {
 		notebookName := "Diagnostic Test Notebook"
 		notebookDesc := "Testing Neo4j notebook operations"
 		params := map[string]interface{}{
-			"notebook_id":    testNotebookID,
-			"name":           notebookName,
-			"title":          notebookName,
-			"description":    notebookDesc,
-			"type":           "research",
-			"owner_id":       testUserID,
-			"space_type":     "personal",
-			"space_id":       "space_diag_test",
-			"tenant_id":      "tenant_diag_test", 
-			"document_count": 0,
-			"search_text":    fmt.Sprintf("%s %s", notebookName, notebookDesc),
-			"visibility":     "private",
-			"status":         "active",
-			"total_size_bytes": 0,
+			"notebook_id":         testNotebookID,
+			"name":                notebookName,
+			"title":               notebookName,
+			"description":         notebookDesc,
+			"type":                "research",
+			"owner_id":            testUserID,
+			"space_type":          "personal",
+			"space_id":            "space_diag_test",
+			"tenant_id":           "tenant_diag_test",
+			"document_count":      0,
+			"search_text":         fmt.Sprintf("%s %s", notebookName, notebookDesc),
+			"visibility":          "private",
+			"status":              "active",
+			"total_size_bytes":    0,
 			"compliance_settings": "{}",
 			"metadata": func() string {
 				metadata := map[string]interface{}{
@@ -133,10 +134,10 @@ func main() {
 				metadata := map[string]interface{}{
 					"compliance": map[string]interface{}{
 						"hipaa_compliant": true,
-						"pii_detection":   false, // Changed
-						"audit_level":     "medium", // Changed 
-						"retention_years": 10, // Changed
-						"gdpr_compliant":  true, // Added
+						"pii_detection":   false,    // Changed
+						"audit_level":     "medium", // Changed
+						"retention_years": 10,       // Changed
+						"gdpr_compliant":  true,     // Added
 					},
 				}
 				jsonBytes, _ := json.Marshal(metadata)
@@ -372,7 +373,7 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		
+
 		var docs []map[string]string
 		for result.Next(ctx) {
 			record := result.Record()
@@ -394,7 +395,7 @@ func main() {
 	for _, doc := range docs {
 		fmt.Printf("     - %s (%s) - %s\n", doc["id"], doc["type"], doc["name"])
 	}
-	
+
 	if len(docs) == 1 && docs[0]["id"] == testDocID2 {
 		fmt.Println("   ✓ Document list matches expected count and content")
 	} else {

@@ -145,12 +145,12 @@ func (p *EmbeddingProcessor) ProcessTenant(ctx context.Context, tenantID string)
 	requests := make([]EmbeddingRequest, len(chunks))
 	for i, chunk := range chunks {
 		requests[i] = EmbeddingRequest{
-			ChunkID:  chunk.ID,
-			Content:  chunk.Content,
+			ChunkID: chunk.ID,
+			Content: chunk.Content,
 			Metadata: map[string]interface{}{
-				"file_id":     chunk.FileID,
-				"chunk_type":  chunk.ChunkType,
-				"tenant_id":   chunk.TenantID,
+				"file_id":      chunk.FileID,
+				"chunk_type":   chunk.ChunkType,
+				"tenant_id":    chunk.TenantID,
 				"processed_by": chunk.ProcessedBy,
 			},
 		}

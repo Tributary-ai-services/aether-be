@@ -57,45 +57,45 @@ func (suite *ComplianceIntegrationTestSuite) TestPIIDetection() {
 	ctx := context.Background()
 
 	testCases := []struct {
-		name        string
-		content     string
-		expectPII   bool
+		name          string
+		content       string
+		expectPII     bool
 		expectedTypes []string
 	}{
 		{
-			name:        "Email detection",
-			content:     "Please contact John Doe at john.doe@example.com for more information.",
-			expectPII:   true,
+			name:          "Email detection",
+			content:       "Please contact John Doe at john.doe@example.com for more information.",
+			expectPII:     true,
 			expectedTypes: []string{"email"},
 		},
 		{
-			name:        "SSN detection",
-			content:     "John's SSN is 123-45-6789 and he was born in 1985.",
-			expectPII:   true,
+			name:          "SSN detection",
+			content:       "John's SSN is 123-45-6789 and he was born in 1985.",
+			expectPII:     true,
 			expectedTypes: []string{"ssn"},
 		},
 		{
-			name:        "Phone number detection",
-			content:     "Call me at 555-123-4567 or use the backup number 555.987.6543.",
-			expectPII:   true,
+			name:          "Phone number detection",
+			content:       "Call me at 555-123-4567 or use the backup number 555.987.6543.",
+			expectPII:     true,
 			expectedTypes: []string{"phone"},
 		},
 		{
-			name:        "Credit card detection",
-			content:     "Credit card number: 4532-1234-5678-9012 expires 12/25.",
-			expectPII:   true,
+			name:          "Credit card detection",
+			content:       "Credit card number: 4532-1234-5678-9012 expires 12/25.",
+			expectPII:     true,
 			expectedTypes: []string{"credit_card"},
 		},
 		{
-			name:        "Multiple PII types",
-			content:     "Customer: john.doe@example.com, SSN: 123-45-6789, Phone: 555-123-4567",
-			expectPII:   true,
+			name:          "Multiple PII types",
+			content:       "Customer: john.doe@example.com, SSN: 123-45-6789, Phone: 555-123-4567",
+			expectPII:     true,
 			expectedTypes: []string{"email", "ssn", "phone"},
 		},
 		{
-			name:        "No PII content",
-			content:     "This document contains general information about our products and services.",
-			expectPII:   false,
+			name:          "No PII content",
+			content:       "This document contains general information about our products and services.",
+			expectPII:     false,
 			expectedTypes: []string{},
 		},
 	}
@@ -150,34 +150,34 @@ func (suite *ComplianceIntegrationTestSuite) TestGDPRCompliance() {
 	ctx := context.Background()
 
 	testCases := []struct {
-		name            string
-		content         string
-		expectedFlags   []string
-		expectedLevel   string
+		name          string
+		content       string
+		expectedFlags []string
+		expectedLevel string
 	}{
 		{
-			name:            "Personal data indicators",
-			content:         "User profile contains name, email address, and birth date information.",
-			expectedFlags:   []string{"GDPR_PERSONAL_DATA"},
-			expectedLevel:   "internal",
+			name:          "Personal data indicators",
+			content:       "User profile contains name, email address, and birth date information.",
+			expectedFlags: []string{"GDPR_PERSONAL_DATA"},
+			expectedLevel: "internal",
 		},
 		{
-			name:            "Sensitive personal data",
-			content:         "Medical records show patient has genetic predisposition to diabetes.",
-			expectedFlags:   []string{"GDPR_PERSONAL_DATA", "GDPR_SENSITIVE_DATA"},
-			expectedLevel:   "restricted",
+			name:          "Sensitive personal data",
+			content:       "Medical records show patient has genetic predisposition to diabetes.",
+			expectedFlags: []string{"GDPR_PERSONAL_DATA", "GDPR_SENSITIVE_DATA"},
+			expectedLevel: "restricted",
 		},
 		{
-			name:            "Political information",
-			content:         "Voter registration shows political party affiliation and voting history.",
-			expectedFlags:   []string{"GDPR_SENSITIVE_DATA"},
-			expectedLevel:   "public",
+			name:          "Political information",
+			content:       "Voter registration shows political party affiliation and voting history.",
+			expectedFlags: []string{"GDPR_SENSITIVE_DATA"},
+			expectedLevel: "public",
 		},
 		{
-			name:            "General business content",
-			content:         "This quarterly report shows increased revenue and market expansion.",
-			expectedFlags:   []string{},
-			expectedLevel:   "public",
+			name:          "General business content",
+			content:       "This quarterly report shows increased revenue and market expansion.",
+			expectedFlags: []string{},
+			expectedLevel: "public",
 		},
 	}
 
@@ -275,38 +275,38 @@ func (suite *ComplianceIntegrationTestSuite) TestDataClassification() {
 	ctx := context.Background()
 
 	testCases := []struct {
-		name               string
-		content            string
-		expectedLevel      string
-		expectedCategories []string
+		name                string
+		content             string
+		expectedLevel       string
+		expectedCategories  []string
 		expectedRegulations []string
 	}{
 		{
-			name:               "Financial data",
-			content:            "Credit card payment processed for $1,250.00 to account 1234-5678-9012.",
-			expectedLevel:      "confidential",
-			expectedCategories: []string{"financial"},
+			name:                "Financial data",
+			content:             "Credit card payment processed for $1,250.00 to account 1234-5678-9012.",
+			expectedLevel:       "confidential",
+			expectedCategories:  []string{"financial"},
 			expectedRegulations: []string{"PCI-DSS"},
 		},
 		{
-			name:               "Health information",
-			content:            "Patient medical history shows diabetes diagnosis and treatment plan.",
-			expectedLevel:      "restricted",
-			expectedCategories: []string{"health", "personal"},
+			name:                "Health information",
+			content:             "Patient medical history shows diabetes diagnosis and treatment plan.",
+			expectedLevel:       "restricted",
+			expectedCategories:  []string{"health", "personal"},
 			expectedRegulations: []string{"HIPAA", "GDPR"},
 		},
 		{
-			name:               "Personal information",
-			content:            "Customer contact details: John Smith, email john@example.com, phone 555-1234.",
-			expectedLevel:      "internal",
-			expectedCategories: []string{"personal"},
+			name:                "Personal information",
+			content:             "Customer contact details: John Smith, email john@example.com, phone 555-1234.",
+			expectedLevel:       "internal",
+			expectedCategories:  []string{"personal"},
 			expectedRegulations: []string{"GDPR"},
 		},
 		{
-			name:               "Public information",
-			content:            "Company announces new product launch and market expansion plans.",
-			expectedLevel:      "public",
-			expectedCategories: []string{},
+			name:                "Public information",
+			content:             "Company announces new product launch and market expansion plans.",
+			expectedLevel:       "public",
+			expectedCategories:  []string{},
 			expectedRegulations: []string{},
 		},
 	}
@@ -361,7 +361,7 @@ func (suite *ComplianceIntegrationTestSuite) TestBatchCompliance() {
 			Content: "Customer email: john.doe@example.com with order details.",
 		},
 		{
-			ID:      "batch-chunk-2", 
+			ID:      "batch-chunk-2",
 			Content: "Patient medical record shows diabetes treatment progress.",
 		},
 		{

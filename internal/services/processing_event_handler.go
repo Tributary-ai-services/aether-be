@@ -14,19 +14,19 @@ import (
 
 // ProcessingCompleteEvent represents the event from audimodal when processing completes
 type ProcessingCompleteEvent struct {
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Source    string    `json:"source"`
-	TenantID  string    `json:"tenant_id"`
-	Timestamp time.Time `json:"timestamp"`
-	Version   string    `json:"version"`
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	Source    string                 `json:"source"`
+	TenantID  string                 `json:"tenant_id"`
+	Timestamp time.Time              `json:"timestamp"`
+	Version   string                 `json:"version"`
 	Data      ProcessingCompleteData `json:"data"`
 }
 
 // ProcessingCompleteData contains the processing result data
 type ProcessingCompleteData struct {
-	FileID              string        `json:"file_id"`                        // AudiModal file UUID
-	DocumentID          string        `json:"document_id,omitempty"`          // Neo4j Document.id from Aether-BE for cross-service consistency
+	FileID              string        `json:"file_id"`               // AudiModal file UUID
+	DocumentID          string        `json:"document_id,omitempty"` // Neo4j Document.id from Aether-BE for cross-service consistency
 	URL                 string        `json:"url"`
 	TotalProcessingTime time.Duration `json:"total_processing_time"`
 	ChunksCreated       int           `json:"chunks_created"`

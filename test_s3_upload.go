@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -58,7 +59,7 @@ func main() {
 	}
 
 	log.Printf("Attempting to upload to bucket: %s, key: %s", bucketName, testKey)
-	
+
 	_, err = client.PutObject(ctx, input)
 	if err != nil {
 		log.Printf("Upload failed: %v", err)

@@ -31,18 +31,18 @@ type EmbeddingService struct {
 
 // EmbeddingRequest represents a request for embedding generation
 type EmbeddingRequest struct {
-	ChunkID   string `json:"chunk_id"`
-	Content   string `json:"content"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	Priority  int    `json:"priority,omitempty"`
+	ChunkID  string                 `json:"chunk_id"`
+	Content  string                 `json:"content"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Priority int                    `json:"priority,omitempty"`
 }
 
 // EmbeddingResponse represents the response from embedding generation
 type EmbeddingResponse struct {
-	ChunkID    string    `json:"chunk_id"`
-	Embedding  []float32 `json:"embedding"`
-	Dimensions int       `json:"dimensions"`
-	Model      string    `json:"model"`
+	ChunkID     string    `json:"chunk_id"`
+	Embedding   []float32 `json:"embedding"`
+	Dimensions  int       `json:"dimensions"`
+	Model       string    `json:"model"`
 	ProcessedAt time.Time `json:"processed_at"`
 }
 
@@ -220,12 +220,12 @@ func (s *EmbeddingService) ProcessPendingEmbeddings(ctx context.Context, tenantI
 	requests := make([]EmbeddingRequest, len(chunks))
 	for i, chunk := range chunks {
 		requests[i] = EmbeddingRequest{
-			ChunkID:  chunk.ID,
-			Content:  chunk.Content,
+			ChunkID: chunk.ID,
+			Content: chunk.Content,
 			Metadata: map[string]interface{}{
-				"file_id":     chunk.FileID,
-				"chunk_type":  chunk.ChunkType,
-				"tenant_id":   chunk.TenantID,
+				"file_id":    chunk.FileID,
+				"chunk_type": chunk.ChunkType,
+				"tenant_id":  chunk.TenantID,
 			},
 		}
 	}
@@ -299,8 +299,8 @@ type VectorStoreService interface {
 
 // VectorSearchResult represents a result from vector similarity search
 type VectorSearchResult struct {
-	ChunkID    string                 `json:"chunk_id"`
-	Score      float64                `json:"score"`
-	Metadata   map[string]interface{} `json:"metadata"`
-	Embedding  []float32              `json:"embedding,omitempty"`
+	ChunkID   string                 `json:"chunk_id"`
+	Score     float64                `json:"score"`
+	Metadata  map[string]interface{} `json:"metadata"`
+	Embedding []float32              `json:"embedding,omitempty"`
 }

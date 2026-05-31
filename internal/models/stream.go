@@ -11,9 +11,9 @@ import (
 type StreamSource struct {
 	ID              string                 `json:"id" neo4j:"id"`
 	Name            string                 `json:"name" neo4j:"name"`
-	Type            string                 `json:"type" neo4j:"type"` // social, financial, enterprise, media, news
+	Type            string                 `json:"type" neo4j:"type"`         // social, financial, enterprise, media, news
 	Provider        string                 `json:"provider" neo4j:"provider"` // twitter, stocks, salesforce, youtube, news_api
-	Status          string                 `json:"status" neo4j:"status"` // active, paused, disconnected, error
+	Status          string                 `json:"status" neo4j:"status"`     // active, paused, disconnected, error
 	Configuration   map[string]interface{} `json:"configuration" neo4j:"configuration"`
 	EventsProcessed int64                  `json:"events_processed" neo4j:"events_processed"`
 	EventsPerSecond float64                `json:"events_per_second" neo4j:"events_per_second"`
@@ -30,24 +30,24 @@ type StreamSource struct {
 
 // LiveEvent represents a real-time event from a stream
 type LiveEvent struct {
-	ID              string                 `json:"id" neo4j:"id"`
-	StreamSourceID  string                 `json:"stream_source_id" neo4j:"stream_source_id"`
-	EventType       string                 `json:"event_type" neo4j:"event_type"` // mention, multimodal, audio, document, video, image
-	Content         string                 `json:"content" neo4j:"content"`
-	MediaType       string                 `json:"media_type" neo4j:"media_type"` // text, image, video, audio, document
-	MediaURL        string                 `json:"media_url,omitempty" neo4j:"media_url"`
-	Sentiment       string                 `json:"sentiment" neo4j:"sentiment"` // positive, neutral, negative
-	SentimentScore  float64                `json:"sentiment_score" neo4j:"sentiment_score"` // -1.0 to 1.0
-	Confidence      float64                `json:"confidence" neo4j:"confidence"` // 0.0 to 1.0
-	ProcessingTime  float64                `json:"processing_time" neo4j:"processing_time"` // milliseconds
-	HasAuditTrail   bool                   `json:"has_audit_trail" neo4j:"has_audit_trail"`
-	AuditScore      float64                `json:"audit_score" neo4j:"audit_score"` // 0.0 to 1.0
-	Metadata        map[string]interface{} `json:"metadata" neo4j:"metadata"`
-	ExtractedData   map[string]interface{} `json:"extracted_data" neo4j:"extracted_data"`
-	ProcessedAt     time.Time              `json:"processed_at" neo4j:"processed_at"`
-	EventTimestamp  time.Time              `json:"event_timestamp" neo4j:"event_timestamp"` // Original event time
-	TenantID        string                 `json:"tenant_id" neo4j:"tenant_id"`
-	OrganizationID  string                 `json:"organization_id" neo4j:"organization_id"`
+	ID             string                 `json:"id" neo4j:"id"`
+	StreamSourceID string                 `json:"stream_source_id" neo4j:"stream_source_id"`
+	EventType      string                 `json:"event_type" neo4j:"event_type"` // mention, multimodal, audio, document, video, image
+	Content        string                 `json:"content" neo4j:"content"`
+	MediaType      string                 `json:"media_type" neo4j:"media_type"` // text, image, video, audio, document
+	MediaURL       string                 `json:"media_url,omitempty" neo4j:"media_url"`
+	Sentiment      string                 `json:"sentiment" neo4j:"sentiment"`             // positive, neutral, negative
+	SentimentScore float64                `json:"sentiment_score" neo4j:"sentiment_score"` // -1.0 to 1.0
+	Confidence     float64                `json:"confidence" neo4j:"confidence"`           // 0.0 to 1.0
+	ProcessingTime float64                `json:"processing_time" neo4j:"processing_time"` // milliseconds
+	HasAuditTrail  bool                   `json:"has_audit_trail" neo4j:"has_audit_trail"`
+	AuditScore     float64                `json:"audit_score" neo4j:"audit_score"` // 0.0 to 1.0
+	Metadata       map[string]interface{} `json:"metadata" neo4j:"metadata"`
+	ExtractedData  map[string]interface{} `json:"extracted_data" neo4j:"extracted_data"`
+	ProcessedAt    time.Time              `json:"processed_at" neo4j:"processed_at"`
+	EventTimestamp time.Time              `json:"event_timestamp" neo4j:"event_timestamp"` // Original event time
+	TenantID       string                 `json:"tenant_id" neo4j:"tenant_id"`
+	OrganizationID string                 `json:"organization_id" neo4j:"organization_id"`
 }
 
 // StreamAnalytics represents real-time stream performance analytics
@@ -58,12 +58,12 @@ type StreamAnalytics struct {
 	ActiveStreams         int                `json:"active_streams" neo4j:"active_streams"`
 	TotalEventsProcessed  int64              `json:"total_events_processed" neo4j:"total_events_processed"`
 	EventsPerSecond       float64            `json:"events_per_second" neo4j:"events_per_second"`
-	MediaProcessed        int64              `json:"media_processed" neo4j:"media_processed"` // 2.4M+
+	MediaProcessed        int64              `json:"media_processed" neo4j:"media_processed"`                 // 2.4M+
 	AverageProcessingTime float64            `json:"average_processing_time" neo4j:"average_processing_time"` // milliseconds
-	AverageAuditScore     float64            `json:"average_audit_score" neo4j:"average_audit_score"` // 99.1%
-	SentimentDistribution map[string]int64   `json:"sentiment_distribution" neo4j:"sentiment_distribution"` // positive/neutral/negative counts
+	AverageAuditScore     float64            `json:"average_audit_score" neo4j:"average_audit_score"`         // 99.1%
+	SentimentDistribution map[string]int64   `json:"sentiment_distribution" neo4j:"sentiment_distribution"`   // positive/neutral/negative counts
 	EventTypeDistribution map[string]int64   `json:"event_type_distribution" neo4j:"event_type_distribution"` // mention/multimodal/etc counts
-	ProviderPerformance   map[string]float64 `json:"provider_performance" neo4j:"provider_performance"` // provider -> events/sec
+	ProviderPerformance   map[string]float64 `json:"provider_performance" neo4j:"provider_performance"`       // provider -> events/sec
 	ErrorRate             float64            `json:"error_rate" neo4j:"error_rate"`
 	TenantID              string             `json:"tenant_id" neo4j:"tenant_id"`
 	OrganizationID        string             `json:"organization_id" neo4j:"organization_id"`
@@ -72,22 +72,22 @@ type StreamAnalytics struct {
 
 // StreamConnection represents an active WebSocket connection for real-time events
 type StreamConnection struct {
-	ID             string     `json:"id"`
-	UserID         string     `json:"user_id"`
-	TenantID       string     `json:"tenant_id"`
-	ConnectedAt    time.Time  `json:"connected_at"`
-	LastEventSent  time.Time  `json:"last_event_sent"`
-	EventsDelivered int64     `json:"events_delivered"`
-	Filters        StreamFilters `json:"filters"`
+	ID              string        `json:"id"`
+	UserID          string        `json:"user_id"`
+	TenantID        string        `json:"tenant_id"`
+	ConnectedAt     time.Time     `json:"connected_at"`
+	LastEventSent   time.Time     `json:"last_event_sent"`
+	EventsDelivered int64         `json:"events_delivered"`
+	Filters         StreamFilters `json:"filters"`
 }
 
 // StreamFilters represents filtering options for live event streams
 type StreamFilters struct {
-	SourceIDs    []string `json:"source_ids,omitempty"`
-	EventTypes   []string `json:"event_types,omitempty"`
-	MediaTypes   []string `json:"media_types,omitempty"`
-	Sentiments   []string `json:"sentiments,omitempty"`
-	Providers    []string `json:"providers,omitempty"`
+	SourceIDs     []string `json:"source_ids,omitempty"`
+	EventTypes    []string `json:"event_types,omitempty"`
+	MediaTypes    []string `json:"media_types,omitempty"`
+	Sentiments    []string `json:"sentiments,omitempty"`
+	Providers     []string `json:"providers,omitempty"`
 	MinConfidence float64  `json:"min_confidence,omitempty"`
 }
 
@@ -110,11 +110,11 @@ type UpdateStreamSourceRequest struct {
 
 // StreamEventWebSocketMessage represents a real-time event message sent via WebSocket
 type StreamEventWebSocketMessage struct {
-	Type      string     `json:"type"`      // "live_event", "analytics_update", "stream_status"
-	Event     *LiveEvent `json:"event,omitempty"`
-	Analytics *StreamAnalytics `json:"analytics,omitempty"`
+	Type      string              `json:"type"` // "live_event", "analytics_update", "stream_status"
+	Event     *LiveEvent          `json:"event,omitempty"`
+	Analytics *StreamAnalytics    `json:"analytics,omitempty"`
 	Status    *StreamSourceStatus `json:"status,omitempty"`
-	Timestamp time.Time  `json:"timestamp"`
+	Timestamp time.Time           `json:"timestamp"`
 }
 
 // StreamSourceStatus represents current status of a stream source
@@ -125,7 +125,6 @@ type StreamSourceStatus struct {
 	LastEventAt     time.Time `json:"last_event_at"`
 	ErrorMessage    string    `json:"error_message,omitempty"`
 }
-
 
 // NewStreamSource creates a new stream source with default values
 func NewStreamSource(req CreateStreamSourceRequest, userID, tenantID, orgID string) *StreamSource {
@@ -185,7 +184,6 @@ func NewStreamConnection(userID, tenantID string, filters StreamFilters) *Stream
 	}
 }
 
-
 // CalculateRealTimeAnalytics creates real-time analytics snapshot
 func CalculateRealTimeAnalytics(sources []*StreamSource, events []*LiveEvent, tenantID, orgID string) *StreamAnalytics {
 	now := time.Now()
@@ -229,7 +227,7 @@ func CalculateRealTimeAnalytics(sources []*StreamSource, events []*LiveEvent, te
 			analytics.EventTypeDistribution[event.EventType]++
 			totalProcessingTime += event.ProcessingTime
 			totalAuditScore += event.AuditScore
-			
+
 			if event.MediaType != "text" {
 				mediaProcessedCount++
 			}

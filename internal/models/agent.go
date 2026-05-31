@@ -29,40 +29,40 @@ const (
 type Agent struct {
 	// Neo4j node identifier (different from agent-builder ID)
 	ID string `json:"id" validate:"required,uuid"`
-	
+
 	// Reference to agent-builder PostgreSQL record
 	AgentBuilderID string `json:"agent_builder_id" validate:"required,uuid"`
-	
+
 	// Basic agent information (synced from agent-builder)
 	Name        string      `json:"name" validate:"required,min=1,max=255"`
 	Description string      `json:"description,omitempty" validate:"max=1000"`
 	Status      AgentStatus `json:"status" validate:"required,oneof=draft published disabled"`
 	Type        AgentType   `json:"type" validate:"required,oneof=qa conversational producer"`
-	
+
 	// Space and tenant context (follows existing aether-be patterns)
 	OwnerID   string    `json:"owner_id" validate:"required,uuid"`
 	SpaceType SpaceType `json:"space_type" validate:"required,oneof=personal organization"`
 	SpaceID   string    `json:"space_id" validate:"required"`
 	TenantID  string    `json:"tenant_id" validate:"required"`
-	
+
 	// Team assignment for organization spaces
 	TeamID string `json:"team_id,omitempty" validate:"omitempty,uuid"`
-	
+
 	// Visibility and sharing
 	IsPublic   bool `json:"is_public"`
 	IsTemplate bool `json:"is_template"`
 	IsInternal bool `json:"is_internal"` // System agents available to all users
-	
+
 	// Metadata and search
 	Tags       []string `json:"tags,omitempty"`
 	SearchText string   `json:"search_text,omitempty"` // Combined searchable text
-	
+
 	// Statistics (synced from agent-builder)
-	TotalExecutions    int        `json:"total_executions"`
-	TotalCostUSD       float64    `json:"total_cost_usd"`
-	AvgResponseTimeMs  int        `json:"avg_response_time_ms"`
-	LastExecutedAt     *time.Time `json:"last_executed_at,omitempty"`
-	
+	TotalExecutions   int        `json:"total_executions"`
+	TotalCostUSD      float64    `json:"total_cost_usd"`
+	AvgResponseTimeMs int        `json:"avg_response_time_ms"`
+	LastExecutedAt    *time.Time `json:"last_executed_at,omitempty"`
+
 	// Audit trail
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
@@ -165,9 +165,9 @@ type AgentResponse struct {
 	SyncedAt  *time.Time `json:"synced_at,omitempty"`
 
 	// Optional related data
-	Owner            *PublicUserResponse `json:"owner,omitempty"`
-	Team             *TeamResponse       `json:"team,omitempty"`
-	KnowledgeSources []string            `json:"knowledge_sources,omitempty"` // Notebook IDs
+	Owner              *PublicUserResponse `json:"owner,omitempty"`
+	Team               *TeamResponse       `json:"team,omitempty"`
+	KnowledgeSources   []string            `json:"knowledge_sources,omitempty"` // Notebook IDs
 	VectorSearchConfig *VectorSearchConfig `json:"vector_search_config,omitempty"`
 }
 
@@ -182,12 +182,12 @@ type AgentListResponse struct {
 
 // AgentSearchRequest represents an agent search request
 type AgentSearchRequest struct {
-	Query      string      `json:"query,omitempty" validate:"omitempty,safe_string,min=2,max=100"`
-	OwnerID    string      `json:"owner_id,omitempty" validate:"omitempty,uuid"`
-	SpaceID    string      `json:"space_id,omitempty" validate:"omitempty"`
-	TeamID     string      `json:"team_id,omitempty" validate:"omitempty,uuid"`
-	Status     AgentStatus `json:"status,omitempty" validate:"omitempty,oneof=draft published disabled"`
-	SpaceType  SpaceType   `json:"space_type,omitempty" validate:"omitempty,oneof=personal organization"`
+	Query           string      `json:"query,omitempty" validate:"omitempty,safe_string,min=2,max=100"`
+	OwnerID         string      `json:"owner_id,omitempty" validate:"omitempty,uuid"`
+	SpaceID         string      `json:"space_id,omitempty" validate:"omitempty"`
+	TeamID          string      `json:"team_id,omitempty" validate:"omitempty,uuid"`
+	Status          AgentStatus `json:"status,omitempty" validate:"omitempty,oneof=draft published disabled"`
+	SpaceType       SpaceType   `json:"space_type,omitempty" validate:"omitempty,oneof=personal organization"`
 	IsPublic        *bool       `json:"is_public,omitempty"`
 	IsTemplate      *bool       `json:"is_template,omitempty"`
 	IncludeInternal bool        `json:"include_internal,omitempty"`
@@ -206,23 +206,23 @@ type VectorSearchConfig struct {
 
 // VectorSearchSpace represents a notebook/collection that an agent searches
 type VectorSearchSpace struct {
-	NotebookID       string                 `json:"notebook_id" validate:"required,uuid"`
-	NotebookName     string                 `json:"notebook_name"`
-	SearchWeight     float64                `json:"search_weight" validate:"min=0,max=1"`
-	Filters          map[string]interface{} `json:"filters,omitempty"`
-	AddedAt          time.Time              `json:"added_at"`
-	AddedBy          string                 `json:"added_by"`
+	NotebookID   string                 `json:"notebook_id" validate:"required,uuid"`
+	NotebookName string                 `json:"notebook_name"`
+	SearchWeight float64                `json:"search_weight" validate:"min=0,max=1"`
+	Filters      map[string]interface{} `json:"filters,omitempty"`
+	AddedAt      time.Time              `json:"added_at"`
+	AddedBy      string                 `json:"added_by"`
 }
 
 // AgentStats represents agent statistics
 type AgentStats struct {
-	TotalAgents      int `json:"total_agents"`
-	PublishedAgents  int `json:"published_agents"`
-	DraftAgents      int `json:"draft_agents"`
-	DisabledAgents   int `json:"disabled_agents"`
-	PublicAgents     int `json:"public_agents"`
-	TemplateAgents   int `json:"template_agents"`
-	PersonalAgents   int `json:"personal_agents"`
+	TotalAgents        int `json:"total_agents"`
+	PublishedAgents    int `json:"published_agents"`
+	DraftAgents        int `json:"draft_agents"`
+	DisabledAgents     int `json:"disabled_agents"`
+	PublicAgents       int `json:"public_agents"`
+	TemplateAgents     int `json:"template_agents"`
+	PersonalAgents     int `json:"personal_agents"`
 	OrganizationAgents int `json:"organization_agents"`
 }
 
@@ -230,29 +230,29 @@ type AgentStats struct {
 func NewAgent(req AgentCreateRequest, ownerID string, spaceCtx *SpaceContext) *Agent {
 	now := time.Now()
 	return &Agent{
-		ID:             uuid.New().String(),
-		AgentBuilderID: "", // Will be set after agent-builder creation
-		Name:           req.Name,
-		Description:    req.Description,
-		Status:         AgentStatusDraft,
-		Type:           req.Type,
-		OwnerID:        ownerID,
-		SpaceType:      spaceCtx.SpaceType,
-		SpaceID:        spaceCtx.SpaceID,
-		TenantID:       spaceCtx.TenantID,
-		TeamID:         req.TeamID,
-		IsPublic:       req.IsPublic,
-		IsTemplate:     req.IsTemplate,
-		IsInternal:     false, // User-created agents are never internal
-		Tags:           req.Tags,
-		SearchText:     buildAgentSearchText(req.Name, req.Description, req.Tags),
-		TotalExecutions: 0,
-		TotalCostUSD:   0.0,
+		ID:                uuid.New().String(),
+		AgentBuilderID:    "", // Will be set after agent-builder creation
+		Name:              req.Name,
+		Description:       req.Description,
+		Status:            AgentStatusDraft,
+		Type:              req.Type,
+		OwnerID:           ownerID,
+		SpaceType:         spaceCtx.SpaceType,
+		SpaceID:           spaceCtx.SpaceID,
+		TenantID:          spaceCtx.TenantID,
+		TeamID:            req.TeamID,
+		IsPublic:          req.IsPublic,
+		IsTemplate:        req.IsTemplate,
+		IsInternal:        false, // User-created agents are never internal
+		Tags:              req.Tags,
+		SearchText:        buildAgentSearchText(req.Name, req.Description, req.Tags),
+		TotalExecutions:   0,
+		TotalCostUSD:      0.0,
 		AvgResponseTimeMs: 0,
-		LastExecutedAt: nil,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		SyncedAt:       nil,
+		LastExecutedAt:    nil,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		SyncedAt:          nil,
 	}
 }
 
@@ -306,7 +306,7 @@ func (a *Agent) Update(req AgentUpdateRequest) {
 	if req.Tags != nil {
 		a.Tags = req.Tags
 	}
-	
+
 	// Update search text
 	a.SearchText = buildAgentSearchText(a.Name, a.Description, a.Tags)
 	a.UpdatedAt = time.Now()
@@ -354,12 +354,12 @@ func (a *Agent) CanBeAccessedBy(userID string, userTeams []string) bool {
 	if a.OwnerID == userID {
 		return true
 	}
-	
+
 	// Public agents can be accessed by anyone
 	if a.IsPublic {
 		return true
 	}
-	
+
 	// For organization agents, check team membership
 	if a.IsOrganizationAgent() && a.TeamID != "" {
 		for _, teamID := range userTeams {
@@ -368,7 +368,7 @@ func (a *Agent) CanBeAccessedBy(userID string, userTeams []string) bool {
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -380,7 +380,7 @@ func (a *Agent) AddTag(tag string) {
 			return
 		}
 	}
-	
+
 	a.Tags = append(a.Tags, tag)
 	a.SearchText = buildAgentSearchText(a.Name, a.Description, a.Tags)
 	a.UpdatedAt = time.Now()
@@ -394,7 +394,7 @@ func (a *Agent) RemoveTag(tag string) {
 			break
 		}
 	}
-	
+
 	a.SearchText = buildAgentSearchText(a.Name, a.Description, a.Tags)
 	a.UpdatedAt = time.Now()
 }
@@ -430,20 +430,20 @@ type AgentExecuteRequest struct {
 	// Common execution parameters
 	Input   string                 `json:"input" validate:"required,min=1"`
 	Context map[string]interface{} `json:"context,omitempty"`
-	
+
 	// Agent type-specific parameters
 	// For Q&A agents
 	MaxResults *int     `json:"max_results,omitempty" validate:"omitempty,min=1,max=50"`
 	Sources    []string `json:"sources,omitempty" validate:"dive,uuid"` // Notebook IDs
-	
+
 	// For Conversational agents
-	ConversationID *string                  `json:"conversation_id,omitempty" validate:"omitempty,uuid"`
-	History        []ConversationMessage    `json:"history,omitempty"`
-	
+	ConversationID *string               `json:"conversation_id,omitempty" validate:"omitempty,uuid"`
+	History        []ConversationMessage `json:"history,omitempty"`
+
 	// For Producer agents
-	Template       *string                  `json:"template,omitempty"`
-	TemplateParams map[string]interface{}   `json:"template_params,omitempty"`
-	OutputFormat   *string                  `json:"output_format,omitempty" validate:"omitempty,oneof=text markdown html json"`
+	Template       *string                `json:"template,omitempty"`
+	TemplateParams map[string]interface{} `json:"template_params,omitempty"`
+	OutputFormat   *string                `json:"output_format,omitempty" validate:"omitempty,oneof=text markdown html json"`
 }
 
 // ConversationMessage represents a message in a conversation
@@ -462,22 +462,22 @@ type AgentExecuteResponse struct {
 	AgentType   AgentType              `json:"agent_type"`
 	Output      string                 `json:"output"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	
+
 	// Execution statistics
 	TokensUsed     int     `json:"tokens_used"`
 	CostUSD        float64 `json:"cost_usd"`
 	ResponseTimeMs int     `json:"response_time_ms"`
-	
+
 	// Agent type-specific response data
 	// For Q&A agents
-	Sources        []SourceReference      `json:"sources,omitempty"`
-	
+	Sources []SourceReference `json:"sources,omitempty"`
+
 	// For Conversational agents
-	ConversationID *string                `json:"conversation_id,omitempty"`
-	
+	ConversationID *string `json:"conversation_id,omitempty"`
+
 	// For Producer agents
-	Production     *ProductionResult      `json:"production,omitempty"`
-	
+	Production *ProductionResult `json:"production,omitempty"`
+
 	// Timestamps
 	StartedAt   time.Time `json:"started_at"`
 	CompletedAt time.Time `json:"completed_at"`
@@ -494,21 +494,21 @@ type SourceReference struct {
 
 // ProductionResult represents the result of a producer agent execution
 type ProductionResult struct {
-	ID           string                 `json:"id"`
-	Title        string                 `json:"title"`
-	Format       string                 `json:"format"`
-	Content      string                 `json:"content"`
-	Template     string                 `json:"template,omitempty"`
-	Parameters   map[string]interface{} `json:"parameters,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ID         string                 `json:"id"`
+	Title      string                 `json:"title"`
+	Format     string                 `json:"format"`
+	Content    string                 `json:"content"`
+	Template   string                 `json:"template,omitempty"`
+	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	CreatedAt  time.Time              `json:"created_at"`
 }
 
 // AgentExecutionStats represents statistics for agent executions
 type AgentExecutionStats struct {
-	TotalExecutions int     `json:"total_executions"`
-	SuccessfulExecutions int `json:"successful_executions"`
-	FailedExecutions int     `json:"failed_executions"`
-	AverageResponseTime int  `json:"average_response_time_ms"`
-	TotalCostUSD     float64 `json:"total_cost_usd"`
-	LastExecutedAt   *time.Time `json:"last_executed_at,omitempty"`
+	TotalExecutions      int        `json:"total_executions"`
+	SuccessfulExecutions int        `json:"successful_executions"`
+	FailedExecutions     int        `json:"failed_executions"`
+	AverageResponseTime  int        `json:"average_response_time_ms"`
+	TotalCostUSD         float64    `json:"total_cost_usd"`
+	LastExecutedAt       *time.Time `json:"last_executed_at,omitempty"`
 }

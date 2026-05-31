@@ -43,17 +43,17 @@ type DeepLakeVector struct {
 
 // DeepLakeSearchRequest represents a search request to DeepLake
 type DeepLakeSearchRequest struct {
-	Vector     []float32              `json:"vector"`
-	TopK       int                    `json:"top_k"`
-	Filter     map[string]interface{} `json:"filter,omitempty"`
-	Threshold  float64                `json:"threshold,omitempty"`
+	Vector    []float32              `json:"vector"`
+	TopK      int                    `json:"top_k"`
+	Filter    map[string]interface{} `json:"filter,omitempty"`
+	Threshold float64                `json:"threshold,omitempty"`
 }
 
 // DeepLakeSearchResponse represents search results from DeepLake
 type DeepLakeSearchResponse struct {
-	Results []DeepLakeSearchResult `json:"results"`
-	Count   int                    `json:"count"`
-	TimeTaken string               `json:"time_taken"`
+	Results   []DeepLakeSearchResult `json:"results"`
+	Count     int                    `json:"count"`
+	TimeTaken string                 `json:"time_taken"`
 }
 
 // DeepLakeSearchResult represents a single search result

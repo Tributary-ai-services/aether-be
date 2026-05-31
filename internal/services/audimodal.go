@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
 	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // tenantMapping stores both the AudiModal tenant UUID and datasource UUID
@@ -34,11 +34,11 @@ var (
 
 // AudiModalService provides integration with AudiModal API
 type AudiModalService struct {
-	baseURL  string
-	apiKey   string
-	client   *http.Client
-	logger   *logger.Logger
-	config   *config.AudiModalConfig
+	baseURL string
+	apiKey  string
+	client  *http.Client
+	logger  *logger.Logger
+	config  *config.AudiModalConfig
 }
 
 // TenantQuotas matches AudiModal's expected quotas structure
@@ -96,7 +96,7 @@ func NewAudiModalService(baseURL, apiKey string, config *config.AudiModalConfig,
 	if config != nil && config.ProcessingTimeout > 0 {
 		timeout = time.Duration(config.ProcessingTimeout) * time.Second
 	}
-	
+
 	return &AudiModalService{
 		baseURL: baseURL,
 		apiKey:  apiKey,
@@ -157,7 +157,7 @@ func (s *AudiModalService) CreateTenant(ctx context.Context, req CreateTenantReq
 
 	return &CreateTenantResponse{
 		TenantID: tenantID,
-		APIKey:   s.apiKey,  // Use the service account API key
+		APIKey:   s.apiKey, // Use the service account API key
 		Status:   "active",
 	}, nil
 }
@@ -524,7 +524,7 @@ func (s *AudiModalService) getAudiModalMapping(ctx context.Context, aetherTenant
 // makeRequest is a helper function to make HTTP requests to AudiModal
 func (s *AudiModalService) makeRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
 	url := s.baseURL + path
-	
+
 	var reqBody []byte
 	var err error
 	if body != nil {
@@ -533,15 +533,15 @@ func (s *AudiModalService) makeRequest(ctx context.Context, method, path string,
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", s.apiKey)
-	
+
 	return s.client.Do(req)
 }
 
@@ -622,21 +622,21 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID str
 
 		// Build result with AudiModal data
 		job.Result = map[string]interface{}{
-			"file_id":           processResult.Data.ID,
-			"audimodal_status":  processResult.Data.Status,
-			"chunk_count":       processResult.Data.ChunkCount,
-			"pii_detected":      processResult.Data.PIIDetected,
-			"file_size":         processResult.Data.Size,
-			"content_type":      processResult.Data.ContentType,
-			"extension":         processResult.Data.Extension,
-			"created_at":        processResult.Data.CreatedAt,
-			"updated_at":        processResult.Data.UpdatedAt,
-			"language":          "en",
+			"file_id":             processResult.Data.ID,
+			"audimodal_status":    processResult.Data.Status,
+			"chunk_count":         processResult.Data.ChunkCount,
+			"pii_detected":        processResult.Data.PIIDetected,
+			"file_size":           processResult.Data.Size,
+			"content_type":        processResult.Data.ContentType,
+			"extension":           processResult.Data.Extension,
+			"created_at":          processResult.Data.CreatedAt,
+			"updated_at":          processResult.Data.UpdatedAt,
+			"language":            "en",
 			"language_confidence": 0.95,
-			"word_count":        0,
-			"quality_score":     0.95,
-			"content_category":  getContentCategory(processResult.Data.ContentType),
-			"chunking_strategy": "pending",
+			"word_count":          0,
+			"quality_score":       0.95,
+			"content_category":    getContentCategory(processResult.Data.ContentType),
+			"chunking_strategy":   "pending",
 			"classifications": map[string]interface{}{
 				"confidence": 0.95,
 				"categories": []string{processResult.Data.Extension, "document"},
@@ -701,33 +701,33 @@ func (s *AudiModalService) SubmitProcessingJob(ctx context.Context, tenantID str
 	} else {
 		// Fallback to old method if no file data provided
 		if err := s.submitToAudiModal(ctx, documentID, job.ID, config); err != nil {
-			s.logger.Error("Failed to submit job to AudiModal", 
+			s.logger.Error("Failed to submit job to AudiModal",
 				zap.String("document_id", documentID),
 				zap.Error(err))
 			return nil, fmt.Errorf("failed to submit processing job to AudiModal: %w", err)
 		}
 	}
-	
+
 	return job, nil
 }
 
 // GetProcessingJob gets the status of a processing job with real AudiModal data
 func (s *AudiModalService) GetProcessingJob(ctx context.Context, jobID string) (*models.ProcessingJob, error) {
-	s.logger.Info("Fetching processing job status from AudiModal", 
+	s.logger.Info("Fetching processing job status from AudiModal",
 		zap.String("job_id", jobID))
-	
+
 	// Create a basic job structure - in a full implementation this would be retrieved from database
 	// Start with "processing" status until we verify actual content is available
 	now := time.Now()
 	job := &models.ProcessingJob{
-		ID:         jobID,
-		Status:     "processing",
-		Progress:   50,
-		CreatedAt:  time.Now().Add(-5 * time.Minute),
-		UpdatedAt:  time.Now(),
-		StartedAt:  &now,
-		Config:     make(map[string]interface{}),
-		Result:     make(map[string]interface{}),
+		ID:        jobID,
+		Status:    "processing",
+		Progress:  50,
+		CreatedAt: time.Now().Add(-5 * time.Minute),
+		UpdatedAt: time.Now(),
+		StartedAt: &now,
+		Config:    make(map[string]interface{}),
+		Result:    make(map[string]interface{}),
 	}
 
 	// Try to update with real processed content from AudiModal
@@ -816,10 +816,10 @@ func (s *AudiModalService) TriggerFileProcessingWithOptions(ctx context.Context,
 // ProcessFileResponse represents the response from AudiModal file processing
 // This matches the actual response structure from AudiModal API
 type ProcessFileResponse struct {
-	Success   bool      `json:"success"`
-	Data      FileData  `json:"data"`
-	Timestamp string    `json:"timestamp"`
-	RequestID string    `json:"request_id"`
+	Success   bool     `json:"success"`
+	Data      FileData `json:"data"`
+	Timestamp string   `json:"timestamp"`
+	RequestID string   `json:"request_id"`
 }
 
 type FileData struct {
@@ -835,7 +835,7 @@ type FileData struct {
 	Checksum         string            `json:"checksum"`
 	ChecksumType     string            `json:"checksum_type"`
 	LastModified     string            `json:"last_modified"`
-	Status           string            `json:"status"`          // "discovered", "processed", etc.
+	Status           string            `json:"status"` // "discovered", "processed", etc.
 	ProcessingTier   string            `json:"processing_tier"`
 	SchemaInfo       map[string]string `json:"schema_info"`
 	ChunkCount       int               `json:"chunk_count"`
@@ -904,10 +904,10 @@ type StrategyInfo struct {
 
 // StrategiesResponse represents the response from AudiModal strategies API
 type StrategiesResponse struct {
-	Success    bool           `json:"success"`
-	Data       []StrategyInfo `json:"data"`
-	Timestamp  string         `json:"timestamp"`
-	RequestID  string         `json:"request_id"`
+	Success   bool           `json:"success"`
+	Data      []StrategyInfo `json:"data"`
+	Timestamp string         `json:"timestamp"`
+	RequestID string         `json:"request_id"`
 }
 
 // ProcessingOptions represents options for file processing
@@ -1043,7 +1043,7 @@ func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fil
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	// Use provided API key or default for AudiModal API access
@@ -1052,26 +1052,26 @@ func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fil
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	// Send the request
 	s.logger.Info("Submitting file to AudiModal for processing",
 		zap.String("document_id", documentID),
 		zap.String("filename", filename),
 		zap.Int("file_size", len(fileData)),
 		zap.String("mime_type", mimeType))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request to AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code - AudiModal returns 201 Created for successful file uploads
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusCreated {
 		s.logger.Error("AudiModal file processing failed",
@@ -1079,20 +1079,20 @@ func (s *AudiModalService) ProcessFile(ctx context.Context, tenantID string, fil
 			zap.String("response_body", string(body)))
 		return nil, fmt.Errorf("AudiModal file processing failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse response
 	var result ProcessFileResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse AudiModal response: %w", err)
 	}
-	
+
 	s.logger.Info("File submitted successfully to AudiModal",
 		zap.String("document_id", documentID),
 		zap.String("file_id", result.Data.ID),
 		zap.String("status", result.Data.Status),
 		zap.Int("chunk_count", result.Data.ChunkCount),
 		zap.Int64("file_size", result.Data.Size))
-	
+
 	return &result, nil
 }
 
@@ -1154,18 +1154,18 @@ func (s *AudiModalService) submitToAudiModal(ctx context.Context, documentID, jo
 	s.logger.Warn("submitToAudiModal is deprecated, use ProcessFile instead",
 		zap.String("document_id", documentID),
 		zap.String("job_id", jobID))
-	
+
 	// For now, just verify connectivity
 	resp, err := s.makeRequest(ctx, "GET", "/health", nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("AudiModal health check failed with status: %d", resp.StatusCode)
 	}
-	
+
 	return nil
 }
 
@@ -1177,34 +1177,34 @@ func (s *AudiModalService) GetFileProcessingStatus(ctx context.Context, tenantID
 		return nil, fmt.Errorf("failed to resolve tenant UUID: %w", err)
 	}
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s", s.baseURL, tenantUUID, fileID)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	apiKey := s.apiKey
 	if apiKey == "" {
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Fetching file processing status from AudiModal",
 		zap.String("file_id", fileID))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file status from AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Error("AudiModal file status fetch failed",
@@ -1213,13 +1213,13 @@ func (s *AudiModalService) GetFileProcessingStatus(ctx context.Context, tenantID
 			zap.String("response_body", string(body)))
 		return nil, fmt.Errorf("AudiModal file status fetch failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse response
 	var result ProcessFileResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse AudiModal response: %w", err)
 	}
-	
+
 	return &result, nil
 }
 
@@ -1334,21 +1334,21 @@ func (s *AudiModalService) UpdateJobWithProcessedContent(ctx context.Context, te
 			s.logger.Error("Failed to get file content", zap.String("file_id", fileID), zap.Error(err))
 			// Don't fail the job, just use limited data
 		}
-		
+
 		// Update job result with real processed data
 		if job.Result == nil {
 			job.Result = make(map[string]interface{})
 		}
-		
+
 		jobResult := job.Result
-		
+
 		// Update with real AudiModal processed data
 		jobResult["audimodal_status"] = fileStatus.Data.Status
 		jobResult["chunk_count"] = fileStatus.Data.ChunkCount
 		jobResult["file_size"] = fileStatus.Data.Size
 		jobResult["content_type"] = fileStatus.Data.ContentType
 		jobResult["updated_at"] = fileStatus.Data.UpdatedAt
-		
+
 		// Set extracted text - use real content if available
 		if extractedText != "" {
 			jobResult["extracted_text"] = extractedText
@@ -1358,21 +1358,21 @@ func (s *AudiModalService) UpdateJobWithProcessedContent(ctx context.Context, te
 				processingTime = 2000 // Cap at 2 seconds
 			}
 			jobResult["processing_time"] = processingTime
-			
+
 			// Set realistic confidence score
 			jobResult["confidence_score"] = 0.92
 			jobResult["language"] = "en"
 			jobResult["language_confidence"] = 0.92
-			
+
 			// Determine content category based on extracted text
 			contentCategory := "document"
 			if len(extractedText) > 100 {
 				content := extractedText[:100]
-				if strings.Contains(strings.ToLower(content), "ticket") || 
-				   strings.Contains(strings.ToLower(content), "support") {
+				if strings.Contains(strings.ToLower(content), "ticket") ||
+					strings.Contains(strings.ToLower(content), "support") {
 					contentCategory = "support_ticket"
 				} else if strings.Contains(strings.ToLower(content), "invoice") ||
-						  strings.Contains(strings.ToLower(content), "bill") {
+					strings.Contains(strings.ToLower(content), "bill") {
 					contentCategory = "financial_document"
 				}
 			}
@@ -1391,14 +1391,14 @@ func (s *AudiModalService) UpdateJobWithProcessedContent(ctx context.Context, te
 		job.Result = jobResult
 		job.Status = "completed"
 		job.Progress = 100
-		
+
 		now := time.Now()
 		if job.CompletedAt == nil {
 			job.CompletedAt = &now
 		}
 		job.UpdatedAt = now
 	}
-	
+
 	return nil
 }
 
@@ -1426,31 +1426,31 @@ func (s *AudiModalService) GetFileChunks(ctx context.Context, tenantID string, f
 		q.Add("offset", fmt.Sprintf("%d", offset))
 	}
 	req.URL.RawQuery = q.Encode()
-	
+
 	// Set headers
 	apiKey := s.apiKey
 	if apiKey == "" {
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Fetching file chunks from AudiModal",
 		zap.String("file_id", fileID),
 		zap.Int("limit", limit),
 		zap.Int("offset", offset))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chunks from AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Error("AudiModal chunks fetch failed",
@@ -1459,18 +1459,18 @@ func (s *AudiModalService) GetFileChunks(ctx context.Context, tenantID string, f
 			zap.String("response_body", string(body)))
 		return nil, fmt.Errorf("AudiModal chunks fetch failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse response
 	var result ChunksResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse AudiModal chunks response: %w", err)
 	}
-	
+
 	s.logger.Info("Retrieved chunks from AudiModal",
 		zap.String("file_id", fileID),
 		zap.Int("chunk_count", len(result.Data)),
 		zap.Int("total", result.Total))
-	
+
 	return &result, nil
 }
 
@@ -1482,35 +1482,35 @@ func (s *AudiModalService) GetChunk(ctx context.Context, tenantID string, fileID
 		return nil, fmt.Errorf("failed to resolve tenant UUID: %w", err)
 	}
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/chunks/%s", s.baseURL, tenantUUID, chunkID)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	apiKey := s.apiKey
 	if apiKey == "" {
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Fetching chunk from AudiModal",
 		zap.String("file_id", fileID),
 		zap.String("chunk_id", chunkID))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chunk from AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Error("AudiModal chunk fetch failed",
@@ -1520,7 +1520,7 @@ func (s *AudiModalService) GetChunk(ctx context.Context, tenantID string, fileID
 			zap.String("response_body", string(body)))
 		return nil, fmt.Errorf("AudiModal chunk fetch failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse response - expecting single chunk data
 	var response struct {
 		Success bool      `json:"success"`
@@ -1529,40 +1529,40 @@ func (s *AudiModalService) GetChunk(ctx context.Context, tenantID string, fileID
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse AudiModal chunk response: %w", err)
 	}
-	
+
 	return &response.Data, nil
 }
 
 // GetAvailableStrategies retrieves available chunking strategies from AudiModal
 func (s *AudiModalService) GetAvailableStrategies(ctx context.Context) (*StrategiesResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/strategies", s.baseURL)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	apiKey := s.apiKey
 	if apiKey == "" {
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Fetching available strategies from AudiModal")
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get strategies from AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Error("AudiModal strategies fetch failed",
@@ -1570,16 +1570,16 @@ func (s *AudiModalService) GetAvailableStrategies(ctx context.Context) (*Strateg
 			zap.String("response_body", string(body)))
 		return nil, fmt.Errorf("AudiModal strategies fetch failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse response
 	var result StrategiesResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse AudiModal strategies response: %w", err)
 	}
-	
+
 	s.logger.Info("Retrieved strategies from AudiModal",
 		zap.Int("strategy_count", len(result.Data)))
-	
+
 	return &result, nil
 }
 
@@ -1621,7 +1621,7 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID
 			return nil, fmt.Errorf("failed to write mime_type field: %w", err)
 		}
 	}
-	
+
 	// Add processing options
 	if options != nil {
 		if options.Strategy != "" {
@@ -1629,7 +1629,7 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID
 				return nil, fmt.Errorf("failed to write strategy field: %w", err)
 			}
 		}
-		
+
 		if options.StrategyConfig != nil {
 			configBytes, err := json.Marshal(options.StrategyConfig)
 			if err != nil {
@@ -1639,17 +1639,17 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID
 				return nil, fmt.Errorf("failed to write strategy_config field: %w", err)
 			}
 		}
-		
+
 		if options.Priority != "" {
 			if err := writer.WriteField("priority", options.Priority); err != nil {
 				return nil, fmt.Errorf("failed to write priority field: %w", err)
 			}
 		}
-		
+
 		if err := writer.WriteField("dlp_scan_enabled", fmt.Sprintf("%v", options.DLPScanEnabled)); err != nil {
 			return nil, fmt.Errorf("failed to write dlp_scan_enabled field: %w", err)
 		}
-		
+
 		if options.RetryAttempts > 0 {
 			if err := writer.WriteField("retry_attempts", fmt.Sprintf("%d", options.RetryAttempts)); err != nil {
 				return nil, fmt.Errorf("failed to write retry_attempts field: %w", err)
@@ -1663,7 +1663,7 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID
 			}
 		}
 	}
-	
+
 	// Close the writer
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
@@ -1698,20 +1698,20 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID
 		zap.Int("file_size", len(fileData)),
 		zap.String("mime_type", mimeType),
 		zap.String("strategy", strategy))
-	
+
 	// Send the request
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request to AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusCreated {
 		s.logger.Error("AudiModal file processing with strategy failed",
@@ -1720,20 +1720,20 @@ func (s *AudiModalService) ProcessFileWithStrategy(ctx context.Context, tenantID
 			zap.String("response_body", string(body)))
 		return nil, fmt.Errorf("AudiModal file processing failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// Parse response
 	var result ProcessFileResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse AudiModal response: %w", err)
 	}
-	
+
 	s.logger.Info("File submitted successfully to AudiModal with strategy",
 		zap.String("document_id", documentID),
 		zap.String("file_id", result.Data.ID),
 		zap.String("status", result.Data.Status),
 		zap.String("strategy", strategy),
 		zap.Int("chunk_count", result.Data.ChunkCount))
-	
+
 	return &result, nil
 }
 
@@ -1745,24 +1745,24 @@ func (s *AudiModalService) ReprocessFileWithStrategy(ctx context.Context, tenant
 		return fmt.Errorf("failed to resolve tenant UUID: %w", err)
 	}
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/files/%s/reprocess", s.baseURL, tenantUUID, fileID)
-	
+
 	requestBody := map[string]interface{}{
 		"strategy": strategy,
 	}
 	if strategyConfig != nil {
 		requestBody["strategy_config"] = strategyConfig
 	}
-	
+
 	bodyBytes, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	apiKey := s.apiKey
@@ -1770,23 +1770,23 @@ func (s *AudiModalService) ReprocessFileWithStrategy(ctx context.Context, tenant
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Reprocessing file with new strategy",
 		zap.String("file_id", fileID),
 		zap.String("strategy", strategy))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send reprocess request to AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		s.logger.Error("AudiModal file reprocessing failed",
@@ -1796,34 +1796,34 @@ func (s *AudiModalService) ReprocessFileWithStrategy(ctx context.Context, tenant
 			zap.String("response_body", string(body)))
 		return fmt.Errorf("AudiModal file reprocessing failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	s.logger.Info("File reprocessing initiated successfully",
 		zap.String("file_id", fileID),
 		zap.String("strategy", strategy))
-	
+
 	return nil
 }
 
 // GetOptimalStrategy gets recommended strategy for file characteristics
 func (s *AudiModalService) GetOptimalStrategy(ctx context.Context, contentType string, fileSize int64, complexity string) (string, map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/api/v1/strategies/recommend", s.baseURL)
-	
+
 	requestBody := map[string]interface{}{
 		"content_type": contentType,
 		"file_size":    fileSize,
 		"complexity":   complexity,
 	}
-	
+
 	bodyBytes, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	apiKey := s.apiKey
@@ -1831,30 +1831,30 @@ func (s *AudiModalService) GetOptimalStrategy(ctx context.Context, contentType s
 		apiKey = "default-api-key"
 	}
 	req.Header.Set("X-API-Key", apiKey)
-	
+
 	s.logger.Info("Getting optimal strategy recommendation",
 		zap.String("content_type", contentType),
 		zap.Int64("file_size", fileSize),
 		zap.String("complexity", complexity))
-	
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to get strategy recommendation from AudiModal: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Warn("AudiModal strategy recommendation failed, using default",
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(body)))
-		
+
 		// Return default strategy from config
 		defaultStrategy := "semantic"
 		if s.config != nil && s.config.DefaultStrategy != "" {
@@ -1862,7 +1862,7 @@ func (s *AudiModalService) GetOptimalStrategy(ctx context.Context, contentType s
 		}
 		return defaultStrategy, nil, nil
 	}
-	
+
 	// Parse response
 	var response struct {
 		Success bool `json:"success"`
@@ -1873,16 +1873,16 @@ func (s *AudiModalService) GetOptimalStrategy(ctx context.Context, contentType s
 			Reasoning      string                 `json:"reasoning"`
 		} `json:"data"`
 	}
-	
+
 	if err := json.Unmarshal(body, &response); err != nil {
 		return "", nil, fmt.Errorf("failed to parse strategy recommendation response: %w", err)
 	}
-	
+
 	s.logger.Info("Received strategy recommendation",
 		zap.String("strategy", response.Data.Strategy),
 		zap.Float64("confidence", response.Data.Confidence),
 		zap.String("reasoning", response.Data.Reasoning))
-	
+
 	return response.Data.Strategy, response.Data.StrategyConfig, nil
 }
 
@@ -1965,7 +1965,7 @@ func (s *AudiModalService) GetMLAnalysisSummary(ctx context.Context, tenantID st
 
 	// Parse response
 	var response struct {
-		Success bool             `json:"success"`
+		Success bool              `json:"success"`
 		Data    MLAnalysisSummary `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {

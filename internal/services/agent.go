@@ -24,13 +24,13 @@ import (
 // 1. Neo4j relationship management for agents, users, teams, and knowledge sources
 // 2. Proxy operations to agent-builder service for actual agent CRUD
 type AgentService struct {
-	neo4j          *database.Neo4jClient
-	userService    *UserService
+	neo4j           *database.Neo4jClient
+	userService     *UserService
 	notebookService *NotebookService
-	teamService    *TeamService
+	teamService     *TeamService
 	agentBuilderURL string
-	httpClient     *http.Client
-	logger         *logger.Logger
+	httpClient      *http.Client
+	logger          *logger.Logger
 }
 
 // AgentBuilderClient handles communication with the agent-builder service
@@ -161,12 +161,12 @@ func (s *AgentService) canUserModifyAgent(ctx context.Context, agent *models.Age
 	if agent.OwnerID == userID {
 		return true, nil
 	}
-	
+
 	// For organization agents, check if user is team admin
 	if agent.IsOrganizationAgent() && agent.TeamID != "" {
 		isAdmin, err := s.teamService.IsUserTeamAdmin(ctx, userID, agent.TeamID)
 		if err != nil {
-			s.logger.Error("Failed to check team admin status", 
+			s.logger.Error("Failed to check team admin status",
 				zap.String("user_id", userID),
 				zap.String("team_id", agent.TeamID),
 				zap.Error(err))
@@ -174,7 +174,7 @@ func (s *AgentService) canUserModifyAgent(ctx context.Context, agent *models.Age
 		}
 		return isAdmin, nil
 	}
-	
+
 	return false, nil
 }
 
@@ -324,7 +324,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 		"page": (req.Offset / req.Limit) + 1, // Convert offset to page number
 		"size": req.Limit,
 	}
-	
+
 	if req.Query != "" {
 		builderReq["search"] = req.Query
 	}
@@ -340,11 +340,11 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 	if len(req.Tags) > 0 {
 		builderReq["tags"] = req.Tags
 	}
-	
+
 	// Make request to agent-builder with query params
 	endpoint := "/agents"
 	requestURL := s.agentBuilderURL + endpoint
-	
+
 	// Build query string
 	params := make([]string, 0)
 	for key, value := range builderReq {
@@ -361,35 +361,35 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			}
 		}
 	}
-	
+
 	if len(params) > 0 {
 		requestURL += "?" + strings.Join(params, "&")
 	}
-	
+
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 	if err != nil {
 		return nil, errors.ExternalService("Failed to create agent-builder request", err)
 	}
-	
+
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
 	httpReq.Header.Set("Content-Type", "application/json")
-	
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, errors.ExternalService("Agent-builder service unavailable", err)
 	}
 	defer resp.Body.Close()
-	
+
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, errors.ExternalService("Failed to read agent-builder response", err)
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder error: %s", string(bodyBytes)), nil)
 	}
-	
+
 	var builderResp map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &builderResp); err != nil {
 		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
@@ -434,7 +434,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			}
 			return ""
 		}
-		
+
 		// Safe bool extraction helper
 		safeBool := func(key string) bool {
 			if val, ok := agentMap[key]; ok && val != nil {
@@ -444,7 +444,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			}
 			return false
 		}
-		
+
 		// Parse timestamps safely
 		var createdAt, updatedAt time.Time
 		if createdAtStr := safeString("created_at"); createdAtStr != "" {
@@ -453,7 +453,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 		if updatedAtStr := safeString("updated_at"); updatedAtStr != "" {
 			updatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		}
-		
+
 		// DEBUG: Log what safeString returns for type
 		typeStr := safeString("type")
 		s.logger.Info("DEBUG: safeString(type) result", zap.String("type_value", typeStr), zap.String("agent_name", safeString("name")))
@@ -528,7 +528,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 
 		agents = append(agents, agent)
 	}
-	
+
 	// Get total count from response safely
 	var total, page, size int
 	if totalVal, ok := builderResp["total"]; ok && totalVal != nil {
@@ -554,7 +554,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 	} else {
 		size = req.Limit // default to request limit
 	}
-	
+
 	// If IncludeInternal is requested, fetch internal agents and append them
 	if req.IncludeInternal {
 		internalAgents, err := s.GetInternalAgents(ctx, authToken)
@@ -754,22 +754,22 @@ func (s *AgentService) ExecuteAgent(ctx context.Context, agentID string, req mod
 	startTime := time.Now()
 	builderResp, err := s.executeAgentInBuilder(ctx, agent.AgentBuilderID, builderReq, authToken)
 	if err != nil {
-		s.logger.Warn("Agent-builder unavailable, falling back to direct execution", 
+		s.logger.Warn("Agent-builder unavailable, falling back to direct execution",
 			zap.String("agent_id", agentID),
 			zap.Error(err))
-		
+
 		// Fall back to direct LLM execution
 		response, directErr := s.executeAgentDirect(ctx, agent, req, userID, authToken)
 		if directErr != nil {
 			s.logger.Error("Direct execution also failed", zap.Error(directErr))
 			return nil, errors.ExternalService("Both agent-builder and direct execution failed", directErr)
 		}
-		
+
 		// Update agent statistics for direct execution
 		if err := s.updateAgentExecutionStats(ctx, agent, response); err != nil {
 			s.logger.Error("Failed to update agent execution stats", zap.Error(err))
 		}
-		
+
 		return response, nil
 	}
 	endTime := time.Now()
@@ -1060,27 +1060,27 @@ func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Age
 	`
 
 	params := map[string]interface{}{
-		"id":                 agent.ID,
-		"agentBuilderId":     agent.AgentBuilderID,
-		"name":               agent.Name,
-		"description":        agent.Description,
-		"status":             string(agent.Status),
-		"type":               string(agent.Type),
-		"ownerId":            agent.OwnerID,
-		"spaceType":          string(agent.SpaceType),
-		"spaceId":            agent.SpaceID,
-		"tenantId":           agent.TenantID,
-		"teamId":             agent.TeamID,
-		"isPublic":           agent.IsPublic,
-		"isTemplate":         agent.IsTemplate,
-		"isInternal":         agent.IsInternal,
-		"tags":               agent.Tags,
-		"searchText":         agent.SearchText,
-		"totalExecutions":    agent.TotalExecutions,
-		"totalCostUSD":       agent.TotalCostUSD,
-		"avgResponseTimeMs":  agent.AvgResponseTimeMs,
-		"createdAt":          agent.CreatedAt.Format(time.RFC3339),
-		"updatedAt":          agent.UpdatedAt.Format(time.RFC3339),
+		"id":                agent.ID,
+		"agentBuilderId":    agent.AgentBuilderID,
+		"name":              agent.Name,
+		"description":       agent.Description,
+		"status":            string(agent.Status),
+		"type":              string(agent.Type),
+		"ownerId":           agent.OwnerID,
+		"spaceType":         string(agent.SpaceType),
+		"spaceId":           agent.SpaceID,
+		"tenantId":          agent.TenantID,
+		"teamId":            agent.TeamID,
+		"isPublic":          agent.IsPublic,
+		"isTemplate":        agent.IsTemplate,
+		"isInternal":        agent.IsInternal,
+		"tags":              agent.Tags,
+		"searchText":        agent.SearchText,
+		"totalExecutions":   agent.TotalExecutions,
+		"totalCostUSD":      agent.TotalCostUSD,
+		"avgResponseTimeMs": agent.AvgResponseTimeMs,
+		"createdAt":         agent.CreatedAt.Format(time.RFC3339),
+		"updatedAt":         agent.UpdatedAt.Format(time.RFC3339),
 	}
 
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -1330,7 +1330,7 @@ func (s *AgentService) buildListAgentsQuery(req models.AgentSearchRequest, userI
 
 func (s *AgentService) buildListAgentsParams(req models.AgentSearchRequest, userID string, userTeams []string) map[string]interface{} {
 	params := map[string]interface{}{
-		"userId": userID,
+		"userId":    userID,
 		"userTeams": userTeams,
 	}
 
@@ -1441,7 +1441,7 @@ func (s *AgentService) prepareExecutionRequest(ctx context.Context, agent *model
 		if len(req.Sources) > 0 {
 			builderReq["sources"] = req.Sources
 		}
-		
+
 	case models.AgentTypeConversational:
 		if req.ConversationID != nil {
 			builderReq["conversation_id"] = *req.ConversationID
@@ -1449,7 +1449,7 @@ func (s *AgentService) prepareExecutionRequest(ctx context.Context, agent *model
 		if len(req.History) > 0 {
 			builderReq["history"] = req.History
 		}
-		
+
 	case models.AgentTypeProducer:
 		if req.Template != nil {
 			builderReq["template"] = *req.Template
@@ -1472,7 +1472,7 @@ func (s *AgentService) executeAgentInBuilder(ctx context.Context, agentBuilderID
 
 func (s *AgentService) buildExecutionResponse(ctx context.Context, agent *models.Agent, builderResp map[string]interface{}, startTime, endTime time.Time) (*models.AgentExecuteResponse, error) {
 	responseTimeMs := int(endTime.Sub(startTime).Milliseconds())
-	
+
 	response := &models.AgentExecuteResponse{
 		ExecutionID:    builderResp["execution_id"].(string),
 		AgentID:        agent.ID,
@@ -1506,20 +1506,20 @@ func (s *AgentService) buildExecutionResponse(ctx context.Context, agent *models
 				}
 			}
 		}
-		
+
 	case models.AgentTypeConversational:
 		if conversationID, ok := builderResp["conversation_id"].(string); ok {
 			response.ConversationID = &conversationID
 		}
-		
+
 	case models.AgentTypeProducer:
 		if production, ok := builderResp["production"].(map[string]interface{}); ok {
 			response.Production = &models.ProductionResult{
-				ID:         production["id"].(string),
-				Title:      production["title"].(string),
-				Format:     production["format"].(string),
-				Content:    production["content"].(string),
-				CreatedAt:  endTime,
+				ID:        production["id"].(string),
+				Title:     production["title"].(string),
+				Format:    production["format"].(string),
+				Content:   production["content"].(string),
+				CreatedAt: endTime,
 			}
 			if template, ok := production["template"].(string); ok {
 				response.Production.Template = template
@@ -1537,7 +1537,7 @@ func (s *AgentService) updateAgentExecutionStats(ctx context.Context, agent *mod
 	// Update agent execution statistics
 	agent.TotalExecutions++
 	agent.TotalCostUSD += response.CostUSD
-	
+
 	// Update average response time (simple moving average)
 	if agent.TotalExecutions == 1 {
 		agent.AvgResponseTimeMs = response.ResponseTimeMs
@@ -1546,7 +1546,7 @@ func (s *AgentService) updateAgentExecutionStats(ctx context.Context, agent *mod
 		totalTime := (agent.AvgResponseTimeMs * (agent.TotalExecutions - 1)) + response.ResponseTimeMs
 		agent.AvgResponseTimeMs = totalTime / agent.TotalExecutions
 	}
-	
+
 	now := time.Now()
 	agent.LastExecutedAt = &now
 	agent.UpdatedAt = now
@@ -1596,40 +1596,40 @@ func (s *AgentService) getAgentRawFromBuilder(ctx context.Context, agentID strin
 func (s *AgentService) getAgentFromBuilder(ctx context.Context, agentID string, authToken string) (*models.Agent, error) {
 	endpoint := "/agents/" + agentID
 	requestURL := s.agentBuilderURL + endpoint
-	
+
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 	if err != nil {
 		return nil, errors.ExternalService("Failed to create agent-builder request", err)
 	}
-	
+
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
 	httpReq.Header.Set("Content-Type", "application/json")
-	
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, errors.ExternalService("Agent-builder service unavailable", err)
 	}
 	defer resp.Body.Close()
-	
+
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, errors.ExternalService("Failed to read agent-builder response", err)
 	}
-	
+
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, errors.NotFound("Agent not found")
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.ExternalService("Agent-builder service error", fmt.Errorf("status: %d, body: %s", resp.StatusCode, string(bodyBytes)))
 	}
-	
+
 	var builderResp map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &builderResp); err != nil {
 		return nil, errors.ExternalService("Failed to parse agent-builder response", err)
 	}
-	
+
 	// Convert agent-builder response to our Agent model
 	agent := &models.Agent{}
 	if id, ok := builderResp["id"].(string); ok {
@@ -1651,7 +1651,7 @@ func (s *AgentService) getAgentFromBuilder(ctx context.Context, agentID string, 
 	if isPublic, ok := builderResp["is_public"].(bool); ok {
 		agent.IsPublic = isPublic
 	}
-	
+
 	return agent, nil
 }
 

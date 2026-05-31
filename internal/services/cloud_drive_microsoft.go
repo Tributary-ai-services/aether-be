@@ -32,22 +32,22 @@ const graphAPIBase = "https://graph.microsoft.com/v1.0"
 
 // Microsoft Graph API response types
 type graphDriveItemList struct {
-	Value         []graphDriveItem `json:"value"`
-	NextLink      string           `json:"@odata.nextLink"`
-	TotalCount    int              `json:"@odata.count"`
+	Value      []graphDriveItem `json:"value"`
+	NextLink   string           `json:"@odata.nextLink"`
+	TotalCount int              `json:"@odata.count"`
 }
 
 type graphDriveItem struct {
-	ID               string          `json:"id"`
-	Name             string          `json:"name"`
-	Size             int64           `json:"size"`
-	WebURL           string          `json:"webUrl"`
-	LastModifiedDateTime string      `json:"lastModifiedDateTime"`
-	File             *graphFileInfo  `json:"file,omitempty"`
-	Folder           *graphFolderInfo `json:"folder,omitempty"`
-	LastModifiedBy   *graphIdentity  `json:"lastModifiedBy,omitempty"`
-	ParentReference  *graphParent    `json:"parentReference,omitempty"`
-	DownloadURL      string          `json:"@microsoft.graph.downloadUrl,omitempty"`
+	ID                   string           `json:"id"`
+	Name                 string           `json:"name"`
+	Size                 int64            `json:"size"`
+	WebURL               string           `json:"webUrl"`
+	LastModifiedDateTime string           `json:"lastModifiedDateTime"`
+	File                 *graphFileInfo   `json:"file,omitempty"`
+	Folder               *graphFolderInfo `json:"folder,omitempty"`
+	LastModifiedBy       *graphIdentity   `json:"lastModifiedBy,omitempty"`
+	ParentReference      *graphParent     `json:"parentReference,omitempty"`
+	DownloadURL          string           `json:"@microsoft.graph.downloadUrl,omitempty"`
 }
 
 type graphFileInfo struct {

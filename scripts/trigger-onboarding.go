@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -146,11 +147,11 @@ func triggerManualOnboarding() error {
 
 	for _, doc := range sampleDocs {
 		payload := map[string]interface{}{
-			"name":         doc.Name,
-			"description":  doc.Description,
-			"notebook_id":  notebookID,
-			"content":      doc.Content,
-			"tags":         []string{"sample", "onboarding"},
+			"name":        doc.Name,
+			"description": doc.Description,
+			"notebook_id": notebookID,
+			"content":     doc.Content,
+			"tags":        []string{"sample", "onboarding"},
 		}
 
 		payloadBytes, _ := json.Marshal(payload)

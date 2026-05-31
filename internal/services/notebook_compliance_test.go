@@ -61,27 +61,27 @@ func TestNotebookComplianceOptions(t *testing.T) {
 		complianceSettings := map[string]interface{}{
 			"hipaa_compliant": true,
 			"pii_detection": map[string]interface{}{
-				"enabled": true,
-				"scan_on_upload": true,
+				"enabled":           true,
+				"scan_on_upload":    true,
 				"sensitivity_level": "high",
 			},
 			"audit_scoring": map[string]interface{}{
-				"enabled": true,
-				"level": "HIGH",
+				"enabled":        true,
+				"level":          "HIGH",
 				"log_all_access": true,
 			},
 			"data_retention": map[string]interface{}{
-				"years": 7,
-				"auto_delete": false,
+				"years":              7,
+				"auto_delete":        false,
 				"archive_after_days": 365,
 			},
 			"encryption": map[string]interface{}{
-				"at_rest": true,
+				"at_rest":    true,
 				"in_transit": true,
-				"algorithm": "AES-256",
+				"algorithm":  "AES-256",
 			},
 			"access_control": map[string]interface{}{
-				"require_mfa": true,
+				"require_mfa":  true,
 				"ip_whitelist": []string{"10.0.0.0/8", "192.168.0.0/16"},
 			},
 		}
@@ -105,11 +105,11 @@ func TestNotebookComplianceOptions(t *testing.T) {
 
 		// Verify compliance settings were saved
 		assert.NotNil(t, notebook.Metadata["compliance"], "Compliance settings should be present")
-		
+
 		compliance, ok := notebook.Metadata["compliance"].(map[string]interface{})
 		assert.True(t, ok, "Compliance should be a map")
 		assert.Equal(t, true, compliance["hipaa_compliant"], "HIPAA compliance should be enabled")
-		
+
 		// Check PII detection settings
 		piiSettings, ok := compliance["pii_detection"].(map[string]interface{})
 		assert.True(t, ok, "PII detection settings should be present")
@@ -129,20 +129,20 @@ func TestNotebookComplianceOptions(t *testing.T) {
 		updatedCompliance := map[string]interface{}{
 			"hipaa_compliant": true, // Keep HIPAA
 			"pii_detection": map[string]interface{}{
-				"enabled": true,
-				"scan_on_upload": true,
+				"enabled":           true,
+				"scan_on_upload":    true,
 				"sensitivity_level": "medium", // Changed from high
-				"redact_in_preview": true, // New setting
+				"redact_in_preview": true,     // New setting
 			},
 			"audit_scoring": map[string]interface{}{
-				"enabled": true,
-				"level": "MEDIUM", // Changed from HIGH
-				"log_all_access": false, // Changed from true
+				"enabled":        true,
+				"level":          "MEDIUM", // Changed from HIGH
+				"log_all_access": false,    // Changed from true
 			},
 			"data_retention": map[string]interface{}{
-				"years": 10, // Changed from 7
-				"auto_delete": true, // Changed from false
-				"archive_after_days": 730, // Changed from 365
+				"years":              10,   // Changed from 7
+				"auto_delete":        true, // Changed from false
+				"archive_after_days": 730,  // Changed from 365
 			},
 			"gdpr_compliant": true, // New compliance requirement
 		}
@@ -152,9 +152,9 @@ func TestNotebookComplianceOptions(t *testing.T) {
 			Name:        "HIPAA & GDPR Compliant Research Notebook", // Updated name
 			Description: "Notebook with updated compliance requirements",
 			Metadata: map[string]interface{}{
-				"compliance": updatedCompliance,
-				"department": "Medical Research",
-				"project_id": "MED-2025-001",
+				"compliance":             updatedCompliance,
+				"department":             "Medical Research",
+				"project_id":             "MED-2025-001",
 				"last_compliance_review": "2025-08-29",
 			},
 		}

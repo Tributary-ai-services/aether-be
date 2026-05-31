@@ -4,16 +4,16 @@ import "time"
 
 // OnboardingResult represents the result of user onboarding
 type OnboardingResult struct {
-	UserID            string            `json:"user_id"`
-	Success           bool              `json:"success"`
-	DefaultNotebookID string            `json:"default_notebook_id,omitempty"`
-	DefaultAgentID    string            `json:"default_agent_id,omitempty"`
-	SampleDocsCount   int               `json:"sample_docs_count,omitempty"`
-	Steps             map[string]bool   `json:"steps"`
-	ErrorMessage      string            `json:"error_message,omitempty"`
-	StartedAt         time.Time         `json:"started_at"`
-	CompletedAt       time.Time         `json:"completed_at"`
-	DurationMs        int64             `json:"duration_ms"`
+	UserID            string          `json:"user_id"`
+	Success           bool            `json:"success"`
+	DefaultNotebookID string          `json:"default_notebook_id,omitempty"`
+	DefaultAgentID    string          `json:"default_agent_id,omitempty"`
+	SampleDocsCount   int             `json:"sample_docs_count,omitempty"`
+	Steps             map[string]bool `json:"steps"`
+	ErrorMessage      string          `json:"error_message,omitempty"`
+	StartedAt         time.Time       `json:"started_at"`
+	CompletedAt       time.Time       `json:"completed_at"`
+	DurationMs        int64           `json:"duration_ms"`
 }
 
 // OnboardingStep represents individual onboarding steps

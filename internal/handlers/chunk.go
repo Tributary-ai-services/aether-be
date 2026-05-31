@@ -18,19 +18,19 @@ import (
 
 // ChunkHandler handles chunk-related HTTP requests
 type ChunkHandler struct {
-	db             *database.Neo4jClient
-	chunkService   *services.ChunkService
+	db               *database.Neo4jClient
+	chunkService     *services.ChunkService
 	audiModalService *services.AudiModalService
-	logger         *logger.Logger
+	logger           *logger.Logger
 }
 
 // NewChunkHandler creates a new chunk handler
 func NewChunkHandler(db *database.Neo4jClient, chunkService *services.ChunkService, audiModalService *services.AudiModalService, logger *logger.Logger) *ChunkHandler {
 	return &ChunkHandler{
-		db:             db,
-		chunkService:   chunkService,
+		db:               db,
+		chunkService:     chunkService,
 		audiModalService: audiModalService,
-		logger:         logger.WithService("chunk_handler"),
+		logger:           logger.WithService("chunk_handler"),
 	}
 }
 
@@ -88,7 +88,7 @@ func (h *ChunkHandler) GetFileChunks(c *gin.Context) {
 		h.logger.Error("Failed to fetch chunks from AudiModal",
 			zap.String("file_id", fileID),
 			zap.Error(err))
-		
+
 		// Handle different types of errors appropriately
 		if errors.IsNotFound(err) {
 			apiErr := errors.FileNotProcessedWithDetails("File has not been processed or chunks not found", map[string]interface{}{
@@ -97,13 +97,13 @@ func (h *ChunkHandler) GetFileChunks(c *gin.Context) {
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		if errors.IsExternalService(err) {
 			apiErr := errors.ExternalService("AudiModal service is currently unavailable", err)
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		apiErr := errors.ChunkProcessingWithDetails("Failed to retrieve chunks", err, map[string]interface{}{
 			"file_id": fileID,
 		})
@@ -168,7 +168,7 @@ func (h *ChunkHandler) GetChunk(c *gin.Context) {
 			zap.String("file_id", fileID),
 			zap.String("chunk_id", chunkID),
 			zap.Error(err))
-		
+
 		// Handle different types of errors appropriately
 		if errors.IsNotFound(err) {
 			apiErr := errors.ChunkNotFoundWithDetails("Chunk not found", map[string]interface{}{
@@ -178,13 +178,13 @@ func (h *ChunkHandler) GetChunk(c *gin.Context) {
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		if errors.IsExternalService(err) {
 			apiErr := errors.ExternalService("AudiModal service is currently unavailable", err)
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		apiErr := errors.ChunkProcessingWithDetails("Failed to retrieve chunk", err, map[string]interface{}{
 			"file_id":  fileID,
 			"chunk_id": chunkID,
@@ -259,47 +259,47 @@ func (h *ChunkHandler) GetAvailableStrategies(c *gin.Context) {
 	strategies, err := h.audiModalService.GetAvailableStrategies(c.Request.Context())
 	if err != nil {
 		h.logger.Warn("Failed to fetch strategies from AudiModal, falling back to defaults", zap.Error(err))
-		
+
 		// Return default strategies if AudiModal is unavailable
 		defaultStrategies := []map[string]interface{}{
 			{
-				"name":        "semantic",
-				"description": "Splits text based on semantic boundaries (paragraphs, sentences)",
-				"best_for":    []string{"natural language", "documents", "articles"},
-				"data_types":  []string{"text", "unstructured", "documents"},
-				"complexity":  "medium",
-				"performance": "medium",
+				"name":         "semantic",
+				"description":  "Splits text based on semantic boundaries (paragraphs, sentences)",
+				"best_for":     []string{"natural language", "documents", "articles"},
+				"data_types":   []string{"text", "unstructured", "documents"},
+				"complexity":   "medium",
+				"performance":  "medium",
 				"memory_usage": "medium",
 			},
 			{
-				"name":        "fixed",
-				"description": "Splits text into fixed-size chunks with optional overlap",
-				"best_for":    []string{"simple text processing", "consistent chunk sizes"},
-				"data_types":  []string{"text", "unstructured"},
-				"complexity":  "low",
-				"performance": "high",
+				"name":         "fixed",
+				"description":  "Splits text into fixed-size chunks with optional overlap",
+				"best_for":     []string{"simple text processing", "consistent chunk sizes"},
+				"data_types":   []string{"text", "unstructured"},
+				"complexity":   "low",
+				"performance":  "high",
 				"memory_usage": "low",
 			},
 			{
-				"name":        "adaptive",
-				"description": "Automatically adapts to different data types and structures",
-				"best_for":    []string{"mixed content", "unknown data types", "JSON"},
-				"data_types":  []string{"mixed", "semi_structured", "json", "unknown"},
-				"complexity":  "high",
-				"performance": "medium",
+				"name":         "adaptive",
+				"description":  "Automatically adapts to different data types and structures",
+				"best_for":     []string{"mixed content", "unknown data types", "JSON"},
+				"data_types":   []string{"mixed", "semi_structured", "json", "unknown"},
+				"complexity":   "high",
+				"performance":  "medium",
 				"memory_usage": "medium",
 			},
 			{
-				"name":        "row_based",
-				"description": "Groups structured data rows into chunks",
-				"best_for":    []string{"CSV files", "database tables", "spreadsheets"},
-				"data_types":  []string{"structured", "csv", "table"},
-				"complexity":  "low",
-				"performance": "high",
+				"name":         "row_based",
+				"description":  "Groups structured data rows into chunks",
+				"best_for":     []string{"CSV files", "database tables", "spreadsheets"},
+				"data_types":   []string{"structured", "csv", "table"},
+				"complexity":   "low",
+				"performance":  "high",
 				"memory_usage": "low",
 			},
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"data":    defaultStrategies,
@@ -338,20 +338,20 @@ func (h *ChunkHandler) GetOptimalStrategy(c *gin.Context) {
 	)
 	if err != nil {
 		h.logger.Error("Failed to get strategy recommendation", zap.Error(err))
-		
+
 		// Handle different types of errors appropriately
 		if errors.IsValidation(err) {
 			apiErr := errors.StrategyValidation("Invalid content type or file size for strategy recommendation")
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		if errors.IsExternalService(err) {
 			apiErr := errors.ExternalService("AudiModal service is currently unavailable", err)
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		apiErr := errors.StrategyError("Failed to get strategy recommendation", err)
 		c.JSON(apiErr.StatusCode, apiErr)
 		return
@@ -424,7 +424,7 @@ func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 			zap.String("file_id", fileID),
 			zap.String("strategy", request.Strategy),
 			zap.Error(err))
-		
+
 		// Handle different types of errors appropriately
 		if errors.IsNotFound(err) {
 			apiErr := errors.FileNotProcessedWithDetails("File not found or not available for reprocessing", map[string]interface{}{
@@ -433,7 +433,7 @@ func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		if errors.IsValidation(err) {
 			apiErr := errors.ValidationWithDetails("Invalid strategy or configuration", map[string]interface{}{
 				"strategy": request.Strategy,
@@ -442,7 +442,7 @@ func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		if errors.IsConflict(err) {
 			apiErr := errors.ProcessingInProgressWithDetails("File is currently being processed", map[string]interface{}{
 				"file_id": fileID,
@@ -450,13 +450,13 @@ func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		if errors.IsExternalService(err) {
 			apiErr := errors.ExternalService("AudiModal service is currently unavailable", err)
 			c.JSON(apiErr.StatusCode, apiErr)
 			return
 		}
-		
+
 		apiErr := errors.ChunkProcessingWithDetails("Failed to initiate file reprocessing", err, map[string]interface{}{
 			"file_id":  fileID,
 			"strategy": request.Strategy,
@@ -466,9 +466,9 @@ func (h *ChunkHandler) ReprocessFileWithStrategy(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"success": true,
-		"message": "File reprocessing initiated",
-		"file_id": fileID,
+		"success":  true,
+		"message":  "File reprocessing initiated",
+		"file_id":  fileID,
 		"strategy": request.Strategy,
 	})
 }
@@ -546,7 +546,7 @@ func parseAudiModalTimestamp(timestamp string) (time.Time, error) {
 	if timestamp == "" {
 		return time.Time{}, nil
 	}
-	
+
 	// Try multiple timestamp formats
 	layouts := []string{
 		time.RFC3339,
@@ -554,12 +554,12 @@ func parseAudiModalTimestamp(timestamp string) (time.Time, error) {
 		"2006-01-02T15:04:05Z",
 		"2006-01-02 15:04:05",
 	}
-	
+
 	for _, layout := range layouts {
 		if t, err := time.Parse(layout, timestamp); err == nil {
 			return t, nil
 		}
 	}
-	
+
 	return time.Time{}, fmt.Errorf("unable to parse timestamp")
 }

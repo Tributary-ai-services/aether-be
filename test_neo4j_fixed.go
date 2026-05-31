@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -53,7 +54,7 @@ func main() {
 	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		notebookName := "Fixed Diagnostic Test Notebook"
 		notebookDesc := "Testing Neo4j with all proper attributes"
-		
+
 		query := `
 			CREATE (n:Notebook {
 				id: $notebook_id,
@@ -78,7 +79,7 @@ func main() {
 			})
 			RETURN n
 		`
-		
+
 		metadata := map[string]interface{}{
 			"compliance": map[string]interface{}{
 				"hipaa_compliant": true,
@@ -88,25 +89,25 @@ func main() {
 			},
 		}
 		jsonBytes, _ := json.Marshal(metadata)
-		
+
 		params := map[string]interface{}{
 			"notebook_id":         testNotebookID,
-			"name":               notebookName,
-			"title":              notebookName,
-			"description":        notebookDesc,
-			"type":               "research",
-			"owner_id":           testUserID,
-			"space_type":         "personal",
-			"space_id":           "space_fixed_test",
-			"tenant_id":          "tenant_fixed_test",
-			"document_count":     0,
-			"search_text":        fmt.Sprintf("%s %s", notebookName, notebookDesc),
-			"visibility":         "private",
-			"status":            "active",
-			"total_size_bytes":   0,
+			"name":                notebookName,
+			"title":               notebookName,
+			"description":         notebookDesc,
+			"type":                "research",
+			"owner_id":            testUserID,
+			"space_type":          "personal",
+			"space_id":            "space_fixed_test",
+			"tenant_id":           "tenant_fixed_test",
+			"document_count":      0,
+			"search_text":         fmt.Sprintf("%s %s", notebookName, notebookDesc),
+			"visibility":          "private",
+			"status":              "active",
+			"total_size_bytes":    0,
 			"compliance_settings": "{}",
-			"metadata":          string(jsonBytes),
-			"tags":              []string{"diagnostic", "test", "fixed"},
+			"metadata":            string(jsonBytes),
+			"tags":                []string{"diagnostic", "test", "fixed"},
 		}
 		_, err := tx.Run(ctx, query, params)
 		return nil, err
@@ -349,12 +350,12 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		
+
 		records, err := result.Collect(ctx)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		return records, nil
 	})
 	if err != nil {
@@ -367,8 +368,8 @@ func main() {
 		docCount := record.Values[1].(string)
 		searchText := record.Values[2].(string)
 		totalSize := record.Values[3].(string)
-		
-		fmt.Printf("   📓 %s: doc_count=%s, search_text='%s', total_size=%s\n", 
+
+		fmt.Printf("   📓 %s: doc_count=%s, search_text='%s', total_size=%s\n",
 			name, docCount, searchText, totalSize)
 	}
 

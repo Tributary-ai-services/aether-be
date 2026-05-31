@@ -28,17 +28,17 @@ func TestMinIOFolderOperations(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
-			Provider:        "s3",
-			S3Region:        "us-east-1",
-			S3Endpoint:      "http://localhost:9000",
-			S3AccessKey:     "minioadmin",
-			S3SecretKey:     "minioadmin123",
-			S3Bucket:        "aether-storage",
-			S3UseSSL:        false,
+			Provider:         "s3",
+			S3Region:         "us-east-1",
+			S3Endpoint:       "http://localhost:9000",
+			S3AccessKey:      "minioadmin",
+			S3SecretKey:      "minioadmin123",
+			S3Bucket:         "aether-storage",
+			S3UseSSL:         false,
 			S3ForcePathStyle: true,
 		},
 	}
-	
+
 	log := logger.NewLogger(logger.Config{Level: "debug", Format: "json"})
 	storageService, err := services.NewS3StorageService(cfg, log)
 	require.NoError(t, err, "Failed to create storage service")
@@ -53,14 +53,14 @@ func TestMinIOFolderOperations(t *testing.T) {
 
 	t.Run("Create folder structure and upload file", func(t *testing.T) {
 		// Create the storage key following the pattern
-		storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s", 
+		storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s",
 			spaceType, notebookID, documentID, fileName)
-		
+
 		// Upload file (which creates the folder structure automatically)
 		storagePath, err := storageService.UploadFileToTenantBucket(ctx, tenantID, storageKey, fileContent, "text/plain")
 		assert.NoError(t, err, "Failed to upload file")
 		assert.NotEmpty(t, storagePath, "Storage path should not be empty")
-		
+
 		t.Logf("File uploaded to: %s", storagePath)
 
 		// Verify file exists
@@ -72,37 +72,37 @@ func TestMinIOFolderOperations(t *testing.T) {
 	t.Run("Update the same file", func(t *testing.T) {
 		// Update with new content
 		updatedContent := []byte("This is UPDATED test content for MinIO storage")
-		storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s", 
+		storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s",
 			spaceType, notebookID, documentID, fileName)
-		
+
 		storagePath, err := storageService.UploadFileToTenantBucket(ctx, tenantID, storageKey, updatedContent, "text/plain")
 		assert.NoError(t, err, "Failed to update file")
-		
+
 		// Download and verify content
 		downloadedContent, err := storageService.DownloadFile(ctx, storagePath)
 		assert.NoError(t, err, "Failed to download updated file")
 		assert.Equal(t, updatedContent, downloadedContent, "Downloaded content should match updated content")
-		
+
 		t.Logf("File successfully updated with new content")
 	})
 
 	t.Run("Delete file from folder", func(t *testing.T) {
-		storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s", 
+		storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s",
 			spaceType, notebookID, documentID, fileName)
-		
+
 		// Get the full path for deletion
 		bucketName := fmt.Sprintf("aether-%s", extractTenantSuffix(tenantID))
 		fullPath := fmt.Sprintf("%s/%s", bucketName, storageKey)
-		
+
 		// Delete the file
 		err := storageService.DeleteFile(ctx, fullPath)
 		assert.NoError(t, err, "Failed to delete file")
-		
+
 		// Verify file no longer exists
 		exists, err := storageService.FileExists(ctx, fullPath)
 		assert.NoError(t, err, "Failed to check file existence after deletion")
 		assert.False(t, exists, "File should not exist after deletion")
-		
+
 		t.Logf("File successfully deleted")
 	})
 
@@ -110,16 +110,16 @@ func TestMinIOFolderOperations(t *testing.T) {
 		// In S3/MinIO, folders don't really exist - they're just prefixes
 		// When all files with a prefix are deleted, the "folder" disappears
 		// Let's verify this by checking if any files exist with the document prefix
-		
-		prefix := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/", 
+
+		prefix := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/",
 			spaceType, notebookID, documentID)
 		bucketName := fmt.Sprintf("aether-%s", extractTenantSuffix(tenantID))
-		
+
 		// List files with prefix (should be empty)
 		files, err := storageService.ListFiles(ctx, bucketName, prefix, 10)
 		assert.NoError(t, err, "Failed to list files")
 		assert.Empty(t, files, "No files should exist with the prefix after deletion")
-		
+
 		t.Logf("Folder structure confirmed removed (no files with prefix)")
 	})
 }
@@ -139,14 +139,14 @@ func TestNotebookComplianceOptions(t *testing.T) {
 		// - PII detection enabled
 		// - Audit scoring level: HIGH
 		// - Data retention: 7 years
-		
+
 		t.Skip("Neo4j integration needed")
 	})
 
 	t.Run("Update notebook compliance options", func(t *testing.T) {
 		// TODO: Update existing notebook's compliance settings
 		// TODO: Verify changes were persisted
-		
+
 		t.Skip("Neo4j integration needed")
 	})
 }
@@ -164,7 +164,7 @@ func TestDocumentCountAccuracy(t *testing.T) {
 		// TODO: Create new document
 		// TODO: Verify count increased by exactly 1
 		// TODO: Query all documents and verify actual count matches
-		
+
 		t.Skip("Full service integration needed")
 	})
 
@@ -172,7 +172,7 @@ func TestDocumentCountAccuracy(t *testing.T) {
 		// TODO: Create another document
 		// TODO: Verify count is exactly 2
 		// TODO: List all documents and confirm count
-		
+
 		t.Skip("Full service integration needed")
 	})
 
@@ -180,7 +180,7 @@ func TestDocumentCountAccuracy(t *testing.T) {
 		// TODO: Delete one document
 		// TODO: Verify count decreased by exactly 1
 		// TODO: List remaining documents and confirm count
-		
+
 		t.Skip("Full service integration needed")
 	})
 }
@@ -202,17 +202,17 @@ func TestCompleteDocumentLifecycle(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
-			Provider:        "s3",
-			S3Region:        "us-east-1", 
-			S3Endpoint:      "http://localhost:9000",
-			S3AccessKey:     "minioadmin",
-			S3SecretKey:     "minioadmin123",
-			S3Bucket:        "aether-storage",
-			S3UseSSL:        false,
+			Provider:         "s3",
+			S3Region:         "us-east-1",
+			S3Endpoint:       "http://localhost:9000",
+			S3AccessKey:      "minioadmin",
+			S3SecretKey:      "minioadmin123",
+			S3Bucket:         "aether-storage",
+			S3UseSSL:         false,
 			S3ForcePathStyle: true,
 		},
 	}
-	
+
 	log := logger.NewLogger(logger.Config{Level: "debug", Format: "json"})
 	storageService, err := services.NewS3StorageService(cfg, log)
 	require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestCompleteDocumentLifecycle(t *testing.T) {
 	tenantID := "tenant_lifecycle_test"
 	spaceType := "organization"
 	notebookID := "notebook_lifecycle_123"
-	
+
 	documents := []struct {
 		id      string
 		name    string
@@ -233,13 +233,13 @@ func TestCompleteDocumentLifecycle(t *testing.T) {
 			content: []byte("Project requirements document"),
 		},
 		{
-			id:      "doc_002", 
+			id:      "doc_002",
 			name:    "design.pdf",
 			content: []byte("System design document"),
 		},
 		{
 			id:      "doc_003",
-			name:    "test-plan.pdf", 
+			name:    "test-plan.pdf",
 			content: []byte("Testing plan document"),
 		},
 	}
@@ -250,11 +250,11 @@ func TestCompleteDocumentLifecycle(t *testing.T) {
 		for _, doc := range documents {
 			storageKey := fmt.Sprintf("spaces/%s/notebooks/%s/documents/%s/%s",
 				spaceType, notebookID, doc.id, doc.name)
-			
+
 			path, err := storageService.UploadFileToTenantBucket(ctx, tenantID, storageKey, doc.content, "application/pdf")
 			assert.NoError(t, err, "Failed to upload document %s", doc.id)
 			uploadedPaths[doc.id] = path
-			
+
 			t.Logf("Uploaded document %s to %s", doc.id, path)
 		}
 	})
@@ -270,11 +270,11 @@ func TestCompleteDocumentLifecycle(t *testing.T) {
 	t.Run("List all documents in notebook", func(t *testing.T) {
 		prefix := fmt.Sprintf("spaces/%s/notebooks/%s/documents/", spaceType, notebookID)
 		bucketName := fmt.Sprintf("aether-%s", extractTenantSuffix(tenantID))
-		
+
 		files, err := storageService.ListFiles(ctx, bucketName, prefix, 100)
 		assert.NoError(t, err, "Failed to list files")
 		assert.Len(t, files, 3, "Should have exactly 3 documents")
-		
+
 		t.Logf("Found %d documents in notebook", len(files))
 	})
 
@@ -282,11 +282,11 @@ func TestCompleteDocumentLifecycle(t *testing.T) {
 		// Delete the second document
 		err := storageService.DeleteFile(ctx, uploadedPaths["doc_002"])
 		assert.NoError(t, err, "Failed to delete document")
-		
+
 		// List again
 		prefix := fmt.Sprintf("spaces/%s/notebooks/%s/documents/", spaceType, notebookID)
 		bucketName := fmt.Sprintf("aether-%s", extractTenantSuffix(tenantID))
-		
+
 		files, err := storageService.ListFiles(ctx, bucketName, prefix, 100)
 		assert.NoError(t, err, "Failed to list files after deletion")
 		assert.Len(t, files, 2, "Should have exactly 2 documents after deletion")

@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -35,7 +36,7 @@ func main() {
 	defer neo4jClient.Close(context.Background())
 
 	ctx := context.Background()
-	
+
 	// Run migrations
 	if err := migrateNotebooks(ctx, neo4jClient); err != nil {
 		log.Fatal("Failed to migrate notebooks:", err)
@@ -83,7 +84,7 @@ func migrateNotebooks(ctx context.Context, client *database.Neo4jClient) error {
 		// If we have a personal_tenant_id, use it; otherwise, generate one
 		tenantID := ""
 		spaceID := ""
-		
+
 		if personalTenantID != nil && personalTenantID.(string) != "" {
 			tenantID = personalTenantID.(string)
 			spaceID = strings.Replace(tenantID, "tenant_", "space_", 1)
@@ -117,7 +118,7 @@ func migrateNotebooks(ctx context.Context, client *database.Neo4jClient) error {
 			continue
 		}
 
-		log.Printf("Migrated notebook: %s (%s) -> tenant: %s, space: %s", 
+		log.Printf("Migrated notebook: %s (%s) -> tenant: %s, space: %s",
 			notebookName, notebookID, tenantID, spaceID)
 		migrated++
 	}
@@ -145,7 +146,7 @@ func migrateDocuments(ctx context.Context, client *database.Neo4jClient) error {
 
 	migrated := 0
 	orphaned := 0
-	
+
 	for _, record := range result.Records {
 		documentID, _ := record.Get("d.id")
 		documentName, _ := record.Get("d.name")
@@ -194,7 +195,7 @@ func migrateDocuments(ctx context.Context, client *database.Neo4jClient) error {
 			continue
 		}
 
-		log.Printf("Migrated document: %s (%s) -> tenant: %s, space: %s", 
+		log.Printf("Migrated document: %s (%s) -> tenant: %s, space: %s",
 			documentName, documentID, notebookTenantID, notebookSpaceID)
 		migrated++
 	}
@@ -238,7 +239,7 @@ func ensureUserPersonalSpaces(ctx context.Context, client *database.Neo4jClient)
 			userIDStr := userID.(string)
 			tenantID := fmt.Sprintf("tenant_%s", strings.ReplaceAll(userIDStr, "-", ""))
 			spaceID = fmt.Sprintf("space_%s", strings.ReplaceAll(userIDStr, "-", ""))
-			
+
 			// Also update tenant_id if missing
 			updateTenantQuery := `
 				MATCH (u:User {id: $user_id})

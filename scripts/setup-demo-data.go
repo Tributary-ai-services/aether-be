@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -89,7 +90,7 @@ func main() {
 
 	fmt.Println("Demo data setup complete!")
 	fmt.Printf("Created %d users, %d organizations, %d teams\n", len(users), len(orgs), len(teams))
-	
+
 	// Print login info
 	fmt.Println("\nDemo login credentials:")
 	for i, user := range users {
@@ -341,12 +342,12 @@ func createDemoTeams(ctx context.Context, teamService *services.TeamService, use
 				OrganizationID: acmeCorp.ID,
 				Visibility:     "private",
 				Settings: map[string]interface{}{
-					"allowExternalSharing":         false,
-					"requireApprovalForJoining":    true,
-					"defaultNotebookVisibility":    "team",
-					"allowMemberInvites":           false,
-					"allowMemberNotebookCreation":  true,
-					"notificationsEnabled":         true,
+					"allowExternalSharing":        false,
+					"requireApprovalForJoining":   true,
+					"defaultNotebookVisibility":   "team",
+					"allowMemberInvites":          false,
+					"allowMemberNotebookCreation": true,
+					"notificationsEnabled":        true,
 				},
 			},
 			creator: johnDoe,
@@ -358,12 +359,12 @@ func createDemoTeams(ctx context.Context, teamService *services.TeamService, use
 				OrganizationID: acmeCorp.ID,
 				Visibility:     "organization",
 				Settings: map[string]interface{}{
-					"allowExternalSharing":         true,
-					"requireApprovalForJoining":    false,
-					"defaultNotebookVisibility":    "organization",
-					"allowMemberInvites":           true,
-					"allowMemberNotebookCreation":  true,
-					"notificationsEnabled":         true,
+					"allowExternalSharing":        true,
+					"requireApprovalForJoining":   false,
+					"defaultNotebookVisibility":   "organization",
+					"allowMemberInvites":          true,
+					"allowMemberNotebookCreation": true,
+					"notificationsEnabled":        true,
 				},
 			},
 			creator: janeSmith,
@@ -375,12 +376,12 @@ func createDemoTeams(ctx context.Context, teamService *services.TeamService, use
 				OrganizationID: acmeCorp.ID,
 				Visibility:     "private",
 				Settings: map[string]interface{}{
-					"allowExternalSharing":         false,
-					"requireApprovalForJoining":    true,
-					"defaultNotebookVisibility":    "team",
-					"allowMemberInvites":           false,
-					"allowMemberNotebookCreation":  true,
-					"notificationsEnabled":         true,
+					"allowExternalSharing":        false,
+					"requireApprovalForJoining":   true,
+					"defaultNotebookVisibility":   "team",
+					"allowMemberInvites":          false,
+					"allowMemberNotebookCreation": true,
+					"notificationsEnabled":        true,
 				},
 			},
 			creator: janeSmith,
@@ -392,12 +393,12 @@ func createDemoTeams(ctx context.Context, teamService *services.TeamService, use
 				OrganizationID: datatechLabs.ID,
 				Visibility:     "private",
 				Settings: map[string]interface{}{
-					"allowExternalSharing":         false,
-					"requireApprovalForJoining":    true,
-					"defaultNotebookVisibility":    "team",
-					"allowMemberInvites":           false,
-					"allowMemberNotebookCreation":  true,
-					"notificationsEnabled":         true,
+					"allowExternalSharing":        false,
+					"requireApprovalForJoining":   true,
+					"defaultNotebookVisibility":   "team",
+					"allowMemberInvites":          false,
+					"allowMemberNotebookCreation": true,
+					"notificationsEnabled":        true,
 				},
 			},
 			creator: mariaGarcia,

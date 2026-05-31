@@ -22,10 +22,10 @@ import (
 
 // DocumentHandler handles document-related HTTP requests
 type DocumentHandler struct {
-	documentService   *services.DocumentService
-	audiModalService  *services.AudiModalService
-	userService       *services.UserService
-	logger            *logger.Logger
+	documentService  *services.DocumentService
+	audiModalService *services.AudiModalService
+	userService      *services.UserService
+	logger           *logger.Logger
 }
 
 // NewDocumentHandler creates a new document handler
@@ -241,20 +241,20 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/documents/upload [post]
 func (h *DocumentHandler) UploadDocument(c *gin.Context) {
-	h.logger.Info("=== UPLOAD HANDLER START ===", 
+	h.logger.Info("=== UPLOAD HANDLER START ===",
 		zap.String("method", c.Request.Method),
 		zap.String("path", c.Request.URL.Path),
 		zap.String("content_type", c.Request.Header.Get("Content-Type")),
 		zap.String("content_length", c.Request.Header.Get("Content-Length")),
 		zap.Any("headers", c.Request.Header))
-	
+
 	userID := getUserID(c)
 	if userID == "" {
 		h.logger.Error("Upload failed: User not authenticated")
 		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
 		return
 	}
-	
+
 	h.logger.Info("Processing upload for user", zap.String("user_id", userID))
 
 	// Parse multipart form
@@ -272,13 +272,13 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 	name := c.PostForm("name")
 	description := c.PostForm("description")
 	tagsStr := c.PostForm("tags")
-	
-	h.logger.Info("Form values extracted", 
+
+	h.logger.Info("Form values extracted",
 		zap.String("notebook_id", notebookID),
 		zap.String("name", name),
 		zap.String("description", description),
 		zap.String("tags", tagsStr))
-	
+
 	if notebookID == "" {
 		h.logger.Error("Validation failed: notebook_id is required")
 		c.JSON(http.StatusBadRequest, errors.Validation("notebook_id is required", nil))
@@ -333,7 +333,7 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 		},
 		FileData: fileData,
 	}
-	
+
 	// Create file info with proper MIME type from multipart form
 	fileInfo := models.FileInfo{
 		OriginalName: header.Filename,
@@ -359,16 +359,16 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
 		return
 	}
-	h.logger.Info("Space context retrieved", 
+	h.logger.Info("Space context retrieved",
 		zap.String("space_type", string(spaceContext.SpaceType)),
 		zap.String("space_id", spaceContext.SpaceID),
 		zap.String("tenant_id", spaceContext.TenantID))
 
-	h.logger.Info("Starting document upload", 
+	h.logger.Info("Starting document upload",
 		zap.String("user_id", userID),
 		zap.String("notebook_id", req.NotebookID),
 		zap.String("filename", req.Name))
-	
+
 	h.logger.Info("About to call documentService.UploadDocument")
 	document, err := h.documentService.UploadDocument(c.Request.Context(), req, userID, spaceContext, fileInfo)
 	h.logger.Info("documentService.UploadDocument call completed", zap.Bool("has_error", err != nil))
@@ -377,8 +377,8 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 		handleServiceError(c, err)
 		return
 	}
-	
-	h.logger.Info("Document upload completed successfully", 
+
+	h.logger.Info("Document upload completed successfully",
 		zap.String("document_id", document.ID))
 
 	c.JSON(http.StatusCreated, document.ToResponse())
@@ -585,17 +585,17 @@ func (h *DocumentHandler) GetDocumentStatus(c *gin.Context) {
 	// Create status response
 	status := map[string]interface{}{
 		"document_id":         document.ID,
-		"status":             document.Status,
-		"processing_job_id":  document.ProcessingJobID,
-		"processed_at":       document.ProcessedAt,
-		"chunk_count":        document.ChunkCount,
-		"processing_time":    document.ProcessingTime,
-		"confidence_score":   document.ConfidenceScore,
-		"chunking_strategy":  document.ChunkingStrategy,
-		"average_chunk_size": document.AverageChunkSize,
+		"status":              document.Status,
+		"processing_job_id":   document.ProcessingJobID,
+		"processed_at":        document.ProcessedAt,
+		"chunk_count":         document.ChunkCount,
+		"processing_time":     document.ProcessingTime,
+		"confidence_score":    document.ConfidenceScore,
+		"chunking_strategy":   document.ChunkingStrategy,
+		"average_chunk_size":  document.AverageChunkSize,
 		"chunk_quality_score": document.ChunkQualityScore,
-		"progress":           calculateProgress(document.Status),
-		"last_updated":       document.UpdatedAt,
+		"progress":            calculateProgress(document.Status),
+		"last_updated":        document.UpdatedAt,
 	}
 
 	// Add processing details if available
@@ -776,23 +776,23 @@ func (h *DocumentHandler) ReprocessDocument(c *gin.Context) {
 	// Submit reprocessing job
 	job, err := h.documentService.ReprocessDocument(c.Request.Context(), document, spaceContext)
 	if err != nil {
-		h.logger.Error("Failed to submit document reprocessing job", 
-			zap.String("document_id", documentID), 
+		h.logger.Error("Failed to submit document reprocessing job",
+			zap.String("document_id", documentID),
 			zap.Error(err))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Document reprocessing job submitted", 
+	h.logger.Info("Document reprocessing job submitted",
 		zap.String("document_id", documentID),
 		zap.String("job_id", job.ID),
 		zap.String("user_id", userID))
 
 	c.JSON(http.StatusOK, map[string]interface{}{
-		"message": "Document reprocessing started",
+		"message":     "Document reprocessing started",
 		"document_id": documentID,
-		"job_id": job.ID,
-		"status": "processing",
+		"job_id":      job.ID,
+		"status":      "processing",
 	})
 }
 
@@ -956,14 +956,14 @@ func (h *DocumentHandler) DownloadDocument(c *gin.Context) {
 	}
 
 	userID := getUserID(c)
-	
+
 	// Get space context
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
 		return
 	}
-	
+
 	fileData, document, err := h.documentService.DownloadDocumentFile(c.Request.Context(), documentID, userID, spaceContext)
 	if err != nil {
 		h.logger.Error("Failed to download document file", zap.String("document_id", documentID), zap.Error(err))
@@ -975,7 +975,7 @@ func (h *DocumentHandler) DownloadDocument(c *gin.Context) {
 	c.Header("Content-Disposition", "attachment; filename=\""+document.OriginalName+"\"")
 	c.Header("Content-Type", document.MimeType)
 	c.Header("Content-Length", fmt.Sprintf("%d", len(fileData)))
-	
+
 	// Stream the file data
 	c.Data(http.StatusOK, document.MimeType, fileData)
 }
@@ -1099,7 +1099,7 @@ func (h *DocumentHandler) AudiModalProcessingWebhook(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Received AudiModal webhook", 
+	h.logger.Info("Received AudiModal webhook",
 		zap.String("file_id", payload.FileID),
 		zap.String("tenant_id", payload.TenantID),
 		zap.String("status", payload.Status),
@@ -1107,7 +1107,7 @@ func (h *DocumentHandler) AudiModalProcessingWebhook(c *gin.Context) {
 
 	// Only process completion events
 	if payload.Event != "processing_complete" || payload.Status != "processed" {
-		h.logger.Info("Ignoring non-completion webhook", 
+		h.logger.Info("Ignoring non-completion webhook",
 			zap.String("event", payload.Event),
 			zap.String("status", payload.Status))
 		c.JSON(http.StatusOK, gin.H{"message": "Webhook received but not processed"})

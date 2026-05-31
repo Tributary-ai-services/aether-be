@@ -9,9 +9,9 @@ import (
 // WorkflowMetrics contains all Prometheus metrics for workflow operations
 type WorkflowMetrics struct {
 	// Execution metrics
-	ExecutionsTotal    *prometheus.CounterVec
-	ExecutionDuration  *prometheus.HistogramVec
-	ActiveExecutions   prometheus.Gauge
+	ExecutionsTotal   *prometheus.CounterVec
+	ExecutionDuration *prometheus.HistogramVec
+	ActiveExecutions  prometheus.Gauge
 
 	// Step metrics
 	StepDuration      *prometheus.HistogramVec

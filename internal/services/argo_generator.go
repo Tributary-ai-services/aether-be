@@ -1472,11 +1472,11 @@ type ArgoNodeStatus struct {
 
 // ArgoWorkflowStatus represents the overall status of an Argo workflow
 type ArgoWorkflowStatus struct {
-	Phase      string                      `json:"phase"` // Pending, Running, Succeeded, Failed, Error
-	StartedAt  string                      `json:"startedAt,omitempty"`
-	FinishedAt string                      `json:"finishedAt,omitempty"`
-	Message    string                      `json:"message,omitempty"`
-	Nodes      map[string]ArgoNodeStatus   `json:"nodes,omitempty"`
+	Phase      string                    `json:"phase"` // Pending, Running, Succeeded, Failed, Error
+	StartedAt  string                    `json:"startedAt,omitempty"`
+	FinishedAt string                    `json:"finishedAt,omitempty"`
+	Message    string                    `json:"message,omitempty"`
+	Nodes      map[string]ArgoNodeStatus `json:"nodes,omitempty"`
 }
 
 // GetArgoWorkflowStatus queries the K8s API for the live status of an Argo workflow

@@ -327,13 +327,13 @@ func (h *TeamHandler) InviteTeamMember(c *gin.Context) {
 
 	member, err := h.teamService.InviteTeamMember(c.Request.Context(), teamID, req, userID)
 	if err != nil {
-		h.logger.Error("Failed to invite team member", zap.Error(err), 
+		h.logger.Error("Failed to invite team member", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("user_id", userID), zap.String("email", req.Email))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Team member invited successfully", 
+	h.logger.Info("Team member invited successfully",
 		zap.String("team_id", teamID), zap.String("invited_user_id", member.UserID), zap.String("invited_by", userID))
 	c.JSON(http.StatusCreated, member.ToMemberResponse())
 }
@@ -383,13 +383,13 @@ func (h *TeamHandler) UpdateTeamMemberRole(c *gin.Context) {
 
 	err := h.teamService.UpdateTeamMemberRole(c.Request.Context(), teamID, targetUserID, req, userID)
 	if err != nil {
-		h.logger.Error("Failed to update team member role", zap.Error(err), 
+		h.logger.Error("Failed to update team member role", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("user_id", userID))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Team member role updated successfully", 
+	h.logger.Info("Team member role updated successfully",
 		zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("updated_by", userID))
 	c.Status(http.StatusNoContent)
 }
@@ -428,13 +428,13 @@ func (h *TeamHandler) RemoveTeamMember(c *gin.Context) {
 
 	err := h.teamService.RemoveTeamMember(c.Request.Context(), teamID, targetUserID, userID)
 	if err != nil {
-		h.logger.Error("Failed to remove team member", zap.Error(err), 
+		h.logger.Error("Failed to remove team member", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("user_id", userID))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Team member removed successfully", 
+	h.logger.Info("Team member removed successfully",
 		zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("removed_by", userID))
 	c.Status(http.StatusNoContent)
 }

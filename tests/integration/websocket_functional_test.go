@@ -13,18 +13,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tributary-ai-services/aether-be/internal/database"
 	"github.com/Tributary-ai-services/aether-be/internal/handlers"
+	"github.com/Tributary-ai-services/aether-be/internal/logger"
 	"github.com/Tributary-ai-services/aether-be/internal/models"
 	"github.com/Tributary-ai-services/aether-be/internal/services"
-	"github.com/Tributary-ai-services/aether-be/internal/logger"
-	"github.com/Tributary-ai-services/aether-be/internal/database"
 )
 
 // TestWebSocketWithoutAuth tests WebSocket functionality without authentication middleware
 func TestWebSocketWithoutAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	log, err := logger.New(logger.Config{
 		Level:  "debug",
 		Format: "console",
@@ -34,9 +34,9 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 	// Create handlers without authentication middleware for testing
 	var documentService *services.DocumentService
 	var audiModalService *services.AudiModalService
-	
+
 	_ = handlers.NewWebSocketHandler(documentService, audiModalService, log)
-	
+
 	// Create simple WebSocket endpoint for testing (without auth middleware)
 	router.GET("/test/websocket", func(c *gin.Context) {
 		// Simple upgrader for testing
@@ -45,7 +45,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 				return true // Allow all origins for testing
 			},
 		}
-		
+
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -59,7 +59,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			"message":   "WebSocket connection successful",
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
-		
+
 		if err := conn.WriteJSON(testMessage); err != nil {
 			t.Logf("Failed to send test message: %v", err)
 			return
@@ -71,12 +71,12 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			t.Logf("Client disconnected: %v", err)
 		}
 	})
-	
+
 	// Add StreamHandler routes for testing
 	var neo4jClient *database.Neo4jClient
 	streamService := services.NewStreamService(neo4jClient, log)
 	_ = handlers.NewStreamHandler(streamService, log)
-	
+
 	// Test endpoint without authentication
 	router.GET("/test/stream", func(c *gin.Context) {
 		upgrader := websocket.Upgrader{
@@ -84,7 +84,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 				return true
 			},
 		}
-		
+
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -114,7 +114,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			Event:     &mockEvent,
 			Timestamp: time.Now(),
 		}
-		
+
 		if err := conn.WriteJSON(message); err != nil {
 			t.Logf("Failed to send stream message: %v", err)
 			return
@@ -122,17 +122,17 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 
 		// Wait a bit then send analytics update
 		time.Sleep(100 * time.Millisecond)
-		
+
 		analytics := models.StreamAnalytics{
-			ID:                   "test-analytics-123",
-			Period:               "realtime",
-			Timestamp:            time.Now(),
-			ActiveStreams:        2,
-			TotalEventsProcessed: 150,
-			EventsPerSecond:      12.5,
-			MediaProcessed:       1500,
+			ID:                    "test-analytics-123",
+			Period:                "realtime",
+			Timestamp:             time.Now(),
+			ActiveStreams:         2,
+			TotalEventsProcessed:  150,
+			EventsPerSecond:       12.5,
+			MediaProcessed:        1500,
 			AverageProcessingTime: 125.5,
-			AverageAuditScore:    0.991,
+			AverageAuditScore:     0.991,
 			SentimentDistribution: map[string]int64{
 				"positive": 80,
 				"neutral":  50,
@@ -151,7 +151,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			Analytics: &analytics,
 			Timestamp: time.Now(),
 		}
-		
+
 		if err := conn.WriteJSON(analyticsMessage); err != nil {
 			t.Logf("Failed to send analytics message: %v", err)
 			return
@@ -163,13 +163,13 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			t.Logf("Client disconnected: %v", err)
 		}
 	})
-	
+
 	server := httptest.NewServer(router)
 	defer server.Close()
 
 	t.Run("basic websocket connection", func(t *testing.T) {
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/test/websocket"
-		
+
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		require.NoError(t, err, "Should connect to WebSocket successfully")
 		defer conn.Close()
@@ -183,13 +183,13 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 		assert.Equal(t, "test", message["type"])
 		assert.Equal(t, "WebSocket connection successful", message["message"])
 		assert.NotNil(t, message["timestamp"])
-		
+
 		t.Logf("Received test message: %+v", message)
 	})
 
 	t.Run("live stream websocket", func(t *testing.T) {
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/test/stream"
-		
+
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		require.NoError(t, err, "Should connect to stream WebSocket successfully")
 		defer conn.Close()
@@ -206,7 +206,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 		assert.Equal(t, "mention", eventMessage.Event.EventType)
 		assert.Equal(t, "positive", eventMessage.Event.Sentiment)
 		assert.Equal(t, 0.85, eventMessage.Event.SentimentScore)
-		
+
 		t.Logf("Received live event: %+v", eventMessage.Event)
 
 		// Read analytics message
@@ -220,13 +220,13 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 		assert.Equal(t, 2, analyticsMessage.Analytics.ActiveStreams)
 		assert.Equal(t, int64(150), analyticsMessage.Analytics.TotalEventsProcessed)
 		assert.Equal(t, 12.5, analyticsMessage.Analytics.EventsPerSecond)
-		
+
 		t.Logf("Received analytics: %+v", analyticsMessage.Analytics)
 	})
 
 	t.Run("websocket message types", func(t *testing.T) {
 		// Test different message types that should be supported
-		
+
 		// Job status message
 		jobMessage := map[string]interface{}{
 			"type": "job_status",
@@ -238,12 +238,12 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			},
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
-		
+
 		jsonData, err := json.Marshal(jobMessage)
 		require.NoError(t, err)
 		assert.Contains(t, string(jsonData), "job_status")
 		assert.Contains(t, string(jsonData), "processing")
-		
+
 		// Live event message
 		event := models.LiveEvent{
 			ID:             "event-456",
@@ -254,19 +254,19 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 			SentimentScore: 0.05,
 			Confidence:     0.88,
 		}
-		
+
 		eventMessage := models.StreamEventWebSocketMessage{
 			Type:      "live_event",
 			Event:     &event,
 			Timestamp: time.Now(),
 		}
-		
+
 		eventData, err := json.Marshal(eventMessage)
 		require.NoError(t, err)
 		assert.Contains(t, string(eventData), "live_event")
 		assert.Contains(t, string(eventData), "multimodal")
 		assert.Contains(t, string(eventData), "neutral")
-		
+
 		t.Logf("Job message JSON: %s", string(jsonData))
 		t.Logf("Event message JSON: %s", string(eventData))
 	})
@@ -276,7 +276,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 func TestWebSocketPerformance(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	_, err := logger.New(logger.Config{
 		Level:  "error", // Minimal logging for performance test
 		Format: "json",
@@ -289,7 +289,7 @@ func TestWebSocketPerformance(t *testing.T) {
 				return true
 			},
 		}
-		
+
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -300,12 +300,12 @@ func TestWebSocketPerformance(t *testing.T) {
 		// Send multiple messages quickly
 		for i := 0; i < 10; i++ {
 			message := map[string]interface{}{
-				"type":    "performance_test",
-				"id":      i,
-				"content": "Performance test message",
+				"type":      "performance_test",
+				"id":        i,
+				"content":   "Performance test message",
 				"timestamp": time.Now().Format(time.RFC3339),
 			}
-			
+
 			if err := conn.WriteJSON(message); err != nil {
 				t.Logf("Failed to send performance message: %v", err)
 				return
@@ -318,15 +318,15 @@ func TestWebSocketPerformance(t *testing.T) {
 			t.Logf("Client disconnected: %v", err)
 		}
 	})
-	
+
 	server := httptest.NewServer(router)
 	defer server.Close()
 
 	t.Run("message throughput", func(t *testing.T) {
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/perf/websocket"
-		
+
 		start := time.Now()
-		
+
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		require.NoError(t, err)
 		defer conn.Close()
@@ -334,7 +334,7 @@ func TestWebSocketPerformance(t *testing.T) {
 		// Read multiple messages
 		messagesReceived := 0
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		
+
 		for i := 0; i < 10; i++ {
 			var message map[string]interface{}
 			err := conn.ReadJSON(&message)
@@ -342,16 +342,16 @@ func TestWebSocketPerformance(t *testing.T) {
 				break
 			}
 			messagesReceived++
-			
+
 			assert.Equal(t, "performance_test", message["type"])
 			assert.Equal(t, float64(i), message["id"]) // JSON numbers are float64
 		}
-		
+
 		duration := time.Since(start)
-		
+
 		assert.Equal(t, 10, messagesReceived, "Should receive all 10 messages")
 		t.Logf("Received %d messages in %v", messagesReceived, duration)
-		
+
 		// Basic performance check - should be fast
 		assert.Less(t, duration, 1*time.Second, "Should process messages quickly")
 	})
@@ -361,7 +361,7 @@ func TestWebSocketPerformance(t *testing.T) {
 func TestWebSocketReconnection(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	_, err := logger.New(logger.Config{
 		Level:  "debug",
 		Format: "console",
@@ -369,16 +369,16 @@ func TestWebSocketReconnection(t *testing.T) {
 	require.NoError(t, err)
 
 	connectionCount := 0
-	
+
 	router.GET("/reconnect/websocket", func(c *gin.Context) {
 		connectionCount++
-		
+
 		upgrader := websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
 			},
 		}
-		
+
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -388,12 +388,12 @@ func TestWebSocketReconnection(t *testing.T) {
 
 		// Send connection info
 		message := map[string]interface{}{
-			"type":           "connection_info",
-			"connection_id":  connectionCount,
-			"message":        "Connected successfully",
-			"timestamp":      time.Now().Format(time.RFC3339),
+			"type":          "connection_info",
+			"connection_id": connectionCount,
+			"message":       "Connected successfully",
+			"timestamp":     time.Now().Format(time.RFC3339),
 		}
-		
+
 		if err := conn.WriteJSON(message); err != nil {
 			t.Logf("Failed to send connection message: %v", err)
 			return
@@ -401,39 +401,39 @@ func TestWebSocketReconnection(t *testing.T) {
 
 		// Keep connection alive briefly
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Read one message back
 		_, _, err = conn.ReadMessage()
 		if err != nil {
 			t.Logf("Client disconnected: %v", err)
 		}
 	})
-	
+
 	server := httptest.NewServer(router)
 	defer server.Close()
 
 	t.Run("multiple connections", func(t *testing.T) {
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/reconnect/websocket"
-		
+
 		// Make multiple connections sequentially
 		for i := 1; i <= 3; i++ {
 			conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 			require.NoError(t, err, "Connection %d should succeed", i)
-			
+
 			// Read connection info
 			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 			var message map[string]interface{}
 			err = conn.ReadJSON(&message)
 			require.NoError(t, err, "Should receive connection info")
-			
+
 			assert.Equal(t, "connection_info", message["type"])
 			assert.Equal(t, float64(i), message["connection_id"])
-			
+
 			conn.Close()
-			
+
 			t.Logf("Connection %d successful: %+v", i, message)
 		}
-		
+
 		assert.Equal(t, 3, connectionCount, "Should have had 3 connections")
 	})
 }
@@ -442,7 +442,7 @@ func TestWebSocketReconnection(t *testing.T) {
 func TestWebSocketErrorScenarios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	_, err := logger.New(logger.Config{
 		Level:  "debug",
 		Format: "console",
@@ -455,7 +455,7 @@ func TestWebSocketErrorScenarios(t *testing.T) {
 				return true
 			},
 		}
-		
+
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -470,7 +470,7 @@ func TestWebSocketErrorScenarios(t *testing.T) {
 			"message":   "This is a test error message",
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
-		
+
 		if err := conn.WriteJSON(errorMessage); err != nil {
 			t.Logf("Failed to send error message: %v", err)
 			return
@@ -479,13 +479,13 @@ func TestWebSocketErrorScenarios(t *testing.T) {
 		// Close connection after error
 		conn.Close()
 	})
-	
+
 	server := httptest.NewServer(router)
 	defer server.Close()
 
 	t.Run("error message handling", func(t *testing.T) {
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/error/websocket"
-		
+
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		require.NoError(t, err)
 		defer conn.Close()
@@ -499,9 +499,9 @@ func TestWebSocketErrorScenarios(t *testing.T) {
 		assert.Equal(t, "error", message["type"])
 		assert.Equal(t, "simulated_error", message["error"])
 		assert.Contains(t, message["message"], "test error")
-		
+
 		t.Logf("Received error message: %+v", message)
-		
+
 		// Try to read another message (should fail due to connection close)
 		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 		err = conn.ReadJSON(&message)

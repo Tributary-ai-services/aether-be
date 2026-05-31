@@ -326,13 +326,13 @@ func (h *OrganizationHandler) InviteOrganizationMember(c *gin.Context) {
 
 	member, err := h.orgService.InviteOrganizationMember(c.Request.Context(), orgID, req, userID)
 	if err != nil {
-		h.logger.Error("Failed to invite organization member", zap.Error(err), 
+		h.logger.Error("Failed to invite organization member", zap.Error(err),
 			zap.String("org_id", orgID), zap.String("user_id", userID), zap.String("email", req.Email))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Organization member invited successfully", 
+	h.logger.Info("Organization member invited successfully",
 		zap.String("org_id", orgID), zap.String("invited_user_id", member.UserID), zap.String("invited_by", userID))
 	c.JSON(http.StatusCreated, member.ToMemberResponse())
 }
@@ -382,13 +382,13 @@ func (h *OrganizationHandler) UpdateOrganizationMemberRole(c *gin.Context) {
 
 	err := h.orgService.UpdateOrganizationMemberRole(c.Request.Context(), orgID, targetUserID, req, userID)
 	if err != nil {
-		h.logger.Error("Failed to update organization member role", zap.Error(err), 
+		h.logger.Error("Failed to update organization member role", zap.Error(err),
 			zap.String("org_id", orgID), zap.String("target_user_id", targetUserID), zap.String("user_id", userID))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Organization member role updated successfully", 
+	h.logger.Info("Organization member role updated successfully",
 		zap.String("org_id", orgID), zap.String("target_user_id", targetUserID), zap.String("updated_by", userID))
 	c.Status(http.StatusNoContent)
 }
@@ -427,13 +427,13 @@ func (h *OrganizationHandler) RemoveOrganizationMember(c *gin.Context) {
 
 	err := h.orgService.RemoveOrganizationMember(c.Request.Context(), orgID, targetUserID, userID)
 	if err != nil {
-		h.logger.Error("Failed to remove organization member", zap.Error(err), 
+		h.logger.Error("Failed to remove organization member", zap.Error(err),
 			zap.String("org_id", orgID), zap.String("target_user_id", targetUserID), zap.String("user_id", userID))
 		handleServiceError(c, err)
 		return
 	}
 
-	h.logger.Info("Organization member removed successfully", 
+	h.logger.Info("Organization member removed successfully",
 		zap.String("org_id", orgID), zap.String("target_user_id", targetUserID), zap.String("removed_by", userID))
 	c.Status(http.StatusNoContent)
 }

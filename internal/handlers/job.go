@@ -15,17 +15,17 @@ import (
 
 // JobHandler handles job-related HTTP requests
 type JobHandler struct {
-	documentService *services.DocumentService
+	documentService  *services.DocumentService
 	audiModalService *services.AudiModalService
-	logger          *logger.Logger
+	logger           *logger.Logger
 }
 
 // NewJobHandler creates a new job handler
 func NewJobHandler(documentService *services.DocumentService, audiModalService *services.AudiModalService, log *logger.Logger) *JobHandler {
 	return &JobHandler{
-		documentService: documentService,
+		documentService:  documentService,
 		audiModalService: audiModalService,
-		logger:          log.WithService("job_handler"),
+		logger:           log.WithService("job_handler"),
 	}
 }
 
@@ -84,24 +84,24 @@ func (h *JobHandler) getAudiModalJobStatus(ctx context.Context, jobID string, te
 	if err == nil && chunks != nil && len(chunks.Data) > 0 {
 		// Job completed successfully - we have chunks
 		return map[string]interface{}{
-			"job_id":        jobID,
-			"status":        "completed",
-			"progress":      100.0,
-			"chunks_count":  len(chunks.Data),
-			"total_chunks":  chunks.Total,
-			"job_type":      "document_processing",
+			"job_id":       jobID,
+			"status":       "completed",
+			"progress":     100.0,
+			"chunks_count": len(chunks.Data),
+			"total_chunks": chunks.Total,
+			"job_type":     "document_processing",
 		}, nil
 	}
 
 	// For now, return a basic status structure since we can't easily check AudiModal health
 	// In a full implementation, we'd have a proper job tracking system
 	return map[string]interface{}{
-		"job_id":      jobID,
-		"status":      "processing", // Could be: queued, processing, completed, failed
-		"progress":    50.0,         // Percentage complete
-		"job_type":    "document_processing",
-		"started_at":  nil,
+		"job_id":               jobID,
+		"status":               "processing", // Could be: queued, processing, completed, failed
+		"progress":             50.0,         // Percentage complete
+		"job_type":             "document_processing",
+		"started_at":           nil,
 		"estimated_completion": nil,
-		"error":       nil,
+		"error":                nil,
 	}, nil
 }

@@ -39,10 +39,10 @@ const (
 type SecurityEventStatus string
 
 const (
-	SecurityEventStatusNew          SecurityEventStatus = "new"
-	SecurityEventStatusReviewed     SecurityEventStatus = "reviewed"
-	SecurityEventStatusApproved     SecurityEventStatus = "approved"
-	SecurityEventStatusRejected     SecurityEventStatus = "rejected"
+	SecurityEventStatusNew           SecurityEventStatus = "new"
+	SecurityEventStatusReviewed      SecurityEventStatus = "reviewed"
+	SecurityEventStatusApproved      SecurityEventStatus = "approved"
+	SecurityEventStatusRejected      SecurityEventStatus = "rejected"
 	SecurityEventStatusFalsePositive SecurityEventStatus = "false_positive"
 )
 
@@ -178,24 +178,24 @@ type SecurityEventListRequest struct {
 
 // SecuritySummary provides aggregate security statistics
 type SecuritySummary struct {
-	TotalEvents         int                        `json:"totalEvents"`
-	NewEvents           int                        `json:"newEvents"`
-	PendingReview       int                        `json:"pendingReview"`
-	EventsBySeverity    map[string]int             `json:"eventsBySeverity"`
-	EventsByType        map[string]int             `json:"eventsByType"`
-	EventsByAction      map[string]int             `json:"eventsByAction"`
-	Last24Hours         int                        `json:"last24Hours"`
-	Last7Days           int                        `json:"last7Days"`
-	TopThreatenedPaths  []PathStats                `json:"topThreatenedPaths"`
-	TopThreatenedFields []FieldStats               `json:"topThreatenedFields"`
+	TotalEvents         int            `json:"totalEvents"`
+	NewEvents           int            `json:"newEvents"`
+	PendingReview       int            `json:"pendingReview"`
+	EventsBySeverity    map[string]int `json:"eventsBySeverity"`
+	EventsByType        map[string]int `json:"eventsByType"`
+	EventsByAction      map[string]int `json:"eventsByAction"`
+	Last24Hours         int            `json:"last24Hours"`
+	Last7Days           int            `json:"last7Days"`
+	TopThreatenedPaths  []PathStats    `json:"topThreatenedPaths"`
+	TopThreatenedFields []FieldStats   `json:"topThreatenedFields"`
 }
 
 // PathStats provides statistics for a specific request path
 type PathStats struct {
-	Path      string `json:"path"`
-	Count     int    `json:"count"`
-	Critical  int    `json:"critical"`
-	High      int    `json:"high"`
+	Path     string `json:"path"`
+	Count    int    `json:"count"`
+	Critical int    `json:"critical"`
+	High     int    `json:"high"`
 }
 
 // FieldStats provides statistics for a specific field name
@@ -252,7 +252,7 @@ func (p *SecurityPolicy) ToResponse() *SecurityPolicyResponse {
 type DocumentSecurityStatus string
 
 const (
-	DocumentSecurityStatusApproved       DocumentSecurityStatus = "approved"
-	DocumentSecurityStatusPendingReview  DocumentSecurityStatus = "pending_security_review"
+	DocumentSecurityStatusApproved         DocumentSecurityStatus = "approved"
+	DocumentSecurityStatusPendingReview    DocumentSecurityStatus = "pending_security_review"
 	DocumentSecurityStatusSecurityRejected DocumentSecurityStatus = "security_rejected"
 )

@@ -60,21 +60,21 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 		// If user doesn't exist in Neo4j, try to create from JWT token
 		if errors.IsNotFound(err) {
 			h.logger.Info("User not found in database, creating from JWT token", zap.String("keycloak_id", userID))
-			
+
 			// Extract user info from JWT token context
 			email, _ := c.Get("user_email")
 			name, _ := c.Get("user_name")
 			username, _ := c.Get("username")
-			
+
 			emailStr, _ := email.(string)
 			nameStr, _ := name.(string)
 			usernameStr, _ := username.(string)
-			
+
 			// If username is empty, use email as username
 			if usernameStr == "" {
 				usernameStr = emailStr
 			}
-			
+
 			// Create user from JWT token data
 			createReq := models.UserCreateRequest{
 				KeycloakID: userID,
@@ -82,7 +82,7 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 				Username:   usernameStr,
 				FullName:   nameStr,
 			}
-			
+
 			user, err = h.userService.CreateUser(c.Request.Context(), createReq)
 			if err != nil {
 				// Check if it's a conflict error (user already exists)
@@ -411,21 +411,21 @@ func (h *UserHandler) GetUserSpaces(c *gin.Context) {
 		// If user doesn't exist in Neo4j, try to create from JWT token
 		if errors.IsNotFound(err) {
 			h.logger.Info("User not found in database, creating from JWT token", zap.String("keycloak_id", userID))
-			
+
 			// Extract user info from JWT token context
 			email, _ := c.Get("user_email")
 			name, _ := c.Get("user_name")
 			username, _ := c.Get("username")
-			
+
 			emailStr, _ := email.(string)
 			nameStr, _ := name.(string)
 			usernameStr, _ := username.(string)
-			
+
 			// If username is empty, use email as username
 			if usernameStr == "" {
 				usernameStr = emailStr
 			}
-			
+
 			// Create user from JWT token data
 			createReq := models.UserCreateRequest{
 				KeycloakID: userID,
@@ -433,7 +433,7 @@ func (h *UserHandler) GetUserSpaces(c *gin.Context) {
 				Username:   usernameStr,
 				FullName:   nameStr,
 			}
-			
+
 			user, err = h.userService.CreateUser(c.Request.Context(), createReq)
 			if err != nil {
 				// Check if it's a conflict error (user already exists)

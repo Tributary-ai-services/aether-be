@@ -17,17 +17,17 @@ type ABTestingFramework struct {
 
 // Experiment represents an A/B test configuration
 type Experiment struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Status      ExperimentStatus       `json:"status"`
-	StartTime   time.Time              `json:"start_time"`
-	EndTime     time.Time              `json:"end_time"`
-	Duration    time.Duration          `json:"duration"`
-	Variants    []Variant              `json:"variants"`
-	Metrics     []MetricDefinition     `json:"metrics"`
-	Config      ExperimentConfig       `json:"config"`
-	Results     *ExperimentResults     `json:"results,omitempty"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Status      ExperimentStatus   `json:"status"`
+	StartTime   time.Time          `json:"start_time"`
+	EndTime     time.Time          `json:"end_time"`
+	Duration    time.Duration      `json:"duration"`
+	Variants    []Variant          `json:"variants"`
+	Metrics     []MetricDefinition `json:"metrics"`
+	Config      ExperimentConfig   `json:"config"`
+	Results     *ExperimentResults `json:"results,omitempty"`
 }
 
 // ExperimentStatus represents the current status of an experiment
@@ -53,12 +53,12 @@ type Variant struct {
 
 // MetricDefinition defines what to measure in an experiment
 type MetricDefinition struct {
-	Name                string      `json:"name"`
-	Type                MetricType  `json:"type"`
-	Target              MetricTarget `json:"target"`
-	MinimumImprovement  float64     `json:"minimum_improvement"`
-	MaximumDegradation  float64     `json:"maximum_degradation"`
-	StatisticalSignificance float64 `json:"statistical_significance"`
+	Name                    string       `json:"name"`
+	Type                    MetricType   `json:"type"`
+	Target                  MetricTarget `json:"target"`
+	MinimumImprovement      float64      `json:"minimum_improvement"`
+	MaximumDegradation      float64      `json:"maximum_degradation"`
+	StatisticalSignificance float64      `json:"statistical_significance"`
 }
 
 // MetricType represents the type of metric
@@ -82,11 +82,11 @@ const (
 
 // ExperimentConfig contains experiment configuration
 type ExperimentConfig struct {
-	MinimumSampleSize    int     `json:"minimum_sample_size"`
-	ConfidenceLevel      float64 `json:"confidence_level"`
-	PowerLevel           float64 `json:"power_level"`
-	AllowEarlyTermination bool    `json:"allow_early_termination"`
-	MaxDuration          time.Duration `json:"max_duration"`
+	MinimumSampleSize     int           `json:"minimum_sample_size"`
+	ConfidenceLevel       float64       `json:"confidence_level"`
+	PowerLevel            float64       `json:"power_level"`
+	AllowEarlyTermination bool          `json:"allow_early_termination"`
+	MaxDuration           time.Duration `json:"max_duration"`
 }
 
 // ExperimentResults contains the results of an experiment
@@ -102,10 +102,10 @@ type ExperimentResults struct {
 
 // VariantResult contains results for a specific variant
 type VariantResult struct {
-	VariantID      string             `json:"variant_id"`
-	SampleSize     int                `json:"sample_size"`
-	Metrics        map[string]float64 `json:"metrics"`
-	ConversionRate float64            `json:"conversion_rate"`
+	VariantID          string             `json:"variant_id"`
+	SampleSize         int                `json:"sample_size"`
+	Metrics            map[string]float64 `json:"metrics"`
+	ConversionRate     float64            `json:"conversion_rate"`
 	ConfidenceInterval ConfidenceInterval `json:"confidence_interval"`
 }
 
@@ -118,11 +118,11 @@ type ConfidenceInterval struct {
 
 // StatResult contains statistical test results
 type StatResult struct {
-	TestType   string  `json:"test_type"`
-	PValue     float64 `json:"p_value"`
-	ZScore     float64 `json:"z_score"`
-	EffectSize float64 `json:"effect_size"`
-	Significant bool   `json:"significant"`
+	TestType    string  `json:"test_type"`
+	PValue      float64 `json:"p_value"`
+	ZScore      float64 `json:"z_score"`
+	EffectSize  float64 `json:"effect_size"`
+	Significant bool    `json:"significant"`
 }
 
 // TrafficSplitter handles traffic allocation for experiments
@@ -391,7 +391,7 @@ func (ab *ABTestingFramework) analyzeVariant(experimentID, variantID string, met
 	for _, metric := range metrics {
 		key := fmt.Sprintf("%s_%s", variantID, metric.Name)
 		values := ab.metrics.data[experimentID][key]
-		
+
 		if len(values) == 0 {
 			continue
 		}
@@ -434,19 +434,19 @@ func (ab *ABTestingFramework) performStatisticalTests(results *ExperimentResults
 		// Perform t-test (simplified)
 		controlValue := controlVariant.Metrics[metric.Name]
 		treatmentValue := treatmentVariant.Metrics[metric.Name]
-		
+
 		// Calculate effect size
 		effectSize := ab.calculateEffectSize(controlValue, treatmentValue)
-		
+
 		// Calculate statistical significance (simplified)
 		zScore := ab.calculateZScore(controlValue, treatmentValue, controlVariant.SampleSize, treatmentVariant.SampleSize)
 		pValue := ab.calculatePValue(zScore)
-		
+
 		results.StatisticalTests[metric.Name] = StatResult{
-			TestType:   "t-test",
-			PValue:     pValue,
-			ZScore:     zScore,
-			EffectSize: effectSize,
+			TestType:    "t-test",
+			PValue:      pValue,
+			ZScore:      zScore,
+			EffectSize:  effectSize,
 			Significant: pValue < 0.05,
 		}
 	}
@@ -517,4 +517,3 @@ func (ab *ABTestingFramework) calculatePValue(zScore float64) float64 {
 	// In production, use proper statistical libraries
 	return 0.05 // Placeholder
 }
-

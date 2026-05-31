@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -38,10 +39,10 @@ func main() {
 	fmt.Println("WARNING: This will remove space_id fields from notebooks and documents.")
 	fmt.Println("This action should only be performed if the migration needs to be reversed.")
 	fmt.Print("Type 'ROLLBACK' to confirm: ")
-	
+
 	var confirm string
 	fmt.Scanln(&confirm)
-	
+
 	if confirm != "ROLLBACK" {
 		log.Println("Rollback cancelled")
 		return
@@ -55,7 +56,7 @@ func main() {
 		REMOVE n.space_id, n.space_type
 		RETURN count(n) as updated
 	`
-	
+
 	result, err := neo4jClient.ExecuteQueryWithLogging(ctx, notebookQuery, nil)
 	if err != nil {
 		log.Printf("Failed to rollback notebooks: %v", err)
@@ -72,7 +73,7 @@ func main() {
 		REMOVE d.space_id, d.space_type
 		RETURN count(d) as updated
 	`
-	
+
 	result, err = neo4jClient.ExecuteQueryWithLogging(ctx, documentQuery, nil)
 	if err != nil {
 		log.Printf("Failed to rollback documents: %v", err)
@@ -89,7 +90,7 @@ func main() {
 		REMOVE u.personal_space_id
 		RETURN count(u) as updated
 	`
-	
+
 	result, err = neo4jClient.ExecuteQueryWithLogging(ctx, userQuery, nil)
 	if err != nil {
 		log.Printf("Failed to rollback users: %v", err)

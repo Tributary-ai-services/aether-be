@@ -60,15 +60,15 @@ const (
 	EventProcessingFailed    EventType = "processing.failed"
 
 	// Security events
-	EventSecurityThreatDetected EventType = "security.threat_detected"
+	EventSecurityThreatDetected  EventType = "security.threat_detected"
 	EventSecurityReviewCompleted EventType = "security.review_completed"
 	EventSecurityPolicyViolation EventType = "security.policy_violation"
 
 	// Workflow events
-	EventWorkflowFileUploaded    EventType = "workflow.file_uploaded"
-	EventWorkflowDocumentEvent   EventType = "workflow.document_event"
-	EventWorkflowCompleted       EventType = "workflow.completed"
-	EventWorkflowFailed          EventType = "workflow.failed"
+	EventWorkflowFileUploaded  EventType = "workflow.file_uploaded"
+	EventWorkflowDocumentEvent EventType = "workflow.document_event"
+	EventWorkflowCompleted     EventType = "workflow.completed"
+	EventWorkflowFailed        EventType = "workflow.failed"
 
 	// Notification events
 	EventNotificationCreated EventType = "notification.created"
@@ -408,22 +408,22 @@ func (k *KafkaService) HealthCheck(ctx context.Context) error {
 func (k *KafkaService) getTopicForEvent(eventType EventType) string {
 	// Map event types to topics
 	topicMap := map[EventType]string{
-		EventUserCreated:            "users",
-		EventUserUpdated:            "users",
-		EventUserDeleted:            "users",
-		EventUserLoggedIn:           "users",
-		EventNotebookCreated:        "notebooks",
-		EventNotebookUpdated:        "notebooks",
-		EventNotebookDeleted:        "notebooks",
-		EventNotebookShared:         "notebooks",
-		EventDocumentUploaded:       "documents",
-		EventDocumentProcessed:      "documents",
-		EventDocumentFailed:         "documents",
-		EventDocumentDeleted:        "documents",
-		EventProcessingStarted:      "processing",
-		EventProcessingCompleted:    "processing",
-		EventProcessingFailed:       "processing",
-		EventSecurityThreatDetected: "security-events",
+		EventUserCreated:             "users",
+		EventUserUpdated:             "users",
+		EventUserDeleted:             "users",
+		EventUserLoggedIn:            "users",
+		EventNotebookCreated:         "notebooks",
+		EventNotebookUpdated:         "notebooks",
+		EventNotebookDeleted:         "notebooks",
+		EventNotebookShared:          "notebooks",
+		EventDocumentUploaded:        "documents",
+		EventDocumentProcessed:       "documents",
+		EventDocumentFailed:          "documents",
+		EventDocumentDeleted:         "documents",
+		EventProcessingStarted:       "processing",
+		EventProcessingCompleted:     "processing",
+		EventProcessingFailed:        "processing",
+		EventSecurityThreatDetected:  "security-events",
 		EventSecurityReviewCompleted: "security-events",
 		EventSecurityPolicyViolation: "security-events",
 		EventWorkflowFileUploaded:    "workflow.execute",

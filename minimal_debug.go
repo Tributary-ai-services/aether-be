@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -41,7 +42,7 @@ func main() {
 	router.Use(gin.Recovery())
 
 	fmt.Println("=== TESTING: Basic route setup ===")
-	
+
 	// Test 1: Basic route without middleware
 	router.GET("/basic", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "basic works"})

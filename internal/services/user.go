@@ -54,7 +54,7 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 			zap.String("new_keycloak_id", req.KeycloakID),
 			zap.String("email", req.Email),
 		)
-		
+
 		// Update the Keycloak ID in the database
 		updateQuery := `
 			MATCH (u:User {email: $email})
@@ -62,28 +62,28 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 			    u.updated_at = datetime($updated_at)
 			RETURN u
 		`
-		
+
 		updateParams := map[string]interface{}{
-			"email":            req.Email,
-			"new_keycloak_id":  req.KeycloakID,
-			"updated_at":       time.Now().Format(time.RFC3339),
+			"email":           req.Email,
+			"new_keycloak_id": req.KeycloakID,
+			"updated_at":      time.Now().Format(time.RFC3339),
 		}
-		
+
 		_, err = s.neo4j.ExecuteQueryWithLogging(ctx, updateQuery, updateParams)
 		if err != nil {
 			s.logger.Error("Failed to update user Keycloak ID", zap.Error(err))
 			return nil, errors.Database("Failed to update user Keycloak ID", err)
 		}
-		
+
 		// Cache invalidation removed - no longer using Redis
-		
+
 		// Check if user needs personal tenant setup
 		if !existingUserByEmail.HasPersonalTenant() {
 			s.logger.Info("User missing personal tenant, creating one",
 				zap.String("user_id", existingUserByEmail.ID),
 				zap.String("email", req.Email),
 			)
-			
+
 			// Create personal tenant in AudiModal
 			tenantReq := CreateTenantRequest{
 				Name:         fmt.Sprintf("%s-personal", existingUserByEmail.Username),
@@ -116,7 +116,7 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 					TechnicalEmail: existingUserByEmail.Email,
 				},
 			}
-			
+
 			tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
 			if err != nil {
 				s.logger.Error("Failed to create personal tenant for existing user", zap.Error(err))
@@ -130,14 +130,14 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 					    u.updated_at = datetime($updated_at)
 					RETURN u
 				`
-				
+
 				updateTenantParams := map[string]interface{}{
 					"email":      req.Email,
 					"tenant_id":  tenant.TenantID,
 					"api_key":    tenant.APIKey,
 					"updated_at": time.Now().Format(time.RFC3339),
 				}
-				
+
 				_, err = s.neo4j.ExecuteQueryWithLogging(ctx, updateTenantQuery, updateTenantParams)
 				if err != nil {
 					s.logger.Error("Failed to update user with tenant info", zap.Error(err))
@@ -152,17 +152,17 @@ func (s *UserService) CreateUser(ctx context.Context, req models.UserCreateReque
 				}
 			}
 		}
-		
+
 		// Update the existing user object and return it
 		existingUserByEmail.KeycloakID = req.KeycloakID
 		existingUserByEmail.UpdatedAt = time.Now()
-		
+
 		s.logger.Info("Successfully updated user Keycloak ID",
 			zap.String("user_id", existingUserByEmail.ID),
 			zap.String("email", req.Email),
 			zap.String("new_keycloak_id", req.KeycloakID),
 		)
-		
+
 		return existingUserByEmail, nil
 	}
 
@@ -575,7 +575,7 @@ func (s *UserService) DeleteUser(ctx context.Context, userID string) error {
 			zap.String("user_id", userID),
 			zap.String("tenant_id", user.PersonalTenantID),
 		)
-		
+
 		if err := s.audiModal.DeleteTenant(ctx, user.PersonalTenantID); err != nil {
 			s.logger.Error("Failed to delete personal tenant",
 				zap.String("user_id", userID),
@@ -1046,25 +1046,25 @@ func (s *UserService) UpdatePersonalTenantInfo(ctx context.Context, userID, tena
 		    u.updated_at = datetime($updated_at)
 		RETURN u
 	`
-	
+
 	params := map[string]interface{}{
 		"user_id":    userID,
 		"tenant_id":  tenantID,
 		"api_key":    apiKey,
 		"updated_at": time.Now().Format(time.RFC3339),
 	}
-	
+
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	if err != nil {
-		s.logger.Error("Failed to update user personal tenant info", 
-			zap.String("user_id", userID), 
+		s.logger.Error("Failed to update user personal tenant info",
+			zap.String("user_id", userID),
 			zap.String("tenant_id", tenantID),
 			zap.Error(err))
 		return errors.Database("Failed to update user personal tenant info", err)
 	}
-	
+
 	// Cache invalidation removed - no longer using Redis
-	
+
 	s.logger.Info("Updated user personal tenant info",
 		zap.String("user_id", userID),
 		zap.String("tenant_id", tenantID),

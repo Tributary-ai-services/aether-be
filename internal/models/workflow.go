@@ -8,24 +8,24 @@ import (
 
 // Workflow represents an automated workflow in the system
 type Workflow struct {
-	ID              string                 `json:"id" neo4j:"id"`
-	Name            string                 `json:"name" neo4j:"name"`
-	Description     string                 `json:"description" neo4j:"description"`
-	Status          string                 `json:"status" neo4j:"status"` // active, paused, disabled
-	Type            string                 `json:"type" neo4j:"type"`     // document_processing, compliance_check, approval_chain
-	Version         string                 `json:"version" neo4j:"version"`
-	Configuration   map[string]interface{} `json:"configuration" neo4j:"configuration"`
-	Steps           []WorkflowStep         `json:"steps" neo4j:"-"` // Stored as separate nodes
-	Triggers        []WorkflowTrigger      `json:"triggers" neo4j:"-"` // Stored as separate nodes
-	ExecutionCount  int64                  `json:"execution_count" neo4j:"execution_count"`
-	LastExecuted    *time.Time             `json:"last_executed,omitempty" neo4j:"last_executed"`
-	AverageRuntime  float64                `json:"average_runtime" neo4j:"average_runtime"` // milliseconds
-	SuccessRate     float64                `json:"success_rate" neo4j:"success_rate"`       // percentage
-	CreatedAt       time.Time              `json:"created_at" neo4j:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at" neo4j:"updated_at"`
-	CreatedBy       string                 `json:"created_by" neo4j:"created_by"`
-	TenantID        string                 `json:"tenant_id" neo4j:"tenant_id"`
-	OrganizationID  string                 `json:"organization_id" neo4j:"organization_id"`
+	ID             string                 `json:"id" neo4j:"id"`
+	Name           string                 `json:"name" neo4j:"name"`
+	Description    string                 `json:"description" neo4j:"description"`
+	Status         string                 `json:"status" neo4j:"status"` // active, paused, disabled
+	Type           string                 `json:"type" neo4j:"type"`     // document_processing, compliance_check, approval_chain
+	Version        string                 `json:"version" neo4j:"version"`
+	Configuration  map[string]interface{} `json:"configuration" neo4j:"configuration"`
+	Steps          []WorkflowStep         `json:"steps" neo4j:"-"`    // Stored as separate nodes
+	Triggers       []WorkflowTrigger      `json:"triggers" neo4j:"-"` // Stored as separate nodes
+	ExecutionCount int64                  `json:"execution_count" neo4j:"execution_count"`
+	LastExecuted   *time.Time             `json:"last_executed,omitempty" neo4j:"last_executed"`
+	AverageRuntime float64                `json:"average_runtime" neo4j:"average_runtime"` // milliseconds
+	SuccessRate    float64                `json:"success_rate" neo4j:"success_rate"`       // percentage
+	CreatedAt      time.Time              `json:"created_at" neo4j:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at" neo4j:"updated_at"`
+	CreatedBy      string                 `json:"created_by" neo4j:"created_by"`
+	TenantID       string                 `json:"tenant_id" neo4j:"tenant_id"`
+	OrganizationID string                 `json:"organization_id" neo4j:"organization_id"`
 }
 
 // WorkflowStep represents a single step in a workflow
@@ -33,14 +33,14 @@ type WorkflowStep struct {
 	ID            string                 `json:"id" neo4j:"id"`
 	WorkflowID    string                 `json:"workflow_id" neo4j:"workflow_id"`
 	Name          string                 `json:"name" neo4j:"name"`
-	Type          string                 `json:"type" neo4j:"type"` // container, script, http, aiTask, condition, suspend, transform, merge, loop, subworkflow, errorHandler + legacy types
+	Type          string                 `json:"type" neo4j:"type"`   // container, script, http, aiTask, condition, suspend, transform, merge, loop, subworkflow, errorHandler + legacy types
 	Order         int                    `json:"order" neo4j:"order"` // Legacy — deprecated, use Dependencies
 	Configuration map[string]interface{} `json:"configuration" neo4j:"configuration"`
-	Conditions    map[string]interface{} `json:"conditions" neo4j:"conditions"` // Legacy conditional execution rules
-	Timeout       int                    `json:"timeout" neo4j:"timeout"`       // seconds
+	Conditions    map[string]interface{} `json:"conditions" neo4j:"conditions"`   // Legacy conditional execution rules
+	Timeout       int                    `json:"timeout" neo4j:"timeout"`         // seconds
 	RetryCount    int                    `json:"retry_count" neo4j:"retry_count"` // Legacy — use RetryStrategy
-	OnSuccess     string                 `json:"on_success" neo4j:"on_success"` // Legacy
-	OnFailure     string                 `json:"on_failure" neo4j:"on_failure"` // Legacy
+	OnSuccess     string                 `json:"on_success" neo4j:"on_success"`   // Legacy
+	OnFailure     string                 `json:"on_failure" neo4j:"on_failure"`   // Legacy
 	CreatedAt     time.Time              `json:"created_at" neo4j:"created_at"`
 
 	// New Argo-aligned fields
@@ -106,48 +106,48 @@ type WorkflowTrigger struct {
 
 // WorkflowExecution represents a single execution of a workflow
 type WorkflowExecution struct {
-	ID              string                 `json:"id" neo4j:"id"`
-	WorkflowID      string                 `json:"workflow_id" neo4j:"workflow_id"`
-	TriggerID       string                 `json:"trigger_id" neo4j:"trigger_id"`
-	Status          string                 `json:"status" neo4j:"status"` // running, completed, failed, cancelled
-	Progress        float64                `json:"progress" neo4j:"progress"` // 0-100%
-	CurrentStep     string                 `json:"current_step" neo4j:"current_step"`
-	StartedAt       time.Time              `json:"started_at" neo4j:"started_at"`
-	CompletedAt     *time.Time             `json:"completed_at,omitempty" neo4j:"completed_at"`
-	Runtime         float64                `json:"runtime" neo4j:"runtime"` // milliseconds
-	Input           map[string]interface{} `json:"input" neo4j:"input"`
-	Output          map[string]interface{} `json:"output" neo4j:"output"`
-	StepResults     []StepResult           `json:"step_results" neo4j:"-"` // Stored as separate nodes
-	ErrorMessage    string                 `json:"error_message,omitempty" neo4j:"error_message"`
-	TenantID        string                 `json:"tenant_id" neo4j:"tenant_id"`
-	OrganizationID  string                 `json:"organization_id" neo4j:"organization_id"`
+	ID             string                 `json:"id" neo4j:"id"`
+	WorkflowID     string                 `json:"workflow_id" neo4j:"workflow_id"`
+	TriggerID      string                 `json:"trigger_id" neo4j:"trigger_id"`
+	Status         string                 `json:"status" neo4j:"status"`     // running, completed, failed, cancelled
+	Progress       float64                `json:"progress" neo4j:"progress"` // 0-100%
+	CurrentStep    string                 `json:"current_step" neo4j:"current_step"`
+	StartedAt      time.Time              `json:"started_at" neo4j:"started_at"`
+	CompletedAt    *time.Time             `json:"completed_at,omitempty" neo4j:"completed_at"`
+	Runtime        float64                `json:"runtime" neo4j:"runtime"` // milliseconds
+	Input          map[string]interface{} `json:"input" neo4j:"input"`
+	Output         map[string]interface{} `json:"output" neo4j:"output"`
+	StepResults    []StepResult           `json:"step_results" neo4j:"-"` // Stored as separate nodes
+	ErrorMessage   string                 `json:"error_message,omitempty" neo4j:"error_message"`
+	TenantID       string                 `json:"tenant_id" neo4j:"tenant_id"`
+	OrganizationID string                 `json:"organization_id" neo4j:"organization_id"`
 }
 
 // StepResult represents the result of executing a workflow step
 type StepResult struct {
-	ID            string                 `json:"id" neo4j:"id"`
-	ExecutionID   string                 `json:"execution_id" neo4j:"execution_id"`
-	StepID        string                 `json:"step_id" neo4j:"step_id"`
-	Status        string                 `json:"status" neo4j:"status"` // pending, running, completed, failed, skipped
-	StartedAt     time.Time              `json:"started_at" neo4j:"started_at"`
-	CompletedAt   *time.Time             `json:"completed_at,omitempty" neo4j:"completed_at"`
-	Runtime       float64                `json:"runtime" neo4j:"runtime"` // milliseconds
-	Input         map[string]interface{} `json:"input" neo4j:"input"`
-	Output        map[string]interface{} `json:"output" neo4j:"output"`
-	ErrorMessage  string                 `json:"error_message,omitempty" neo4j:"error_message"`
-	RetryAttempt  int                    `json:"retry_attempt" neo4j:"retry_attempt"`
+	ID           string                 `json:"id" neo4j:"id"`
+	ExecutionID  string                 `json:"execution_id" neo4j:"execution_id"`
+	StepID       string                 `json:"step_id" neo4j:"step_id"`
+	Status       string                 `json:"status" neo4j:"status"` // pending, running, completed, failed, skipped
+	StartedAt    time.Time              `json:"started_at" neo4j:"started_at"`
+	CompletedAt  *time.Time             `json:"completed_at,omitempty" neo4j:"completed_at"`
+	Runtime      float64                `json:"runtime" neo4j:"runtime"` // milliseconds
+	Input        map[string]interface{} `json:"input" neo4j:"input"`
+	Output       map[string]interface{} `json:"output" neo4j:"output"`
+	ErrorMessage string                 `json:"error_message,omitempty" neo4j:"error_message"`
+	RetryAttempt int                    `json:"retry_attempt" neo4j:"retry_attempt"`
 }
 
 // WorkflowVersion represents a snapshot of a workflow at a point in time
 type WorkflowVersion struct {
-	ID            string                 `json:"id" neo4j:"id"`
-	WorkflowID    string                 `json:"workflow_id" neo4j:"workflow_id"`
-	Version       int                    `json:"version" neo4j:"version"`
-	Label         string                 `json:"label" neo4j:"label"` // e.g. "1.0.0", "1.1.0"
-	Description   string                 `json:"description" neo4j:"description"`
-	Snapshot      map[string]interface{} `json:"snapshot" neo4j:"snapshot"` // Full workflow definition at this version
-	CreatedAt     time.Time              `json:"created_at" neo4j:"created_at"`
-	CreatedBy     string                 `json:"created_by" neo4j:"created_by"`
+	ID          string                 `json:"id" neo4j:"id"`
+	WorkflowID  string                 `json:"workflow_id" neo4j:"workflow_id"`
+	Version     int                    `json:"version" neo4j:"version"`
+	Label       string                 `json:"label" neo4j:"label"` // e.g. "1.0.0", "1.1.0"
+	Description string                 `json:"description" neo4j:"description"`
+	Snapshot    map[string]interface{} `json:"snapshot" neo4j:"snapshot"` // Full workflow definition at this version
+	CreatedAt   time.Time              `json:"created_at" neo4j:"created_at"`
+	CreatedBy   string                 `json:"created_by" neo4j:"created_by"`
 }
 
 // Request models for API endpoints
@@ -169,10 +169,10 @@ type CreateStepRequest struct {
 	Order         int                    `json:"order"` // Legacy — optional when Dependencies provided
 	Configuration map[string]interface{} `json:"configuration"`
 	Conditions    map[string]interface{} `json:"conditions"`
-	Timeout       int                    `json:"timeout"` // seconds, default 300
+	Timeout       int                    `json:"timeout"`                            // seconds, default 300
 	RetryCount    int                    `json:"retry_count" binding:"min=0,max=10"` // Legacy
-	OnSuccess     string                 `json:"on_success"` // Legacy
-	OnFailure     string                 `json:"on_failure"` // Legacy
+	OnSuccess     string                 `json:"on_success"`                         // Legacy
+	OnFailure     string                 `json:"on_failure"`                         // Legacy
 
 	// New Argo-aligned fields
 	Dependencies  []string       `json:"dependencies,omitempty"`
@@ -216,42 +216,42 @@ type PublishArtifactRequest struct {
 
 // WorkflowAnalytics represents workflow performance analytics
 type WorkflowAnalytics struct {
-	ID                    string             `json:"id"`
-	Period                string             `json:"period"` // daily, weekly, monthly
-	Date                  time.Time          `json:"date"`
-	TotalWorkflows        int                `json:"total_workflows"`
-	ActiveWorkflows       int                `json:"active_workflows"`
-	TotalExecutions       int64              `json:"total_executions"`
-	SuccessfulExecutions  int64              `json:"successful_executions"`
-	FailedExecutions      int64              `json:"failed_executions"`
-	AverageRuntime        float64            `json:"average_runtime"`       // milliseconds
-	TotalProcessingTime   float64            `json:"total_processing_time"` // milliseconds
-	WorkflowPerformance   map[string]float64 `json:"workflow_performance"`  // workflow_id -> success_rate
-	PopularTriggerTypes   map[string]int64   `json:"popular_trigger_types"` // trigger_type -> count
-	TenantID              string             `json:"tenant_id"`
-	OrganizationID        string             `json:"organization_id"`
-	CreatedAt             time.Time          `json:"created_at"`
+	ID                   string             `json:"id"`
+	Period               string             `json:"period"` // daily, weekly, monthly
+	Date                 time.Time          `json:"date"`
+	TotalWorkflows       int                `json:"total_workflows"`
+	ActiveWorkflows      int                `json:"active_workflows"`
+	TotalExecutions      int64              `json:"total_executions"`
+	SuccessfulExecutions int64              `json:"successful_executions"`
+	FailedExecutions     int64              `json:"failed_executions"`
+	AverageRuntime       float64            `json:"average_runtime"`       // milliseconds
+	TotalProcessingTime  float64            `json:"total_processing_time"` // milliseconds
+	WorkflowPerformance  map[string]float64 `json:"workflow_performance"`  // workflow_id -> success_rate
+	PopularTriggerTypes  map[string]int64   `json:"popular_trigger_types"` // trigger_type -> count
+	TenantID             string             `json:"tenant_id"`
+	OrganizationID       string             `json:"organization_id"`
+	CreatedAt            time.Time          `json:"created_at"`
 }
 
 // NewWorkflow creates a new workflow with default values
 func NewWorkflow(req CreateWorkflowRequest, userID, tenantID, orgID string) *Workflow {
 	now := time.Now()
 	return &Workflow{
-		ID:              uuid.New().String(),
-		Name:            req.Name,
-		Description:     req.Description,
-		Status:          "paused", // Start paused for safety
-		Type:            req.Type,
-		Version:         "1.0.0",
-		Configuration:   req.Configuration,
-		ExecutionCount:  0,
-		AverageRuntime:  0.0,
-		SuccessRate:     0.0,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		CreatedBy:       userID,
-		TenantID:        tenantID,
-		OrganizationID:  orgID,
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		Description:    req.Description,
+		Status:         "paused", // Start paused for safety
+		Type:           req.Type,
+		Version:        "1.0.0",
+		Configuration:  req.Configuration,
+		ExecutionCount: 0,
+		AverageRuntime: 0.0,
+		SuccessRate:    0.0,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		CreatedBy:      userID,
+		TenantID:       tenantID,
+		OrganizationID: orgID,
 	}
 }
 

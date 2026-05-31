@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -34,7 +35,7 @@ func main() {
 	defer neo4jClient.Close(context.Background())
 
 	ctx := context.Background()
-	
+
 	// Run migrations
 	if err := createChunkConstraints(ctx, neo4jClient); err != nil {
 		log.Fatal("Failed to create chunk constraints:", err)

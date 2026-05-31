@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -20,7 +21,7 @@ func main() {
 	accessKey := "minioadmin"
 	secretKey := "minioadmin123"
 	bucketName := "aether-1756217701" // The tenant bucket that's failing
-	
+
 	// Test data - simulate a document upload
 	testData := []byte("Test document content for tenant bucket upload")
 	testKey := fmt.Sprintf("spaces/organization/notebooks/test-notebook/documents/test-doc/test-file-%d.txt", time.Now().Unix())
@@ -80,15 +81,15 @@ func main() {
 
 	log.Printf("Attempting PutObject...")
 	start := time.Now()
-	
+
 	_, err = client.PutObject(ctx, input)
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		log.Printf("Upload FAILED after %v", duration)
 		log.Printf("Error: %v", err)
 		log.Printf("Error type: %T", err)
-		
+
 		// Try to get more error details
 		log.Printf("Full error string: %s", err.Error())
 	} else {

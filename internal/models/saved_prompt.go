@@ -65,15 +65,15 @@ type SavedPromptCreateRequest struct {
 
 // SavedPromptUpdateRequest represents the request to update a saved prompt
 type SavedPromptUpdateRequest struct {
-	Name            *string          `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
-	Description     *string          `json:"description,omitempty" validate:"omitempty,max=2000"`
-	SystemPrompt    *string          `json:"system_prompt,omitempty" validate:"omitempty,max=50000"`
-	UserPrompt      *string          `json:"user_prompt,omitempty" validate:"omitempty,min=1,max=50000"`
-	DefaultModels   []ModelConfig    `json:"default_models,omitempty" validate:"max=4"`
+	Name            *string           `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
+	Description     *string           `json:"description,omitempty" validate:"omitempty,max=2000"`
+	SystemPrompt    *string           `json:"system_prompt,omitempty" validate:"omitempty,max=50000"`
+	UserPrompt      *string           `json:"user_prompt,omitempty" validate:"omitempty,min=1,max=50000"`
+	DefaultModels   []ModelConfig     `json:"default_models,omitempty" validate:"max=4"`
 	Visibility      *PromptVisibility `json:"visibility,omitempty" validate:"omitempty,oneof=private shared public"`
-	SharedWithTeams []string         `json:"shared_with_teams,omitempty"`
-	Tags            []string         `json:"tags,omitempty" validate:"max=20"`
-	Folder          *string          `json:"folder,omitempty" validate:"omitempty,max=255"`
+	SharedWithTeams []string          `json:"shared_with_teams,omitempty"`
+	Tags            []string          `json:"tags,omitempty" validate:"max=20"`
+	Folder          *string           `json:"folder,omitempty" validate:"omitempty,max=255"`
 }
 
 // SavedPromptResponse represents the API response for a saved prompt

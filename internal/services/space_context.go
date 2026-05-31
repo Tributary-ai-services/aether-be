@@ -269,7 +269,7 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 			zap.String("user_id", user.ID),
 			zap.String("email", user.Email),
 		)
-		
+
 		// Create personal tenant in AudiModal
 		tenantReq := CreateTenantRequest{
 			Name:         fmt.Sprintf("%s-personal", user.Username),
@@ -302,7 +302,7 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 				TechnicalEmail: user.Email,
 			},
 		}
-		
+
 		tenant, err := s.audiModal.CreateTenant(ctx, tenantReq)
 		if err != nil {
 			s.logger.Error("Failed to create personal tenant for existing user", zap.Error(err))
@@ -350,7 +350,7 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 			if err != nil || len(members) == 0 {
 				continue
 			}
-			
+
 			// Find user's role
 			var userRole string
 			for _, member := range members {
@@ -359,11 +359,11 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 					break
 				}
 			}
-			
+
 			if userRole == "" {
 				continue
 			}
-			
+
 			permissions := s.getRolePermissions(userRole)
 			response.OrganizationSpaces = append(response.OrganizationSpaces, &models.SpaceInfo{
 				SpaceType:   models.SpaceTypeOrganization,

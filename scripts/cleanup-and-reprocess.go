@@ -1,4 +1,5 @@
 //go:build ignore
+
 package main
 
 import (
@@ -82,7 +83,7 @@ func findDanglingDocuments(ctx context.Context, neo4j *database.Neo4jClient, log
 		RETURN d.id, d.original_name, d.tenant_id, d.storage_path, d.created_at
 		ORDER BY d.created_at DESC
 	`
-	
+
 	result1, err := neo4j.ExecuteQuery(ctx, query1, nil)
 	if err != nil {
 		return fmt.Errorf("failed to find documents without notebooks: %w", err)
@@ -95,7 +96,7 @@ func findDanglingDocuments(ctx context.Context, neo4j *database.Neo4jClient, log
 		tenantID, _ := record.Get("d.tenant_id")
 		storagePath, _ := record.Get("d.storage_path")
 		createdAt, _ := record.Get("d.created_at")
-		fmt.Printf("  - ID: %s, Name: %s, TenantID: %s, Storage: %s, Created: %s\n", 
+		fmt.Printf("  - ID: %s, Name: %s, TenantID: %s, Storage: %s, Created: %s\n",
 			id, name, tenantID, storagePath, createdAt)
 	}
 
@@ -105,7 +106,7 @@ func findDanglingDocuments(ctx context.Context, neo4j *database.Neo4jClient, log
 		WHERE n IS NULL OR n.id IS NULL
 		RETURN d.id, d.original_name, d.notebook_id
 	`
-	
+
 	result2, err := neo4j.ExecuteQuery(ctx, query2, nil)
 	if err != nil {
 		return fmt.Errorf("failed to find documents with invalid notebook references: %w", err)
@@ -125,7 +126,7 @@ func findDanglingDocuments(ctx context.Context, neo4j *database.Neo4jClient, log
 		WHERE NOT (d)-[:OWNED_BY]->(:User)
 		RETURN d.id, d.original_name, d.owner_id
 	`
-	
+
 	result3, err := neo4j.ExecuteQuery(ctx, query3, nil)
 	if err != nil {
 		return fmt.Errorf("failed to find documents without owners: %w", err)
@@ -151,7 +152,7 @@ func removeDanglingDocuments(ctx context.Context, neo4j *database.Neo4jClient, l
 		DELETE d
 		RETURN count(d) as danglingCount
 	`
-	
+
 	result, err := neo4j.ExecuteQuery(ctx, query, nil)
 	if err != nil {
 		return fmt.Errorf("failed to remove dangling documents: %w", err)
@@ -169,19 +170,19 @@ func removeDanglingDocuments(ctx context.Context, neo4j *database.Neo4jClient, l
 
 // DocumentInfo holds basic document information
 type DocumentInfo struct {
-	ID           string
-	Name         string
-	TenantID     string
-	OwnerID      string
-	NotebookID   string
-	StoragePath  string
+	ID            string
+	Name          string
+	TenantID      string
+	OwnerID       string
+	NotebookID    string
+	StoragePath   string
 	ExtractedText string
 }
 
 // findDocumentsWithPlaceholderText finds documents containing the specific placeholder text
 func findDocumentsWithPlaceholderText(ctx context.Context, neo4j *database.Neo4jClient, logger *logger.Logger) ([]DocumentInfo, error) {
 	placeholderText := "This is a sample PDF document processed by AudiModal ML service. The document contains important information that has been extracted and analyzed."
-	
+
 	query := `
 		MATCH (d:Document)
 		WHERE d.extracted_text CONTAINS $placeholder_text
@@ -194,11 +195,11 @@ func findDocumentsWithPlaceholderText(ctx context.Context, neo4j *database.Neo4j
 		       d.extracted_text as extracted_text
 		ORDER BY d.created_at DESC
 	`
-	
+
 	params := map[string]interface{}{
 		"placeholder_text": placeholderText,
 	}
-	
+
 	result, err := neo4j.ExecuteQuery(ctx, query, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find documents with placeholder text: %w", err)
@@ -206,10 +207,10 @@ func findDocumentsWithPlaceholderText(ctx context.Context, neo4j *database.Neo4j
 
 	var documents []DocumentInfo
 	fmt.Printf("Found %d documents with placeholder text:\n", len(result.Records))
-	
+
 	for i, record := range result.Records {
 		doc := DocumentInfo{}
-		
+
 		if val, ok := record.Get("id"); ok {
 			doc.ID = val.(string)
 		}
@@ -231,9 +232,9 @@ func findDocumentsWithPlaceholderText(ctx context.Context, neo4j *database.Neo4j
 		if val, ok := record.Get("extracted_text"); ok {
 			doc.ExtractedText = val.(string)
 		}
-		
+
 		documents = append(documents, doc)
-		
+
 		fmt.Printf("  %d. ID: %s\n", i+1, doc.ID)
 		fmt.Printf("     Name: %s\n", doc.Name)
 		fmt.Printf("     TenantID: %s\n", doc.TenantID)
@@ -241,7 +242,7 @@ func findDocumentsWithPlaceholderText(ctx context.Context, neo4j *database.Neo4j
 		fmt.Printf("     Text preview: %s...\n", doc.ExtractedText[:min(100, len(doc.ExtractedText))])
 		fmt.Println()
 	}
-	
+
 	return documents, nil
 }
 
@@ -249,13 +250,13 @@ func findDocumentsWithPlaceholderText(ctx context.Context, neo4j *database.Neo4j
 func triggerReprocessing(ctx context.Context, neo4j *database.Neo4jClient, documents []DocumentInfo, logger *logger.Logger) error {
 	successCount := 0
 	errorCount := 0
-	
+
 	for i, doc := range documents {
 		fmt.Printf("Processing document %d/%d: %s\n", i+1, len(documents), doc.Name)
-		
+
 		// Create a processing job for reprocessing
 		jobID := uuid.New().String()
-		
+
 		// Create retry job in database
 		query := `
 			CREATE (j:ProcessingRetryJob {
@@ -271,13 +272,13 @@ func triggerReprocessing(ctx context.Context, neo4j *database.Neo4jClient, docum
 			})
 			RETURN j.id as job_id
 		`
-		
+
 		params := map[string]interface{}{
-			"job_id": jobID,
+			"job_id":      jobID,
 			"document_id": doc.ID,
-			"tenant_id": doc.TenantID,
-			"retry_at": time.Now().UTC().Format(time.RFC3339),
-			"created_at": time.Now().UTC().Format(time.RFC3339),
+			"tenant_id":   doc.TenantID,
+			"retry_at":    time.Now().UTC().Format(time.RFC3339),
+			"created_at":  time.Now().UTC().Format(time.RFC3339),
 		}
 
 		_, err := neo4j.ExecuteQuery(ctx, query, params)
@@ -299,12 +300,12 @@ func triggerReprocessing(ctx context.Context, neo4j *database.Neo4jClient, docum
 			    d.extracted_text = NULL
 			RETURN d.id
 		`
-		
+
 		statusParams := map[string]interface{}{
 			"document_id": doc.ID,
-			"updated_at": time.Now().UTC().Format(time.RFC3339),
+			"updated_at":  time.Now().UTC().Format(time.RFC3339),
 		}
-		
+
 		_, err = neo4j.ExecuteQuery(ctx, statusQuery, statusParams)
 		if err != nil {
 			logger.Error("Failed to update document status",
@@ -314,29 +315,29 @@ func triggerReprocessing(ctx context.Context, neo4j *database.Neo4jClient, docum
 			errorCount++
 			continue
 		}
-		
+
 		logger.Info("Created reprocessing job for document",
 			zap.String("document_id", doc.ID),
 			zap.String("document_name", doc.Name),
 			zap.String("job_id", jobID),
 		)
-		
+
 		successCount++
-		
+
 		// Add small delay to avoid overwhelming the system
 		time.Sleep(100 * time.Millisecond)
 	}
-	
+
 	fmt.Printf("\nReprocessing Summary:\n")
 	fmt.Printf("  ✅ Successfully queued: %d documents\n", successCount)
 	fmt.Printf("  ❌ Failed: %d documents\n", errorCount)
-	
+
 	if successCount > 0 {
 		fmt.Printf("\nNote: The documents have been marked for reprocessing.\n")
 		fmt.Printf("The actual text extraction will be performed by the document processing service.\n")
 		fmt.Printf("Check the processing job status and document status to monitor progress.\n")
 	}
-	
+
 	return nil
 }
 

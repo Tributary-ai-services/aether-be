@@ -387,7 +387,9 @@ func (s *ConversationService) UpdateConversationNameFromMessage(ctx context.Cont
 	return err
 }
 
-func (s *ConversationService) recordToConversationResponse(record interface{ Get(string) (interface{}, bool) }) *models.ConversationResponse {
+func (s *ConversationService) recordToConversationResponse(record interface {
+	Get(string) (interface{}, bool)
+}) *models.ConversationResponse {
 	conv := &models.ConversationResponse{}
 	if v, ok := record.Get("conv.id"); ok && v != nil {
 		conv.ID = v.(string)
@@ -419,7 +421,9 @@ func (s *ConversationService) recordToConversationResponse(record interface{ Get
 	return conv
 }
 
-func (s *ConversationService) recordToMessageResponse(record interface{ Get(string) (interface{}, bool) }) *models.ChatMessageResponse {
+func (s *ConversationService) recordToMessageResponse(record interface {
+	Get(string) (interface{}, bool)
+}) *models.ChatMessageResponse {
 	msg := &models.ChatMessageResponse{}
 	if v, ok := record.Get("msg.id"); ok && v != nil {
 		msg.ID = v.(string)

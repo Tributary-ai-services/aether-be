@@ -43,26 +43,26 @@ type ComplianceReport struct {
 
 // ComplianceViolation represents a specific compliance violation
 type ComplianceViolation struct {
-	ChunkID         string    `json:"chunk_id"`
-	ViolationType   string    `json:"violation_type"`
-	Severity        string    `json:"severity"`
-	Description     string    `json:"description"`
-	Regulation      string    `json:"regulation"`
-	RequiredAction  string    `json:"required_action"`
-	DetectedAt      time.Time `json:"detected_at"`
-	Status          string    `json:"status"` // new, acknowledged, resolved
+	ChunkID        string    `json:"chunk_id"`
+	ViolationType  string    `json:"violation_type"`
+	Severity       string    `json:"severity"`
+	Description    string    `json:"description"`
+	Regulation     string    `json:"regulation"`
+	RequiredAction string    `json:"required_action"`
+	DetectedAt     time.Time `json:"detected_at"`
+	Status         string    `json:"status"` // new, acknowledged, resolved
 }
 
 // ComplianceMetrics holds performance and operational metrics
 type ComplianceMetrics struct {
-	TotalScansPerformed    int64         `json:"total_scans_performed"`
-	TotalPIIDetected       int64         `json:"total_pii_detected"`
-	TotalViolations        int64         `json:"total_violations"`
-	AverageScanTime        time.Duration `json:"average_scan_time"`
-	LastScanTime           time.Time     `json:"last_scan_time"`
-	ComplianceScore        float64       `json:"compliance_score"`
-	ProcessorStatus        string        `json:"processor_status"`
-	ErrorRate              float64       `json:"error_rate"`
+	TotalScansPerformed int64         `json:"total_scans_performed"`
+	TotalPIIDetected    int64         `json:"total_pii_detected"`
+	TotalViolations     int64         `json:"total_violations"`
+	AverageScanTime     time.Duration `json:"average_scan_time"`
+	LastScanTime        time.Time     `json:"last_scan_time"`
+	ComplianceScore     float64       `json:"compliance_score"`
+	ProcessorStatus     string        `json:"processor_status"`
+	ErrorRate           float64       `json:"error_rate"`
 }
 
 // NewComplianceProcessor creates a new compliance processor
@@ -325,7 +325,7 @@ func (p *ComplianceProcessor) generateReport(
 
 	// Analyze results
 	actionSet := make(map[string]bool)
-	
+
 	for i, result := range results {
 		chunk := chunks[i]
 
@@ -403,7 +403,7 @@ func (p *ComplianceProcessor) getViolationDescription(flag string) string {
 		"MEDICAL_DATA":        "Medical information detected",
 		"HIPAA_IDENTIFIER":    "HIPAA-regulated health identifier detected",
 	}
-	
+
 	if desc, exists := descriptions[flag]; exists {
 		return desc
 	}
@@ -433,7 +433,7 @@ func (p *ComplianceProcessor) mapFlagToAction(flag string) string {
 		"MEDICAL_DATA":        "Apply healthcare data protections",
 		"HIPAA_IDENTIFIER":    "Secure HIPAA identifiers",
 	}
-	
+
 	if action, exists := actions[flag]; exists {
 		return action
 	}

@@ -45,12 +45,12 @@ type UploadRequest struct {
 
 // UploadResponse represents the response from document upload
 type UploadResponse struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Status        string    `json:"status"`
-	UploadedAt    time.Time `json:"uploaded_at"`
-	ProcessingJobID string  `json:"processing_job_id,omitempty"`
-	Message       string    `json:"message,omitempty"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Status          string    `json:"status"`
+	UploadedAt      time.Time `json:"uploaded_at"`
+	ProcessingJobID string    `json:"processing_job_id,omitempty"`
+	Message         string    `json:"message,omitempty"`
 }
 
 // DocumentStatus represents the status of a document
@@ -65,17 +65,17 @@ type DocumentStatus struct {
 
 // ChunkResponse represents a document chunk
 type ChunkResponse struct {
-	ID            string                 `json:"id"`
-	DocumentID    string                 `json:"document_id"`
-	ChunkIndex    int                    `json:"chunk_index"`
-	Content       string                 `json:"content"`
-	StartByte     int64                  `json:"start_byte"`
-	EndByte       int64                  `json:"end_byte"`
-	Strategy      string                 `json:"strategy"`
-	QualityScore  float64                `json:"quality_score"`
-	TokenCount    int                    `json:"token_count"`
-	Metadata      map[string]interface{} `json:"metadata"`
-	CreatedAt     time.Time              `json:"created_at"`
+	ID           string                 `json:"id"`
+	DocumentID   string                 `json:"document_id"`
+	ChunkIndex   int                    `json:"chunk_index"`
+	Content      string                 `json:"content"`
+	StartByte    int64                  `json:"start_byte"`
+	EndByte      int64                  `json:"end_byte"`
+	Strategy     string                 `json:"strategy"`
+	QualityScore float64                `json:"quality_score"`
+	TokenCount   int                    `json:"token_count"`
+	Metadata     map[string]interface{} `json:"metadata"`
+	CreatedAt    time.Time              `json:"created_at"`
 }
 
 // ChunksResponse represents a collection of chunks
@@ -110,11 +110,11 @@ type StrategyRecommendation struct {
 
 // SearchRequest represents a chunk search request
 type SearchRequest struct {
-	Query      string   `json:"query"`
+	Query      string                 `json:"query"`
 	Filters    map[string]interface{} `json:"filters,omitempty"`
-	Limit      int      `json:"limit,omitempty"`
-	Offset     int      `json:"offset,omitempty"`
-	Similarity float64  `json:"similarity_threshold,omitempty"`
+	Limit      int                    `json:"limit,omitempty"`
+	Offset     int                    `json:"offset,omitempty"`
+	Similarity float64                `json:"similarity_threshold,omitempty"`
 }
 
 // SearchResponse represents search results
@@ -129,17 +129,17 @@ type SearchResponse struct {
 func (c *APIClient) UploadMultipart(ctx context.Context, req UploadRequest) (*UploadResponse, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
-	
+
 	// Add file content
 	fileWriter, err := writer.CreateFormFile("file", req.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}
-	
+
 	if _, err := fileWriter.Write(req.Content); err != nil {
 		return nil, fmt.Errorf("failed to write file content: %w", err)
 	}
-	
+
 	// Add optional fields
 	if req.Strategy != "" {
 		writer.WriteField("strategy", req.Strategy)
@@ -150,37 +150,37 @@ func (c *APIClient) UploadMultipart(ctx context.Context, req UploadRequest) (*Up
 	if req.Description != "" {
 		writer.WriteField("description", req.Description)
 	}
-	
+
 	writer.Close()
-	
+
 	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/api/v1/documents/upload", &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	if c.AuthToken != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.AuthToken)
 	}
-	
+
 	// Execute request
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Parse response
 	var uploadResp UploadResponse
 	if err := json.NewDecoder(resp.Body).Decode(&uploadResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	
+
 	if resp.StatusCode >= 400 {
 		return &uploadResp, fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, uploadResp.Message)
 	}
-	
+
 	return &uploadResp, nil
 }
 
@@ -190,7 +190,7 @@ func (c *APIClient) UploadBase64(ctx context.Context, req UploadRequest) (*Uploa
 		"name":    req.Name,
 		"content": base64.StdEncoding.EncodeToString(req.Content),
 	}
-	
+
 	if req.Strategy != "" {
 		payload["strategy"] = req.Strategy
 	}
@@ -200,7 +200,7 @@ func (c *APIClient) UploadBase64(ctx context.Context, req UploadRequest) (*Uploa
 	if req.Description != "" {
 		payload["description"] = req.Description
 	}
-	
+
 	var result UploadResponse
 	err := c.makeJSONRequest(ctx, "POST", "/api/v1/documents/upload-base64", payload, &result)
 	return &result, err
@@ -250,7 +250,7 @@ func (c *APIClient) GetOptimalStrategy(ctx context.Context, contentType string, 
 		"file_size":    fileSize,
 		"complexity":   complexity,
 	}
-	
+
 	var result StrategyRecommendation
 	err := c.makeJSONRequest(ctx, "POST", "/api/v1/strategies/recommend", payload, &result)
 	return &result, err
@@ -261,7 +261,7 @@ func (c *APIClient) ReprocessFile(ctx context.Context, fileID, strategy string) 
 	payload := map[string]interface{}{
 		"strategy": strategy,
 	}
-	
+
 	var result UploadResponse
 	err := c.makeJSONRequest(ctx, "POST", fmt.Sprintf("/api/v1/files/%s/reprocess", fileID), payload, &result)
 	return &result, err
@@ -274,11 +274,11 @@ func (c *APIClient) HealthCheck(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check failed with status %d", resp.StatusCode)
 	}
-	
+
 	return nil
 }
 
@@ -286,7 +286,7 @@ func (c *APIClient) HealthCheck(ctx context.Context) error {
 func (c *APIClient) makeJSONRequest(ctx context.Context, method, path string, payload interface{}, result interface{}) error {
 	var body io.Reader
 	headers := map[string]string{}
-	
+
 	if payload != nil {
 		jsonData, err := json.Marshal(payload)
 		if err != nil {
@@ -295,47 +295,47 @@ func (c *APIClient) makeJSONRequest(ctx context.Context, method, path string, pa
 		body = bytes.NewReader(jsonData)
 		headers["Content-Type"] = "application/json"
 	}
-	
+
 	resp, err := c.makeRequest(ctx, method, path, body, headers)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	
+
 	if result != nil {
 		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
 			return fmt.Errorf("failed to decode response: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
 // makeRequest makes an HTTP request with proper headers
 func (c *APIClient) makeRequest(ctx context.Context, method, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
 	url := c.BaseURL + path
-	
+
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	
+
 	// Set auth token if available
 	if c.AuthToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
 	}
-	
+
 	// Execute request
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	
+
 	return resp, nil
 }
 
@@ -348,10 +348,10 @@ func (c *APIClient) MakeRequest(ctx context.Context, method, path string, body i
 func (c *APIClient) WaitForProcessingComplete(ctx context.Context, documentID string, timeout time.Duration) (*DocumentStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	
+
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -361,7 +361,7 @@ func (c *APIClient) WaitForProcessingComplete(ctx context.Context, documentID st
 			if err != nil {
 				return nil, fmt.Errorf("failed to get document status: %w", err)
 			}
-			
+
 			switch status.Status {
 			case "processed", "completed":
 				return status, nil

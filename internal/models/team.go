@@ -189,12 +189,12 @@ func (t *Team) CanUserInvite(userRole string) bool {
 // DefaultTeamSettings returns default settings for a new team
 func DefaultTeamSettings() map[string]interface{} {
 	return map[string]interface{}{
-		"allowExternalSharing":         false,
-		"requireApprovalForJoining":    true,
-		"defaultNotebookVisibility":    "team",
-		"allowMemberInvites":           false,
-		"allowMemberNotebookCreation":  true,
-		"notificationsEnabled":         true,
+		"allowExternalSharing":        false,
+		"requireApprovalForJoining":   true,
+		"defaultNotebookVisibility":   "team",
+		"allowMemberInvites":          false,
+		"allowMemberNotebookCreation": true,
+		"notificationsEnabled":        true,
 	}
 }
 
@@ -227,8 +227,8 @@ type TeamListResponse struct {
 
 // TeamStatsResponse represents team statistics
 type TeamStatsResponse struct {
-	TotalTeams      int `json:"totalTeams"`
-	PublicTeams     int `json:"publicTeams"`
+	TotalTeams        int `json:"totalTeams"`
+	PublicTeams       int `json:"publicTeams"`
 	OrganizationTeams int `json:"organizationTeams"`
-	PrivateTeams    int `json:"privateTeams"`
+	PrivateTeams      int `json:"privateTeams"`
 }
