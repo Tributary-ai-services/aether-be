@@ -33,7 +33,7 @@ jobs:
         check-latest: true
     
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/go-build
@@ -47,7 +47,7 @@ jobs:
     
     - name: Run Gosec Security Scanner
       run: |
-        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        go install github.com/securego/gosec/v2/cmd/gosec@latest
         gosec -fmt sarif -out gosec-report.sarif ./... || echo "Gosec completed with findings"
         ls -la gosec-report.sarif || echo "SARIF file not found"
       continue-on-error: true
@@ -66,7 +66,7 @@ jobs:
       continue-on-error: true
     
     - name: Upload govulncheck results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always() && hashFiles('govulncheck-report.json') != ''
       with:
         name: govulncheck-results
@@ -93,7 +93,7 @@ jobs:
       continue-on-error: true
     
     - name: Upload Nancy results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always() && hashFiles('nancy-report.txt') != ''
       with:
         name: nancy-results
@@ -210,7 +210,7 @@ jobs:
       continue-on-error: true
     
     - name: Upload license results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always() && hashFiles('licenses.csv') != ''
       with:
         name: license-scan-results
@@ -225,7 +225,7 @@ jobs:
     
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
     
     - name: Generate security summary
       run: |
@@ -245,7 +245,7 @@ jobs:
         echo "Detailed results are available in the Security tab and artifacts." >> security-summary.md
     
     - name: Upload security summary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: security-summary
         path: security-summary.md

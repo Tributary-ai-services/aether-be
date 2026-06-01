@@ -129,7 +129,7 @@ jobs:
         echo "**Performance**: Within acceptable thresholds" >> staging-report.md
     
     - name: Upload staging report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: staging-deployment-report
         path: staging-report.md
@@ -399,7 +399,7 @@ jobs:
         echo "- Blue-green deployment: ✅ Available" >> progressive-summary.md
     
     - name: Upload summary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: progressive-testing-summary
         path: progressive-summary.md
