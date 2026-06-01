@@ -17,7 +17,11 @@ jobs:
   test:
     name: Test and Lint
     runs-on: ubuntu-latest
-    
+
+    permissions:
+      contents: read
+      security-events: write  # required to upload the gosec SARIF to the Security tab
+
     services:
       neo4j:
         image: neo4j:5.15-community
@@ -109,6 +113,7 @@ jobs:
     - name: Upload Gosec scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
       if: always() && hashFiles('gosec-report.sarif') != ''
+      continue-on-error: true  # don't fail the job if code scanning isn't enabled on the repo
       with:
         sarif_file: gosec-report.sarif
     
