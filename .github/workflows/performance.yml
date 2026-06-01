@@ -167,6 +167,9 @@ jobs:
         export NEO4J_URI=bolt://localhost:7687
         export NEO4J_USERNAME=neo4j
         export NEO4J_PASSWORD=password
+        # CI's Community Neo4j only has the default 'neo4j' database; the app's
+        # config default is 'aether', so /health's DB check 503s without this.
+        export NEO4J_DATABASE=neo4j
         export REDIS_ADDR=localhost:6379
         export S3_ENDPOINT=http://localhost:9000
         export AWS_ACCESS_KEY_ID=minioadmin
