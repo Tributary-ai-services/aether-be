@@ -92,7 +92,7 @@ jobs:
         check-latest: true
     
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/go-build
@@ -175,7 +175,10 @@ jobs:
         export LOG_LEVEL=info
         export GIN_MODE=release
         export PORT=8080
-        
+        # config.Load() requires KEYCLOAK_CLIENT_SECRET when KEYCLOAK_URL is set (default);
+        # without it the app exits on boot and the health wait times out.
+        export KEYCLOAK_CLIENT_SECRET=test-secret
+
         ./bin/aether-be &
         APP_PID=$!
         echo "APP_PID=$APP_PID" >> $GITHUB_ENV
@@ -304,7 +307,7 @@ jobs:
       continue-on-error: true
     
     - name: Upload performance results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: k6-performance-results
@@ -329,7 +332,7 @@ jobs:
         check-latest: true
     
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/go-build
@@ -359,7 +362,7 @@ jobs:
         echo '```' >> benchmark-summary.md
     
     - name: Upload benchmark results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: go-benchmark-results
@@ -416,7 +419,7 @@ jobs:
       continue-on-error: true
     
     - name: Upload profiling results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: profiling-results
@@ -437,7 +440,7 @@ jobs:
     
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
     
     - name: Generate performance summary
       run: |
@@ -482,7 +485,7 @@ jobs:
         echo "Set up performance regression alerts by comparing with baseline metrics." >> performance-summary.md
     
     - name: Upload performance summary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: performance-summary
         path: performance-summary.md
