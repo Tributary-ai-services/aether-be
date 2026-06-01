@@ -64,9 +64,17 @@ func main() {
 	// Initialize external services
 	appLogger.Info("Initializing external services")
 
-	keycloakClient, err := auth.NewKeycloakClient(cfg.Keycloak, appLogger)
-	if err != nil {
-		appLogger.Fatal("Failed to initialize Keycloak client", zap.Error(err))
+	// Keycloak is optional. When disabled (KEYCLOAK_ENABLED=false) the client is
+	// nil and the auth middleware does not enforce authentication — used for local
+	// development and CI where no Keycloak server is available.
+	var keycloakClient *auth.KeycloakClient
+	if cfg.Keycloak.Enabled {
+		keycloakClient, err = auth.NewKeycloakClient(cfg.Keycloak, appLogger)
+		if err != nil {
+			appLogger.Fatal("Failed to initialize Keycloak client", zap.Error(err))
+		}
+	} else {
+		appLogger.Warn("Keycloak disabled (KEYCLOAK_ENABLED=false) - authentication will NOT be enforced")
 	}
 
 	var storageService *services.S3StorageService

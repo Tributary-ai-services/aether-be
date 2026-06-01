@@ -17,6 +17,12 @@ import (
 // AuthMiddleware handles JWT token validation
 func AuthMiddleware(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Keycloak disabled (KEYCLOAK_ENABLED=false): do not enforce authentication.
+		if keycloakClient == nil {
+			c.Next()
+			return
+		}
+
 		var idToken string
 
 		// Extract token from Authorization header
@@ -88,6 +94,12 @@ func AuthMiddleware(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin
 // RequireAdmin middleware ensures user has admin privileges
 func RequireAdmin(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Keycloak disabled (KEYCLOAK_ENABLED=false): no admin enforcement.
+		if keycloakClient == nil {
+			c.Next()
+			return
+		}
+
 		claims, exists := c.Get("user_claims")
 		if !exists {
 			log.Error("User claims not found in context")
@@ -133,6 +145,12 @@ func RequireAdmin(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin.H
 // OptionalAuth middleware extracts user information if token is present but doesn't require it
 func OptionalAuth(keycloakClient *auth.KeycloakClient, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Keycloak disabled (KEYCLOAK_ENABLED=false): no token verification.
+		if keycloakClient == nil {
+			c.Next()
+			return
+		}
+
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			// No token provided, continue without authentication

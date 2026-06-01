@@ -175,9 +175,9 @@ jobs:
         export LOG_LEVEL=info
         export GIN_MODE=release
         export PORT=8080
-        # config.Load() requires KEYCLOAK_CLIENT_SECRET when KEYCLOAK_URL is set (default);
-        # without it the app exits on boot and the health wait times out.
-        export KEYCLOAK_CLIENT_SECRET=test-secret
+        # No Keycloak server in CI: disable it so the app boots and auth is not
+        # enforced (the health/strategies checks below need no token).
+        export KEYCLOAK_ENABLED=false
 
         ./bin/aether-be &
         APP_PID=$!
