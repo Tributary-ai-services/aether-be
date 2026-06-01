@@ -167,6 +167,9 @@ jobs:
         export NEO4J_URI=bolt://localhost:7687
         export NEO4J_USERNAME=neo4j
         export NEO4J_PASSWORD=password
+        # CI's Community Neo4j only has the default 'neo4j' database; the app's
+        # config default is 'aether', so /health's DB check 503s without this.
+        export NEO4J_DATABASE=neo4j
         export REDIS_ADDR=localhost:6379
         export S3_ENDPOINT=http://localhost:9000
         export AWS_ACCESS_KEY_ID=minioadmin
@@ -175,9 +178,9 @@ jobs:
         export LOG_LEVEL=info
         export GIN_MODE=release
         export PORT=8080
-        # config.Load() requires KEYCLOAK_CLIENT_SECRET when KEYCLOAK_URL is set (default);
-        # without it the app exits on boot and the health wait times out.
-        export KEYCLOAK_CLIENT_SECRET=test-secret
+        # No Keycloak server in CI: disable it so the app boots and auth is not
+        # enforced (the health/strategies checks below need no token).
+        export KEYCLOAK_ENABLED=false
 
         ./bin/aether-be &
         APP_PID=$!

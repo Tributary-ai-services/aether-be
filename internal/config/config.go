@@ -113,6 +113,11 @@ type RedisConfig struct {
 
 // KeycloakConfig holds Keycloak OIDC configuration
 type KeycloakConfig struct {
+	// Enabled gates Keycloak/OIDC initialization. Default true. When false
+	// (KEYCLOAK_ENABLED=false), the app boots without an auth server and the
+	// auth middleware does not enforce authentication — intended for local
+	// development and CI where no Keycloak is available.
+	Enabled       bool
 	URL           string
 	Realm         string
 	ClientID      string
@@ -329,6 +334,7 @@ func Load() (*Config, error) {
 			PoolSize: getEnvInt("REDIS_POOL_SIZE", 10),
 		},
 		Keycloak: KeycloakConfig{
+			Enabled:       getEnvBool("KEYCLOAK_ENABLED", true),
 			URL:           getEnv("KEYCLOAK_URL", "http://localhost:8081"),
 			Realm:         getEnv("KEYCLOAK_REALM", "aether"),
 			ClientID:      getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
@@ -565,7 +571,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("NEO4J_PASSWORD is required")
 	}
 
-	if c.Keycloak.ClientSecret == "" && c.Keycloak.URL != "" {
+	if c.Keycloak.Enabled && c.Keycloak.ClientSecret == "" && c.Keycloak.URL != "" {
 		return fmt.Errorf("KEYCLOAK_CLIENT_SECRET is required when Keycloak is configured")
 	}
 
