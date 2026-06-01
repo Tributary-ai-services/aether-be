@@ -137,6 +137,10 @@ jobs:
         echo "AUDIMODAL_API_KEY=test-key-12345" >> $GITHUB_ENV
         echo "LOG_LEVEL=debug" >> $GITHUB_ENV
         echo "GIN_MODE=test" >> $GITHUB_ENV
+        # config.Load() requires KEYCLOAK_CLIENT_SECRET whenever KEYCLOAK_URL is set
+        # (it defaults to http://localhost:8081). Provide a dummy so migrations and
+        # tests that load config don't fail validation.
+        echo "KEYCLOAK_CLIENT_SECRET=test-secret" >> $GITHUB_ENV
         
     - name: Wait for services to be ready
       run: |

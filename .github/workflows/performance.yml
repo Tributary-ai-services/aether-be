@@ -150,7 +150,9 @@ jobs:
         export AUDIMODAL_API_URL=http://localhost:8084
         export LOG_LEVEL=info
         export GIN_MODE=release
-        
+        # config.Load() requires KEYCLOAK_CLIENT_SECRET when KEYCLOAK_URL is set (default).
+        export KEYCLOAK_CLIENT_SECRET=test-secret
+
         # Run database migrations if they exist
         if [ -f "migrations/run_migrations.sh" ]; then
           # cypher-shell only exists inside the neo4j service container; install a
