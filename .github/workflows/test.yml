@@ -300,17 +300,25 @@ jobs:
       run: go mod download
       
     - name: Run benchmarks
+      # Benchmarks-only (-run='^$'), scoped to packages that don't need live
+      # services. Non-blocking: this is a signal job, not a gate.
+      continue-on-error: true
       run: |
-        go test -bench=. -benchmem ./... | tee benchmark.txt
-        
+        go test -bench=. -benchmem -run='^$' \
+          $(go list ./internal/... ./pkg/... | grep -v -E "(cmd/|examples/)") | tee benchmark.txt
+        touch benchmark.txt
+
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
+      # No gh-pages branch is configured, so don't auto-push; and never fail the
+      # job on benchmark storage/alerts.
+      continue-on-error: true
       with:
         tool: 'go'
         output-file-path: benchmark.txt
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        auto-push: true
-        comment-on-alert: true
+        auto-push: false
+        comment-on-alert: false
         alert-threshold: '200%'
         fail-on-alert: false
 
@@ -334,6 +342,7 @@ jobs:
         context: .
         platforms: linux/amd64
         push: false
+        load: true  # load into the local daemon so the next step can `docker run` it
         tags: aether-backend:test
         cache-from: type=gha
         cache-to: type=gha,mode=max
