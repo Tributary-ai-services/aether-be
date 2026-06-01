@@ -939,24 +939,26 @@ func (s *UserService) recordToUserResponse(record interface{}) (*models.UserResp
 
 // Redis caching methods removed - no longer using Redis
 
-// UpdateUserPreferences updates user preferences
 // GetUserPreferences returns the persisted preferences for the given user.
 //
-// User.Preferences is stored as a JSON string on the User node (see
-// UpdateUser at line 505 for the storage convention). This re-marshals it
-// into the typed models.UserPreferences shape so handlers can return a
-// stable schema to the frontend even though storage is free-form.
+// userID is the Keycloak subject ID — the handler reads it from the JWT via
+// getUserID(c), which the GetCurrentUser handler also uses with
+// GetUserByKeycloakID. User.Preferences is stored as a JSON string on the
+// User node (see UpdateUser at line 505 for the storage convention). This
+// re-marshals it into the typed models.UserPreferences shape so handlers
+// can return a stable schema to the frontend even though storage is
+// free-form.
 //
 // Returns an empty UserPreferences (not nil) when the user has never saved
 // preferences, so callers don't need a nil check.
 func (s *UserService) GetUserPreferences(ctx context.Context, userID string) (*models.UserPreferences, error) {
-	user, err := s.GetUserByID(ctx, userID)
+	user, err := s.GetUserByKeycloakID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
 	prefs := &models.UserPreferences{}
-	if user.Preferences == nil || len(user.Preferences) == 0 {
+	if len(user.Preferences) == 0 {
 		return prefs, nil
 	}
 
@@ -979,6 +981,7 @@ func (s *UserService) GetUserPreferences(ctx context.Context, userID string) (*m
 
 // UpdateUserPreferences persists the given preferences to the User node.
 //
+// userID is the Keycloak subject ID (from the JWT via getUserID(c)).
 // Stored as a JSON string in u.preferences, matching the convention used by
 // UpdateUser at line 505. Preferences are replaced wholesale: callers send
 // the complete object, not a patch.
@@ -991,13 +994,13 @@ func (s *UserService) UpdateUserPreferences(ctx context.Context, userID string, 
 	}
 
 	query := `
-		MATCH (u:User {id: $user_id})
+		MATCH (u:User {keycloak_id: $keycloak_id})
 		SET u.preferences = $preferences,
 		    u.updated_at = datetime($updated_at)
 		RETURN u.id
 	`
 	params := map[string]interface{}{
-		"user_id":     userID,
+		"keycloak_id": userID,
 		"preferences": string(preferencesBytes),
 		"updated_at":  time.Now().UTC().Format(time.RFC3339),
 	}
