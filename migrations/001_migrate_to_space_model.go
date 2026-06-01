@@ -150,7 +150,6 @@ func migrateDocuments(ctx context.Context, client *database.Neo4jClient) error {
 	for _, record := range result.Records {
 		documentID, _ := record.Get("d.id")
 		documentName, _ := record.Get("d.name")
-		notebookID, _ := record.Get("d.notebook_id")
 		notebookTenantID, _ := record.Get("n.tenant_id")
 		notebookSpaceID, _ := record.Get("n.space_id")
 		notebookSpaceType, _ := record.Get("n.space_type")

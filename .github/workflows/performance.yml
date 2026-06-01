@@ -112,9 +112,11 @@ jobs:
     - name: Wait for services to be ready
       run: |
         echo "Waiting for Neo4j..."
-        timeout 120s bash -c 'until cypher-shell -u neo4j -p password "RETURN 1"; do sleep 2; done'
+        # cypher-shell/redis-cli live inside the service containers, not on the runner host;
+        # poll host-reachable endpoints instead (Neo4j HTTP :7474, Redis TCP :6379).
+        timeout 120s bash -c 'until curl -sf http://localhost:7474 >/dev/null; do sleep 2; done'
         echo "Waiting for Redis..."
-        timeout 60s bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+        timeout 60s bash -c 'until bash -c "</dev/tcp/localhost/6379" 2>/dev/null; do sleep 2; done'
         echo "Waiting for MinIO..."
         timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
         echo "Waiting for AudiModal Mock..."
@@ -148,9 +150,15 @@ jobs:
         export AUDIMODAL_API_URL=http://localhost:8084
         export LOG_LEVEL=info
         export GIN_MODE=release
-        
+        # config.Load() requires KEYCLOAK_CLIENT_SECRET when KEYCLOAK_URL is set (default).
+        export KEYCLOAK_CLIENT_SECRET=test-secret
+
         # Run database migrations if they exist
         if [ -f "migrations/run_migrations.sh" ]; then
+          # cypher-shell only exists inside the neo4j service container; install a
+          # host shim that proxies into it so run_migrations.sh works unmodified.
+          printf '#!/usr/bin/env bash\nexec docker exec -i %s cypher-shell "$@"\n' "${{ job.services.neo4j.id }}" | sudo tee /usr/local/bin/cypher-shell >/dev/null
+          sudo chmod +x /usr/local/bin/cypher-shell
           cd migrations && ./run_migrations.sh
         fi
     
