@@ -1171,6 +1171,36 @@ func (s *AgentService) getAgentFromNeo4j(ctx context.Context, agentID string) (*
 	return s.recordToAgent(*records.Records[0])
 }
 
+// HasDefaultAgent reports whether the given space already has a "default"
+// agent (default agents are tagged "default"). A personal space is meant to
+// have exactly one; this makes default-agent provisioning idempotent so
+// re-running onboarding can't create duplicates.
+func (s *AgentService) HasDefaultAgent(ctx context.Context, spaceID string) (bool, error) {
+	query := `
+		MATCH (a:Agent)
+		WHERE a.space_id = $spaceId AND 'default' IN a.tags
+		RETURN count(a) > 0 AS exists
+	`
+	params := map[string]interface{}{
+		"spaceId": spaceID,
+	}
+
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
+	if err != nil {
+		return false, errors.Database("Failed to check for default agent", err)
+	}
+
+	if len(result.Records) > 0 {
+		if exists, found := result.Records[0].Get("exists"); found {
+			if existsBool, ok := exists.(bool); ok {
+				return existsBool, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
 func (s *AgentService) createOwnershipRelationship(ctx context.Context, agentID, userID string) error {
 	query := `
 		MATCH (a:Agent {id: $agentId}), (u:User {id: $userId})
