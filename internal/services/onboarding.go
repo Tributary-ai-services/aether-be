@@ -150,7 +150,7 @@ func (s *OnboardingService) OnboardNewUser(ctx context.Context, user *models.Use
 				zap.Error(err),
 			)
 			// Don't fail onboarding - just log
-		} else {
+		} else if defaultAgent != nil {
 			result.DefaultAgentID = defaultAgent.AgentBuilderID
 			result.Steps[string(models.StepDefaultAgent)] = true
 			s.logger.Info("Default agent created",
@@ -158,6 +158,9 @@ func (s *OnboardingService) OnboardNewUser(ctx context.Context, user *models.Use
 				zap.String("agent_id", defaultAgent.ID),
 				zap.String("agent_builder_id", defaultAgent.AgentBuilderID),
 			)
+		} else {
+			// Skipped — a default agent already existed for this space.
+			result.Steps[string(models.StepDefaultAgent)] = true
 		}
 	}
 
@@ -467,6 +470,17 @@ func (s *OnboardingService) createDefaultAgent(
 		},
 	}
 
+	// Idempotency guard: if this space already has a default agent, skip
+	// creation so a re-run of onboarding can't create a duplicate.
+	if exists, err := s.agentService.HasDefaultAgent(ctx, spaceCtx.SpaceID); err != nil {
+		s.logger.Warn("Failed to check for existing default agent; proceeding to create",
+			zap.String("space_id", spaceCtx.SpaceID), zap.Error(err))
+	} else if exists {
+		s.logger.Info("Default agent already exists for space; skipping creation",
+			zap.String("space_id", spaceCtx.SpaceID))
+		return nil, nil
+	}
+
 	// Note: This requires authentication token for agent-builder API
 	// The token would need to be obtained from the request context
 	// For now, we'll attempt to create without token (may fail)
@@ -507,9 +521,14 @@ func (s *OnboardingService) GetOnboardingStatus(ctx context.Context, user *model
 		status.Steps[string(models.StepSampleDocuments)] = false
 	}
 
-	// Check for default agent
-	// TODO: Query agents with tag "personal-assistant"
-	status.Steps[string(models.StepDefaultAgent)] = false
+	// Check for default agent (tagged "default" in the space).
+	if spaceCtx != nil {
+		if hasAgent, err := s.agentService.HasDefaultAgent(ctx, spaceCtx.SpaceID); err != nil {
+			s.logger.Error("Failed to check for default agent", zap.Error(err))
+		} else {
+			status.Steps[string(models.StepDefaultAgent)] = hasAgent
+		}
+	}
 
 	return status, nil
 }
