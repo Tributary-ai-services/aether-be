@@ -1,9 +1,24 @@
-# Enforce LF line endings so files stay gofmt-clean regardless of platform.
+# Normalize ALL text files to LF (git auto-detects binary and leaves it alone),
+# so line endings stay consistent and gofmt-clean regardless of platform.
 # CRLF in .go files makes `gofmt -l` flag them, which previously broke CI.
-*.go    text eol=lf
-*.mod   text eol=lf
-*.sum   text eol=lf
+* text=auto eol=lf
+
+# Explicit LF for the source/config types we care most about (redundant with the
+# catch-all above, but kept for clarity of intent).
+*.go     text eol=lf
+*.mod    text eol=lf
+*.sum    text eol=lf
 *.cypher text eol=lf
-*.sh    text eol=lf
-*.yml   text eol=lf
-*.yaml  text eol=lf
+*.sh     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+
+# Common binaries — force binary so the catch-all never touches them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
