@@ -1,0 +1,26 @@
+# Maps code paths to the documents that describe them.
+# Read by .claude/skills/doc-factory/scripts/detect_stale_docs.py.
+#
+# READMEs watch broadly on purpose: a README's status section goes stale
+# without any commit touching the README itself.
+
+documents:
+  - path: README.md
+    doc_type: readme
+    owner: "@jscharber"
+    watches:
+      - "internal/agents"
+      - "internal/auth"
+      - "internal/config"
+      - "internal/database"
+      - "internal/handlers"
+      - "internal/logger"
+      - "internal/metrics"
+      - "internal/middleware"
+      - "internal/models"
+      - "internal/services"
+      - "internal/validation"
+      - "pkg/errors"
+      - "pkg/types"
+      - "pkg/utils"
+      - "cmd/server"
