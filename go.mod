@@ -106,3 +106,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+require github.com/Tributary-ai-services/aether-shared/go-events v0.0.0-20260912121931-9c1b9fde7a9f

@@ -1,3 +1,5 @@
+github.com/Tributary-ai-services/aether-shared/go-events v0.0.0-20260912121931-9c1b9fde7a9f h1:TN5M5w8YnLjmgaWyUnS2Z7Jq4uZv54FZRFUxvMyk7vE=
+github.com/Tributary-ai-services/aether-shared/go-events v0.0.0-20260912121931-9c1b9fde7a9f/go.mod h1:gBiUFmwn77eMQF2QJdgE8kLuaS9FQ2b4kyrD40arIGM=
 github.com/aws/aws-sdk-go v1.55.8 h1:JRmEUbU52aJQZ2AjX4q4Wu7t4uZjOu71uyNmaWlUkJQ=
 github.com/aws/aws-sdk-go v1.55.8/go.mod h1:ZkViS9AqA6otK+JBBNH2++sx1sgxrPKcSzPPvQkUtXk=
 github.com/aws/aws-sdk-go-v2 v1.24.1 h1:xAojnj+ktS95YZlDf0zxWBkbFtymPeDP+rvUQIH3uAU=
