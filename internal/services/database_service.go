@@ -50,8 +50,11 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 	// Create database model
 	db := models.NewDatabase(req, userID, tenantID, spaceID)
 
-	// Generate CRD name and K8s Secret name
-	db.CRDName = fmt.Sprintf("db-%s", db.ID[:8])
+	// Generate the K8s Secret name. CRDName is deliberately left empty: it is
+	// sent to DBHub as the `source` argument, and DBHub's sources are declared
+	// by the dbhub-operator's Database CRs, which aether-be never creates.
+	// Minting a synthetic "db-<id>" here named a source DBHub has never heard
+	// of. An empty value lets resolution fall through to DBHUB_DEFAULT_SOURCE.
 	db.CRDNamespace = s.crdNamespace
 	db.SecretName = fmt.Sprintf("db-credentials-%s", db.ID[:8])
 	db.SecretNamespace = s.crdNamespace
