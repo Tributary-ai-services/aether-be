@@ -7,17 +7,9 @@ IMAGE="${REGISTRY}/aether-backend"
 
 echo "=== Building aether-be ==="
 
-# Copy shared go-events module into build context
-echo "Copying go-events module into build context..."
-rm -rf "${SCRIPT_DIR}/go-events"
-cp -r "${SCRIPT_DIR}/../aether-shared/go-events" "${SCRIPT_DIR}/go-events"
-
 # Build
 echo "Building Docker image..."
 docker build -t "${IMAGE}:latest" "${SCRIPT_DIR}"
-
-# Clean up
-rm -rf "${SCRIPT_DIR}/go-events"
 
 # Push
 echo "Pushing to registry..."

@@ -109,7 +109,9 @@ func (c *Consumer) run(ctx context.Context) {
 				zap.String("topic", msg.Topic),
 				zap.Error(err),
 			)
-			reader.CommitMessages(ctx, msg)
+			if err := reader.CommitMessages(ctx, msg); err != nil {
+				c.log.Warn("streaming consumer commit error", zap.Error(err))
+			}
 			continue
 		}
 

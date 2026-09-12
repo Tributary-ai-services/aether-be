@@ -158,7 +158,7 @@ func TestWebSocketLiveEventStream(t *testing.T) {
 	// Mock Neo4j client for StreamService
 	var neo4jClient *database.Neo4jClient
 	streamService := services.NewStreamService(neo4jClient, log)
-	streamHandler := handlers.NewStreamHandler(streamService, log)
+	streamHandler := handlers.NewStreamHandler(streamService, nil, log)
 
 	router.GET("/api/v1/streams/live", streamHandler.StreamEvents)
 

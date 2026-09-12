@@ -9,16 +9,17 @@ RUN apk add --no-cache git ca-certificates tzdata
 # Set working directory
 WORKDIR /app
 
-# Copy the shared go-events module
-COPY go-events/ /go-events/
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
 
 # Copy source code
 COPY . .
 
-# Update replace directive for container paths and build
-RUN sed -i 's|=> ../aether-shared/go-events|=> /go-events|' go.mod && \
-    go mod download && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/server/main.go
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/server/main.go
 
 # Final stage
 FROM alpine:latest

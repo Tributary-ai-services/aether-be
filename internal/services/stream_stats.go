@@ -21,11 +21,11 @@ type StreamStatsService struct {
 
 // StreamStats is the response shape returned by GetStats.
 type StreamStats struct {
-	EventsPerMin   int64           `json:"events_per_min"`
-	ActiveSources  int             `json:"active_sources"`
-	BySeverity     map[string]int64 `json:"by_severity"`
-	WindowMinutes  int              `json:"window_minutes"`
-	Source         string           `json:"source"` // "timescaledb" or "unavailable"
+	EventsPerMin  int64            `json:"events_per_min"`
+	ActiveSources int              `json:"active_sources"`
+	BySeverity    map[string]int64 `json:"by_severity"`
+	WindowMinutes int              `json:"window_minutes"`
+	Source        string           `json:"source"` // "timescaledb" or "unavailable"
 }
 
 // NewStreamStatsService returns a stats service. Pass nil db to disable —

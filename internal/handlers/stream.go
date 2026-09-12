@@ -639,10 +639,13 @@ func (h *StreamHandler) handleHubWebSocket(ws *websocket.Conn, userID, tenantID 
 	defer h.hub.Unregister(connID)
 
 	// Send connection confirmation as a plain JSON message (not a CE)
-	ws.WriteJSON(map[string]interface{}{
+	if err := ws.WriteJSON(map[string]interface{}{
 		"type":      "connection_established",
 		"timestamp": time.Now(),
-	})
+	}); err != nil {
+		h.logger.Error("Failed to send connection confirmation", zap.Error(err))
+		return
+	}
 
 	// ReadPump blocks until the client disconnects
 	go sc.WritePump()

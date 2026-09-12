@@ -14,13 +14,13 @@ import (
 
 // Conn wraps a WebSocket connection with tenant-scoped filtering.
 type Conn struct {
-	ID       string
-	TenantID string
+	ID         string
+	TenantID   string
 	TypeFilter []string // if non-empty, only deliver events matching these type prefixes
-	WS       *websocket.Conn
-	send     chan []byte
-	closed   chan struct{}
-	once     sync.Once
+	WS         *websocket.Conn
+	send       chan []byte
+	closed     chan struct{}
+	once       sync.Once
 }
 
 func NewConn(id, tenantID string, ws *websocket.Conn, typeFilter []string) *Conn {
@@ -49,15 +49,15 @@ func (c *Conn) WritePump() {
 		select {
 		case msg, ok := <-c.send:
 			if !ok {
-				c.WS.WriteMessage(websocket.CloseMessage, nil)
+				_ = c.WS.WriteMessage(websocket.CloseMessage, nil)
 				return
 			}
-			c.WS.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = c.WS.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.WS.WriteMessage(websocket.TextMessage, msg); err != nil {
 				return
 			}
 		case <-pingTicker.C:
-			c.WS.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = c.WS.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.WS.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
@@ -72,9 +72,9 @@ func (c *Conn) WritePump() {
 func (c *Conn) ReadPump() {
 	defer c.Close()
 	c.WS.SetReadLimit(512)
-	c.WS.SetReadDeadline(time.Now().Add(60 * time.Second))
+	_ = c.WS.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.WS.SetPongHandler(func(string) error {
-		c.WS.SetReadDeadline(time.Now().Add(60 * time.Second))
+		_ = c.WS.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 	for {

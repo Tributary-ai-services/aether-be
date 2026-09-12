@@ -75,7 +75,7 @@ func TestWebSocketWithoutAuth(t *testing.T) {
 	// Add StreamHandler routes for testing
 	var neo4jClient *database.Neo4jClient
 	streamService := services.NewStreamService(neo4jClient, log)
-	_ = handlers.NewStreamHandler(streamService, log)
+	_ = handlers.NewStreamHandler(streamService, nil, log)
 
 	// Test endpoint without authentication
 	router.GET("/test/stream", func(c *gin.Context) {

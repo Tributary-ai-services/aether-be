@@ -107,6 +107,4 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-require github.com/Tributary-ai-services/aether-shared/go-events v0.0.0
-
-replace github.com/Tributary-ai-services/aether-shared/go-events => ../aether-shared/go-events
+require github.com/Tributary-ai-services/aether-shared/go-events v0.0.0-20260912121931-9c1b9fde7a9f
