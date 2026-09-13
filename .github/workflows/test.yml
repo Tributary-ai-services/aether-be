@@ -44,11 +44,17 @@ jobs:
         ports:
           - 6379:6379
       
-      # NOTE: MinIO is NOT a service container. The official minio/minio image
-      # needs the `server /data` command to start, and GitHub Actions service
-      # containers cannot pass a command/args to the image — so the container
-      # would exit at init ("print usage and quit"). It is started as a step
-      # below ("Start MinIO") using the official image with the proper command.
+      # NOTE: MinIO is NOT a service container. The minio/minio image needs the
+      # `server /data` command to start, and GitHub Actions service containers
+      # cannot pass a command/args to the image — so the container would exit
+      # at init ("print usage and quit"). It is started as a step below
+      # ("Start MinIO") with the proper command.
+      #
+      # Pulled from quay.io rather than Docker Hub: docker.io/minio/minio no
+      # longer serves anonymous pulls (the Hub API reports the repository as
+      # not found), which turned every job in this repo red on 2026-09-12 at
+      # the "Start MinIO" step — before Go was even set up. The tag is pinned
+      # instead of :latest so an upstream change cannot break CI again.
 
       # Mock AudiModal service for integration tests
       audimodal-mock:
@@ -73,7 +79,7 @@ jobs:
           -p 9000:9000 -p 9001:9001 \
           -e MINIO_ROOT_USER=minioadmin \
           -e MINIO_ROOT_PASSWORD=minioadmin123 \
-          minio/minio:latest server /data --console-address ":9001"
+          quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
 
     - name: Set up Go
       uses: actions/setup-go@v5
