@@ -163,16 +163,18 @@ jobs:
         
     - name: Set up MinIO buckets
       run: |
-        # Install MinIO client
-        wget https://dl.min.io/client/mc/release/linux-amd64/mc
-        chmod +x mc
-        sudo mv mc /usr/local/bin/
-        
-        # Configure MinIO client
-        mc alias set test-minio http://localhost:9000 minioadmin minioadmin123
-        
-        # Create test bucket
-        mc mb test-minio/aether-test-storage || echo "Bucket already exists"
+        # The mc client runs from its container image: dl.min.io now returns
+        # 410 Gone for the binary download, the same withdrawal that removed
+        # minio/minio from Docker Hub. Alias and bucket creation share one
+        # `docker run` because `mc alias set` writes config inside the
+        # container, which would not survive a second invocation.
+        # --entrypoint sh is required: the image's entrypoint is mc itself, so
+        # without it the shell command is parsed as mc arguments.
+        docker run --rm --network host --entrypoint sh \
+          quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z -c "
+            mc alias set test-minio http://localhost:9000 minioadmin minioadmin123 &&
+            (mc mb test-minio/aether-test-storage || echo 'Bucket already exists')
+          "
         
     - name: Run database migrations
       run: |
