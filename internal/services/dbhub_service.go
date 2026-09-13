@@ -19,10 +19,11 @@ import (
 
 // DBHubService handles communication with DBHub MCP server
 type DBHubService struct {
-	baseURL string
-	enabled bool
-	client  *http.Client
-	logger  *zap.Logger
+	baseURL       string
+	enabled       bool
+	defaultSource string
+	client        *http.Client
+	logger        *zap.Logger
 }
 
 // NewDBHubService creates a new DBHub service client
@@ -33,8 +34,9 @@ func NewDBHubService(cfg *config.DBHubConfig, log *logger.Logger) *DBHubService 
 	}
 
 	return &DBHubService{
-		baseURL: cfg.BaseURL,
-		enabled: cfg.Enabled,
+		baseURL:       cfg.BaseURL,
+		enabled:       cfg.Enabled,
+		defaultSource: cfg.DefaultSource,
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 		},
@@ -80,31 +82,107 @@ func (s *DBHubService) IsEnabled() bool {
 	return s.enabled
 }
 
+// dbhubSupportsType reports whether DBHub can serve a database of this type.
+// DBHub speaks SQL only; neo4j is handled by Neo4jQueryService, and minio,
+// kafka and grafana connections have no query path through DBHub at all.
+func dbhubSupportsType(dbType models.DatabaseType) bool {
+	switch dbType {
+	case models.DatabaseTypePostgres,
+		models.DatabaseTypeMySQL,
+		models.DatabaseTypeMariaDB,
+		models.DatabaseTypeSQLServer,
+		models.DatabaseTypeSQLite:
+		return true
+	default:
+		return false
+	}
+}
+
+// isLegacyGeneratedCRDName reports whether a recorded CR name is one of the
+// synthetic "db-<8 hex>" names CreateDatabase used to mint. No CR was ever
+// created under those names, so DBHub has never heard of them; they are not
+// usable as source ids and must not be sent.
+func isLegacyGeneratedCRDName(name string) bool {
+	const prefix = "db-"
+	const hexLen = 8
+
+	if len(name) != len(prefix)+hexLen || !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	for _, c := range name[len(prefix):] {
+		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+		if !isHex {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveSource determines which DBHub source a database maps to, returning
+// false when it cannot be determined.
+//
+// Precedence is the source recorded on the connection, then the configured
+// default. When neither yields a usable value the caller omits the argument
+// entirely rather than sending an empty string: DBHub ignores an unknown or
+// empty source while a single source is configured, so an empty value appears
+// to work and would silently query the wrong database as soon as a second
+// source is declared.
+func (s *DBHubService) resolveSource(db *models.Database) (string, bool) {
+	if db != nil && db.CRDName != "" && !isLegacyGeneratedCRDName(db.CRDName) {
+		return db.CRDName, true
+	}
+	if s.defaultSource != "" {
+		return s.defaultSource, true
+	}
+	return "", false
+}
+
 // ExecuteQuery executes a SQL query via DBHub MCP server
 func (s *DBHubService) ExecuteQuery(ctx context.Context, db *models.Database, query string, params []any) (*models.QueryResponse, error) {
 	if !s.enabled {
 		return nil, errors.ServiceUnavailable("DBHub service is not enabled")
 	}
 
+	if !dbhubSupportsType(db.Type) {
+		return nil, errors.ValidationWithDetails("This database type cannot run SQL queries", map[string]any{
+			"database_id": db.ID,
+			"type":        string(db.Type),
+			"supported":   []string{"postgres", "mysql", "mariadb", "sqlserver", "sqlite"},
+		})
+	}
+
 	start := time.Now()
 
-	// Build MCP request for execute_sql tool
+	// Build the execute_sql arguments. The source is included only when it
+	// resolves to a real DBHub source; see resolveSource for why an empty
+	// value is never sent.
+	arguments := map[string]interface{}{
+		"sql": query,
+	}
+	source, haveSource := s.resolveSource(db)
+	if haveSource {
+		arguments["source"] = source
+	} else {
+		s.logger.Warn("No DBHub source recorded for this connection; DBHub will use its own default. Set DBHUB_DEFAULT_SOURCE or record a source on the connection.",
+			zap.String("database_id", db.ID),
+			zap.String("recorded_crd_name", db.CRDName),
+		)
+	}
+
 	mcpReq := MCPRequest{
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "tools/call",
 		Params: map[string]interface{}{
-			"name": "execute_sql",
-			"arguments": map[string]interface{}{
-				"source": db.CRDName,
-				"sql":    query,
-			},
+			"name":      "execute_sql",
+			"arguments": arguments,
 		},
 	}
 
 	s.logger.Debug("Executing SQL query via DBHub",
 		zap.String("database_id", db.ID),
-		zap.String("source", db.CRDName),
+		zap.String("source", source),
+		zap.Bool("source_resolved", haveSource),
 		zap.String("query_preview", truncateQuery(query, 100)),
 	)
 
@@ -226,6 +304,14 @@ func (s *DBHubService) TestConnection(ctx context.Context, db *models.Database) 
 func (s *DBHubService) GetSchema(ctx context.Context, db *models.Database, schemaType string) (*models.SchemaResponse, error) {
 	if !s.enabled {
 		return nil, errors.ServiceUnavailable("DBHub service is not enabled")
+	}
+
+	if !dbhubSupportsType(db.Type) {
+		return nil, errors.ValidationWithDetails("This database type has no schema browser", map[string]any{
+			"database_id": db.ID,
+			"type":        string(db.Type),
+			"supported":   []string{"postgres", "mysql", "mariadb", "sqlserver", "sqlite"},
+		})
 	}
 
 	// Map schema type to DBHub object_type

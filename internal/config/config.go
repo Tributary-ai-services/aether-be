@@ -265,6 +265,12 @@ type DBHubConfig struct {
 	BaseURL        string `json:"base_url"`
 	Enabled        bool   `json:"enabled"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+	// DefaultSource is the DBHub source id to use for connections that do not
+	// record one of their own. DBHub sources are declared by the
+	// dbhub-operator's Database CRs; aether-be does not create them, so this is
+	// how an operator points the SQL console at the right one. Left empty by
+	// default: sending a guessed source is worse than sending none.
+	DefaultSource string `json:"default_source"`
 }
 
 // NapkinConfig holds Napkin AI MCP server configuration
@@ -445,6 +451,7 @@ func Load() (*Config, error) {
 			BaseURL:        getEnv("DBHUB_BASE_URL", "http://dbhub.tas-mcp-servers.svc.cluster.local:8080"),
 			Enabled:        getEnvBool("DBHUB_ENABLED", true),
 			TimeoutSeconds: getEnvInt("DBHUB_TIMEOUT_SECONDS", 30),
+			DefaultSource:  getEnv("DBHUB_DEFAULT_SOURCE", ""),
 		},
 		Napkin: NapkinConfig{
 			BaseURL:        getEnv("NAPKIN_MCP_BASE_URL", "http://napkin-mcp.tas-mcp-servers.svc.cluster.local:8087"),
