@@ -134,7 +134,7 @@ func NewAPIServer(
 	organizationHandler := NewOrganizationHandler(organizationService, userService, log)
 	spaceHandler := NewSpaceHandler(spaceContextService, spaceService, userService, organizationService, log)
 	agentHandler := NewAgentHandler(agentService, userService, teamService, log)
-	streamHandler := NewStreamHandler(streamService, log)
+	streamHandler := NewStreamHandler(streamService, nil, log) // hub wired from main.go via SetStreamingHub
 	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
 	loggingHandler := NewLoggingHandler(log)
 	vectorSearchHandler := NewVectorSearchHandler(notebookService, documentService, userService, &cfg.DeepLake, log)
@@ -801,6 +801,9 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		// Stream analytics
 		streams.GET("/analytics", s.StreamHandler.GetStreamAnalytics)
 		streams.GET("/analytics/realtime", s.StreamHandler.GetRealtimeAnalytics)
+
+		// Live Streams summary cards (TimescaleDB-backed)
+		streams.GET("/stats", s.StreamHandler.GetStreamStats)
 	}
 
 	// MCP server management routes

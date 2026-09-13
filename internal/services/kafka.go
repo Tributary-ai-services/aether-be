@@ -11,7 +11,31 @@ import (
 
 	"github.com/Tributary-ai-services/aether-be/internal/config"
 	"github.com/Tributary-ai-services/aether-be/internal/logger"
+	tasevents "github.com/Tributary-ai-services/aether-shared/go-events"
+	"github.com/Tributary-ai-services/aether-shared/go-events/kafkabind"
+	"github.com/Tributary-ai-services/aether-shared/go-events/topics"
 )
+
+// ceCESource is the CloudEvents source URI for events emitted by aether-be.
+const ceSource = "urn:tas:service:aether-be"
+
+// ceMapping defines which legacy EventTypes get mirrored as CloudEvents
+// during the migration window. Unmapped events publish legacy-only.
+type ceMappingEntry struct {
+	ceType string
+	topic  string
+	sev    tasevents.Severity
+}
+
+var ceMapping = map[EventType]ceMappingEntry{
+	EventWorkflowFileUploaded:    {"com.tas.activity.workflow.started", topics.ActivityWorkflows, tasevents.SeverityInfo},
+	EventWorkflowDocumentEvent:   {"com.tas.activity.workflow.step_completed", topics.ActivityWorkflows, tasevents.SeverityInfo},
+	EventWorkflowCompleted:       {"com.tas.activity.workflow.completed", topics.ActivityWorkflows, tasevents.SeverityInfo},
+	EventWorkflowFailed:          {"com.tas.activity.workflow.failed", topics.ActivityWorkflows, tasevents.SeverityHigh},
+	EventSecurityThreatDetected:  {"com.tas.activity.security.threat_detected", topics.ActivitySecurity, tasevents.SeverityHigh},
+	EventSecurityReviewCompleted: {"com.tas.activity.security.review_completed", topics.ActivitySecurity, tasevents.SeverityInfo},
+	EventSecurityPolicyViolation: {"com.tas.activity.security.policy_violation", topics.ActivitySecurity, tasevents.SeverityHigh},
+}
 
 // KafkaService handles Kafka operations
 type KafkaService struct {
@@ -207,7 +231,70 @@ func (k *KafkaService) PublishEvent(ctx context.Context, event Event) error {
 		zap.Float64("duration_ms", duration),
 	)
 
+	// CloudEvents mirror — dual-publish for workflow + security events so the
+	// Live Streams pipeline (Spark + aether-be consumer) sees them on the
+	// canonical tas.activity.* topics. Shared event_id keeps consumers
+	// idempotent across legacy and CE envelopes during the migration window.
+	k.publishCEMirror(ctx, event)
+
 	return nil
+}
+
+// publishCEMirror writes a CloudEvents structured-mode envelope to the
+// mapped tas.activity.* topic for events that are part of the migration
+// scope. It is fire-and-forget: failures are logged but never returned —
+// the legacy publish has already succeeded by the time this runs and we
+// don't want to fail the caller for the mirror.
+func (k *KafkaService) publishCEMirror(ctx context.Context, event Event) {
+	mapping, ok := ceMapping[event.Type]
+	if !ok {
+		return
+	}
+
+	// Reuse the same UUID as the legacy envelope so consumers can dedupe.
+	ce := tasevents.NewWithID(event.ID, mapping.ceType, ceSource,
+		tasevents.WithSubject(event.Subject),
+		tasevents.WithUser(event.UserID),
+		tasevents.WithSeverity(mapping.sev),
+		tasevents.WithTime(event.Timestamp),
+		tasevents.WithData(event.Data),
+	)
+
+	value, headers, err := kafkabind.Encode(ce)
+	if err != nil {
+		k.logger.Warn("CE mirror: encode failed",
+			zap.String("event_id", event.ID),
+			zap.String("ce_type", mapping.ceType),
+			zap.Error(err),
+		)
+		return
+	}
+
+	msg := kafka.Message{
+		Topic:   mapping.topic,
+		Key:     kafkabind.MessageKey(ce),
+		Value:   value,
+		Headers: headers,
+		Time:    ce.Time,
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	if err := k.writer.WriteMessages(writeCtx, msg); err != nil {
+		k.logger.Warn("CE mirror: publish failed",
+			zap.String("event_id", event.ID),
+			zap.String("ce_type", mapping.ceType),
+			zap.String("topic", mapping.topic),
+			zap.Error(err),
+		)
+		return
+	}
+	k.logger.Debug("CE mirror published",
+		zap.String("event_id", event.ID),
+		zap.String("ce_type", mapping.ceType),
+		zap.String("topic", mapping.topic),
+	)
 }
 
 // PublishMessage publishes a generic message to Kafka
