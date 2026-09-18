@@ -62,8 +62,19 @@ spec:
           value: "24"
 
         # Redis Configuration (shared service)
+        #
+        # redis-shared requires a password since 2026-09-18 (SEC-24). The
+        # password comes from the Secret and is interpolated into the URL by
+        # Kubernetes, so it is never a literal here. REDIS_PASSWORD must be
+        # declared BEFORE REDIS_URL: $(VAR) expansion only sees variables
+        # defined earlier in the same container's env list.
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-shared-auth
+              key: password
         - name: REDIS_URL
-          value: "redis://redis-shared.tas-shared:6379/0"
+          value: "redis://:$(REDIS_PASSWORD)@redis-shared.tas-shared:6379/0"
         - name: REDIS_TTL_SECONDS
           value: "3600"
 
