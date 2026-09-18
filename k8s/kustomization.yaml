@@ -13,10 +13,21 @@ resources:
 - service.yaml
 - ingress.yaml
 
-commonLabels:
-  app.kubernetes.io/name: aether-backend
-  app.kubernetes.io/component: api
-  app.kubernetes.io/part-of: aether
+# `labels:` with includeSelectors:false, NOT commonLabels (OPS-28).
+#
+# commonLabels injects these into `spec.selector` as well as metadata, and a
+# Deployment's selector is IMMUTABLE. The live aether-backend was created
+# selecting on {app: aether-backend} alone, so `kubectl apply -k` here failed
+# outright with "spec.selector: Invalid value ... field is immutable" — which
+# meant this manifest could not restore the workload it describes. Recovery
+# would have needed a delete and recreate, i.e. downtime, and nobody would
+# have found out until the day they tried.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: aether-backend
+      app.kubernetes.io/component: api
+      app.kubernetes.io/part-of: aether
 
 images:
 - name: aether-be
