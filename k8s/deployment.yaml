@@ -20,7 +20,7 @@ spec:
       serviceAccountName: aether-backend
       containers:
       - name: aether-backend
-        image: registry-api.tas.scharber.com/aether-backend:latest
+        image: registry-api.tas.scharber.com/aether-backend:dbhub-source-20260913
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
