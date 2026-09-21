@@ -17,6 +17,26 @@ spec:
         app: aether-backend
         component: api
     spec:
+      # Spread replicas across nodes (cluster gained pinova01 2026-09-21).
+      # Safe since the cluster LAN went in: measured 2026-09-21, 3,703
+      # sequential Postgres connects in 10s from the other node vs 3,793
+      # locally -- a 2.4% penalty. Over WiFi it was ~70ms per round trip.
+      #
+      # topologySpreadConstraints, not podAntiAffinity: a `preferred`
+      # anti-affinity was measured putting both replicas on the SAME node.
+      # A rollout alone may still co-locate them, because each replacement is
+      # scheduled while the pod it replaces still counts -- check placement
+      # afterwards and delete one pod to rebalance.
+      #
+      # ScheduleAnyway, not DoNotSchedule: with two nodes a hard constraint
+      # leaves a replica Pending whenever one node is down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: aether-backend
       serviceAccountName: aether-backend
       containers:
       - name: aether-backend
