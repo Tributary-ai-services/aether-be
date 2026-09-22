@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -84,7 +85,7 @@ func TestReadinessVerdict(t *testing.T) {
 func TestConfiguredButUninitializedDependenciesAreReported(t *testing.T) {
 	h := NewHealthHandler(nil, nil, nil, true, true, testLogger(t))
 
-	kafka := h.checkKafka(t.Context())
+	kafka := h.checkKafka(context.Background())
 	if kafka.Status != "unhealthy" {
 		t.Errorf("checkKafka status = %q, want unhealthy", kafka.Status)
 	}
@@ -92,7 +93,7 @@ func TestConfiguredButUninitializedDependenciesAreReported(t *testing.T) {
 		t.Error("checkKafka returned no error text for an uninitialized service")
 	}
 
-	storage := h.checkStorage(t.Context())
+	storage := h.checkStorage(context.Background())
 	if storage.Status != "unhealthy" {
 		t.Errorf("checkStorage status = %q, want unhealthy", storage.Status)
 	}
