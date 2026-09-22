@@ -135,7 +135,7 @@ func NewAPIServer(
 	spaceHandler := NewSpaceHandler(spaceContextService, spaceService, userService, organizationService, log)
 	agentHandler := NewAgentHandler(agentService, userService, teamService, log)
 	streamHandler := NewStreamHandler(streamService, nil, log) // hub wired from main.go via SetStreamingHub
-	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, log)
+	healthHandler := NewHealthHandler(neo4j, storageService, kafkaService, cfg.Storage.Enabled, cfg.Kafka.Enabled, log)
 	loggingHandler := NewLoggingHandler(log)
 	vectorSearchHandler := NewVectorSearchHandler(notebookService, documentService, userService, &cfg.DeepLake, log)
 	complianceHandler := NewComplianceHandler(audiModalClient, log)

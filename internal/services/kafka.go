@@ -3,7 +3,9 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -37,13 +39,37 @@ var ceMapping = map[EventType]ceMappingEntry{
 	EventSecurityPolicyViolation: {"com.tas.activity.security.policy_violation", topics.ActivitySecurity, tasevents.SeverityHigh},
 }
 
-// KafkaService handles Kafka operations
+// ErrKafkaUnavailable is returned by publish calls made while the broker is
+// known to be unreachable. It short-circuits the kafka-go write path, whose
+// WriteTimeout is 10s — long enough to stall a request handler on every
+// event during an outage.
+var ErrKafkaUnavailable = errors.New("kafka unavailable")
+
+// connectionProbeInterval is how often the background monitor re-probes the
+// broker once a connection has been established.
+const connectionProbeInterval = 30 * time.Second
+
+// connectionRetryInterval is the (faster) re-probe cadence while the broker
+// is known to be down, so recovery is picked up promptly.
+const connectionRetryInterval = 5 * time.Second
+
+// KafkaService handles Kafka operations.
+//
+// The service is constructed even when the broker is unreachable: a broker
+// that is down at boot must not permanently disable event publishing for the
+// life of the process (OPS-39). A background monitor tracks reachability in
+// `connected`; publishes short-circuit while it is false and resume without a
+// restart once the broker returns.
 type KafkaService struct {
 	writer  *kafka.Writer
 	readers map[string]*kafka.Reader
 	logger  *logger.Logger
 	config  config.KafkaConfig
 	brokers []string
+
+	connected     atomic.Bool
+	monitorCancel context.CancelFunc
+	monitorDone   chan struct{}
 }
 
 // Message represents a Kafka message
@@ -140,24 +166,95 @@ func NewKafkaService(cfg config.KafkaConfig, log *logger.Logger) (*KafkaService,
 		Logger:       kafka.LoggerFunc(service.logInfo),
 	}
 
-	// Test connection
+	// Probe the broker once, but do not make it a precondition for
+	// construction. A broker that happens to be down at boot used to leave
+	// kafkaService nil for the life of the process, which both disabled
+	// publishing permanently and made the health endpoint stop reporting
+	// Kafka at all (OPS-39).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := service.testConnection(ctx); err != nil {
-		return nil, fmt.Errorf("failed to connect to Kafka: %w", err)
+		service.logger.Warn("Kafka unreachable at startup - continuing in degraded mode, retrying in background",
+			zap.Strings("brokers", cfg.Brokers),
+			zap.Error(err),
+		)
+	} else {
+		service.connected.Store(true)
+		service.logger.Info("Kafka service initialized",
+			zap.Strings("brokers", cfg.Brokers),
+			zap.String("topic_prefix", cfg.TopicPrefix),
+		)
 	}
 
-	service.logger.Info("Kafka service initialized",
-		zap.Strings("brokers", cfg.Brokers),
-		zap.String("topic_prefix", cfg.TopicPrefix),
-	)
+	service.startConnectionMonitor()
 
 	return service, nil
 }
 
+// startConnectionMonitor runs a single goroutine that keeps `connected` in
+// step with broker reachability, probing faster while disconnected so that
+// recovery is picked up within a few seconds.
+func (k *KafkaService) startConnectionMonitor() {
+	ctx, cancel := context.WithCancel(context.Background())
+	k.monitorCancel = cancel
+	k.monitorDone = make(chan struct{})
+
+	go func() {
+		defer close(k.monitorDone)
+
+		timer := time.NewTimer(k.probeInterval())
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+
+			probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+			err := k.testConnection(probeCtx)
+			probeCancel()
+
+			was := k.connected.Load()
+			now := err == nil
+			k.connected.Store(now)
+
+			switch {
+			case now && !was:
+				k.logger.Info("Kafka connection restored", zap.Strings("brokers", k.brokers))
+			case !now && was:
+				k.logger.Warn("Kafka connection lost - publishes will be skipped until it returns",
+					zap.Strings("brokers", k.brokers),
+					zap.Error(err),
+				)
+			}
+
+			timer.Reset(k.probeInterval())
+		}
+	}()
+}
+
+func (k *KafkaService) probeInterval() time.Duration {
+	if k.connected.Load() {
+		return connectionProbeInterval
+	}
+	return connectionRetryInterval
+}
+
+// Connected reports whether the broker was reachable as of the most recent
+// probe. It never blocks.
+func (k *KafkaService) Connected() bool {
+	return k.connected.Load()
+}
+
 // PublishEvent publishes a domain event to Kafka
 func (k *KafkaService) PublishEvent(ctx context.Context, event Event) error {
+	if !k.connected.Load() {
+		return fmt.Errorf("publish event %s: %w", event.Type, ErrKafkaUnavailable)
+	}
+
 	// Set default values
 	if event.ID == "" {
 		event.ID = generateEventID()
@@ -299,6 +396,10 @@ func (k *KafkaService) publishCEMirror(ctx context.Context, event Event) {
 
 // PublishMessage publishes a generic message to Kafka
 func (k *KafkaService) PublishMessage(ctx context.Context, msg Message) error {
+	if !k.connected.Load() {
+		return fmt.Errorf("publish to topic %s: %w", msg.Topic, ErrKafkaUnavailable)
+	}
+
 	// Set timestamp if not provided
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now()
@@ -466,6 +567,12 @@ func (k *KafkaService) Unsubscribe(topic string, groupID string) error {
 
 // Close closes the Kafka service
 func (k *KafkaService) Close() error {
+	// Stop the connection monitor before tearing down the writer.
+	if k.monitorCancel != nil {
+		k.monitorCancel()
+		<-k.monitorDone
+	}
+
 	// Close writer
 	if err := k.writer.Close(); err != nil {
 		k.logger.Error("Failed to close Kafka writer", zap.Error(err))
@@ -544,6 +651,10 @@ func (k *KafkaService) GetTopicForEvent(eventType EventType) string {
 }
 
 func (k *KafkaService) testConnection(ctx context.Context) error {
+	if len(k.brokers) == 0 {
+		return fmt.Errorf("no Kafka brokers configured")
+	}
+
 	// Try to get metadata from brokers
 	conn, err := kafka.DialContext(ctx, "tcp", k.brokers[0])
 	if err != nil {

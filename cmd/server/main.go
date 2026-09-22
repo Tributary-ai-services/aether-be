@@ -97,10 +97,14 @@ func main() {
 	if cfg.Kafka.Enabled {
 		kafkaService, err = services.NewKafkaService(cfg.Kafka, appLogger)
 		if err != nil {
-			appLogger.Error("Failed to initialize Kafka service", zap.Error(err))
-			// Don't fail startup, but log the error
+			// NewKafkaService no longer fails on an unreachable broker (it
+			// starts degraded and reconnects in the background), so reaching
+			// here means the service could not be constructed at all.
+			appLogger.Error("Failed to construct Kafka service - event publishing disabled for this process", zap.Error(err))
+			kafkaService = nil
 		} else {
-			appLogger.Info("Kafka service initialized successfully")
+			appLogger.Info("Kafka service initialized successfully",
+				zap.Bool("connected", kafkaService.Connected()))
 		}
 	}
 
