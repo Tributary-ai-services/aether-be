@@ -6,7 +6,6 @@ namespace: aether-be
 resources:
 - namespace.yaml
 - configmap.yaml
-- secret.yaml
 - neo4j.yaml
 - neo4j-certificate.yaml
 - deployment.yaml
