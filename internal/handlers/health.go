@@ -13,11 +13,20 @@ import (
 	"github.com/Tributary-ai-services/aether-be/internal/services"
 )
 
-// HealthHandler handles health check requests
+// HealthHandler handles health check requests.
+//
+// storageEnabled/kafkaEnabled record whether each optional dependency was
+// *configured*, independently of whether its service object was successfully
+// constructed. Without them a dependency that failed to initialize simply
+// disappeared from the response and the endpoint reported "ready" — a health
+// check that stops looking at a subsystem rather than reporting it down
+// (OPS-39, same shape as OPS-19/OPS-23).
 type HealthHandler struct {
 	neo4j          *database.Neo4jClient
 	storageService *services.S3StorageService
 	kafkaService   *services.KafkaService
+	storageEnabled bool
+	kafkaEnabled   bool
 	logger         *logger.Logger
 }
 
@@ -26,12 +35,16 @@ func NewHealthHandler(
 	neo4j *database.Neo4jClient,
 	storageService *services.S3StorageService,
 	kafkaService *services.KafkaService,
+	storageEnabled bool,
+	kafkaEnabled bool,
 	log *logger.Logger,
 ) *HealthHandler {
 	return &HealthHandler{
 		neo4j:          neo4j,
 		storageService: storageService,
 		kafkaService:   kafkaService,
+		storageEnabled: storageEnabled,
+		kafkaEnabled:   kafkaEnabled,
 		logger:         log.WithService("health_handler"),
 	}
 }
@@ -51,7 +64,13 @@ type ServiceHealth struct {
 	Error        string        `json:"error,omitempty"`
 }
 
-// LivenessCheck handles liveness probe
+// LivenessCheck handles liveness probe.
+//
+// It returns 200 unconditionally and MUST stay that way: a liveness probe
+// answers "is this process wedged?", and restarting the pod cannot repair a
+// dependency. Wiring livenessProbe to a dependency check turned every Kafka
+// blip into an application restart (OPS-39). Dependency state belongs in
+// ReadinessCheck.
 // @Summary Liveness check
 // @Description Check if the application is alive
 // @Tags health
@@ -68,7 +87,7 @@ func (h *HealthHandler) LivenessCheck(c *gin.Context) {
 
 // ReadinessCheck handles readiness probe
 // @Summary Readiness check
-// @Description Check if the application is ready to serve requests
+// @Description Check if the application is ready to serve requests. Returns 200 with status "ready" or "degraded" (an optional dependency is down but traffic can still be served), and 503 only when Neo4j is unreachable.
 // @Tags health
 // @Accept json
 // @Produce json
@@ -84,39 +103,56 @@ func (h *HealthHandler) ReadinessCheck(c *gin.Context) {
 		Services:  make(map[string]ServiceHealth),
 	}
 
-	allHealthy := true
+	// Neo4j is the only dependency that gates readiness: it is the datastore
+	// the API cannot answer a request without. Storage and Kafka degrade
+	// specific features (file operations, event publishing) but the process
+	// still serves traffic, and the app is built to start without them.
+	// Failing readiness on those would pull every replica out of the Service
+	// for the duration of a dependency blip — an API outage caused by an
+	// optional subsystem (OPS-39).
+	degraded := false
 
-	// Check Neo4j
 	neo4jHealth := h.checkNeo4j(ctx)
 	response.Services["neo4j"] = neo4jHealth
-	if neo4jHealth.Status != "healthy" {
-		allHealthy = false
-	}
+	ready := neo4jHealth.Status == "healthy"
 
-	// Check Storage Service
-	if h.storageService != nil {
+	// Optional dependencies are always reported when configured, whether or
+	// not their service object exists, so a boot-time failure is visible.
+	if h.storageEnabled {
 		storageHealth := h.checkStorage(ctx)
 		response.Services["storage"] = storageHealth
 		if storageHealth.Status != "healthy" {
-			allHealthy = false
+			degraded = true
 		}
 	}
 
-	// Check Kafka Service
-	if h.kafkaService != nil {
+	if h.kafkaEnabled {
 		kafkaHealth := h.checkKafka(ctx)
 		response.Services["kafka"] = kafkaHealth
 		if kafkaHealth.Status != "healthy" {
-			allHealthy = false
+			degraded = true
 		}
 	}
 
-	if allHealthy {
-		response.Status = "ready"
-		c.JSON(http.StatusOK, response)
-	} else {
-		response.Status = "not_ready"
-		c.JSON(http.StatusServiceUnavailable, response)
+	status, code := readinessVerdict(ready, degraded)
+	response.Status = status
+	c.JSON(code, response)
+}
+
+// readinessVerdict encodes the readiness policy in one testable place.
+//
+// ready is the state of the gating dependency (Neo4j); degraded is true when
+// any optional dependency is unhealthy. An optional dependency must never
+// produce a 503, because a 503 removes every replica from the Service and
+// turns a subsystem outage into a total API outage (OPS-39).
+func readinessVerdict(ready, degraded bool) (status string, code int) {
+	switch {
+	case !ready:
+		return "not_ready", http.StatusServiceUnavailable
+	case degraded:
+		return "degraded", http.StatusOK
+	default:
+		return "ready", http.StatusOK
 	}
 }
 
@@ -160,6 +196,14 @@ func (h *HealthHandler) checkNeo4j(ctx context.Context) ServiceHealth {
 func (h *HealthHandler) checkStorage(ctx context.Context) ServiceHealth {
 	start := time.Now()
 
+	// Configured but never constructed - report it, don't hide it.
+	if h.storageService == nil {
+		return ServiceHealth{
+			Status: "unhealthy",
+			Error:  "storage service is enabled but was not initialized at startup",
+		}
+	}
+
 	err := h.storageService.HealthCheck(ctx)
 	responseTime := time.Since(start)
 
@@ -180,6 +224,14 @@ func (h *HealthHandler) checkStorage(ctx context.Context) ServiceHealth {
 
 func (h *HealthHandler) checkKafka(ctx context.Context) ServiceHealth {
 	start := time.Now()
+
+	// Configured but never constructed - report it, don't hide it.
+	if h.kafkaService == nil {
+		return ServiceHealth{
+			Status: "unhealthy",
+			Error:  "kafka service is enabled but was not initialized at startup",
+		}
+	}
 
 	err := h.kafkaService.HealthCheck(ctx)
 	responseTime := time.Since(start)
