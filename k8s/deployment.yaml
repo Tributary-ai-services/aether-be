@@ -40,7 +40,7 @@ spec:
       serviceAccountName: aether-backend
       containers:
       - name: aether-backend
-        image: registry-api.tas.scharber.com/aether-backend:ops39-health-20260923
+        image: ghcr.io/tributary-ai-services/aether-be:main-ecd031b
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
