@@ -87,7 +87,8 @@ jobs:
           -p 9000:9000 -p 9001:9001 \
           -e MINIO_ROOT_USER=minioadmin \
           -e MINIO_ROOT_PASSWORD=minioadmin123 \
-          quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
+          -e MINIO_DEFAULT_BUCKETS=aether-storage \
+          bitnamilegacy/minio:2025.7.23-debian-12-r5
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -128,18 +129,20 @@ jobs:
     
     - name: Setup MinIO buckets
       run: |
-        # The mc client runs from its container image: dl.min.io now returns
-        # 410 Gone for the binary download, the same withdrawal that removed
-        # minio/minio from Docker Hub. Alias and bucket creation share one
-        # `docker run` because `mc alias set` writes config inside the
-        # container, which would not survive a second invocation.
-        # --entrypoint sh is required: the image's entrypoint is mc itself, so
-        # without it the shell command is parsed as mc arguments.
-        docker run --rm --network host --entrypoint sh \
-          quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z -c "
-            mc alias set test-minio http://localhost:9000 minioadmin minioadmin123 &&
-            (mc mb test-minio/aether-storage || echo 'Bucket already exists')
-          "
+        # mc ships INSIDE the server image (/opt/bitnami/minio-client/bin/mc),
+        # so there is no second image to pull — which matters, because
+        # quay.io/minio/mc started returning 401 on 2026-09-24 alongside the
+        # server image.
+        #
+        # MINIO_DEFAULT_BUCKETS already created the bucket at startup. This is
+        # a verify-then-create rather than `mb || echo 'exists'`: that pattern
+        # reports success when the bucket is genuinely unreachable, which is
+        # the failure-swallowing shape recorded in AM-27.
+        MC=/opt/bitnami/minio-client/bin/mc
+        docker exec minio $MC alias set local http://localhost:9000 minioadmin minioadmin123
+        docker exec minio $MC ls local/aether-storage >/dev/null 2>&1 \
+          || docker exec minio $MC mb local/aether-storage
+        docker exec minio $MC ls local
     
     - name: Setup test data
       run: |
