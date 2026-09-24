@@ -117,10 +117,22 @@ type KeycloakConfig struct {
 	// (KEYCLOAK_ENABLED=false), the app boots without an auth server and the
 	// auth middleware does not enforce authentication — intended for local
 	// development and CI where no Keycloak is available.
-	Enabled       bool
-	URL           string
-	Realm         string
-	ClientID      string
+	Enabled  bool
+	URL      string
+	Realm    string
+	ClientID string
+	// ClientSecret is read but not used by any live code path. The only places
+	// it reaches are auth.NewKeycloakClient's oauth2.Config and, through it,
+	// KeycloakClient.ExchangeCode and TokenSource — neither of which is called
+	// anywhere. The live Keycloak paths are VerifyIDToken (RSA against the
+	// realm keys, no secret needed), IsAdmin, and RegisterUser (which
+	// authenticates as admin-cli with AdminUsername/AdminPassword).
+	//
+	// It used to be a required non-empty value, which is how the cluster came
+	// to carry a Secret key holding a credential Keycloak had already rotated
+	// away from: it was wrong for an unknown period and nothing failed, because
+	// nothing read it. Do not reintroduce that requirement without first wiring
+	// up a path that actually uses the secret.
 	ClientSecret  string
 	AdminUsername string
 	AdminPassword string
@@ -576,10 +588,6 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	if c.Neo4j.Password == "" {
 		return fmt.Errorf("NEO4J_PASSWORD is required")
-	}
-
-	if c.Keycloak.Enabled && c.Keycloak.ClientSecret == "" && c.Keycloak.URL != "" {
-		return fmt.Errorf("KEYCLOAK_CLIENT_SECRET is required when Keycloak is configured")
 	}
 
 	if c.Storage.Enabled && (c.Storage.AccessKeyID == "" || c.Storage.SecretAccessKey == "") {
