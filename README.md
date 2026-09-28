@@ -15,7 +15,7 @@ answers:
   - "Which settings change behaviour, and do the code defaults match what production runs?"
   - "Do the tests pass, and if some fail, is that my machine or the repository?"
   - "Where is the API contract and the deeper design documentation?"
-verified_against: "aether-be@ecd031b, 2026-09-24"
+verified_against: "aether-be@30a12f7, 2026-09-28"
 depth: standard
 ---
 
@@ -34,10 +34,17 @@ Services (TAS) services that do the heavy lifting around it.
 Aether lets a person collect documents into notebooks, ask questions of them,
 and produce things from them — summaries, reports, podcasts. This repository is
 the server that makes that possible. It holds the authoritative record of who
-owns what: users, spaces, teams, organizations, notebooks, documents,
+owns what: users, spaces (the tenancy boundary that isolates one user's or
+organization's data from everyone else's, either a `personal` space or an
+`organization` space), teams, organizations, notebooks, documents,
 conversations, comments, agents, workflows, and the artifacts ("productions")
 those workflows emit. All of it lives as nodes and relationships in Neo4j, and
 every read or write from the frontend goes through this service.
+
+So when this service is down, Aether is unusable. Every frontend read and
+write fails, not a subset. Three inbound callers break with it: AudiModal's
+processing-complete webhook, the workflow-complete webhook, and
+agent-builder's space-membership check (all described under How it fits).
 
 It is deliberately not the thing that does the expensive work. File bytes go to
 S3-compatible storage; document parsing, extraction, and chunking go to
@@ -52,26 +59,29 @@ repository.
 
 ## Status & scope
 
-**As of 2026-09-24, this is deployed and carrying traffic.** It is not an early
+**As of 2026-09-28, this is deployed and carrying traffic.** It is not an early
 prototype, which is what this section said until the 2026-08-26 refresh — that
-claim was eight months stale.
+claim was eight months stale. This file was last verified against commit
+`30a12f7` on 2026-09-28.
 
 ```
 $ kubectl get deploy aether-backend -n aether-be -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,IMAGE:.spec.template.spec.containers[0].image
 NAME             READY   IMAGE
-aether-backend   2       ghcr.io/tributary-ai-services/aether-be:main-ecd031b
+aether-backend   2       ghcr.io/tributary-ai-services/aether-be:main-30a12f7
 ```
 
 Two replicas in namespace `aether-be`, created 2025-12-16, reachable at
 `https://aether-api.tas.scharber.com`. The running image is the CI-built
-`ghcr.io` image of this exact commit. That is ahead of the manifest in the
-repository: `k8s/deployment.yaml:43` at `ecd031b` still pins the hand-built
-`registry-api.tas.scharber.com/aether-backend:ops39-health-20260923`, and the
-switch to the `ghcr.io` image lives on the unmerged OPS-42 branch (OPS-, SEC-
-numbers here are TAS backlog tickets). Until that
-merges, `kubectl apply -k k8s/` rolls production back to the older tag.
+`ghcr.io` image of commit `30a12f7`, pulled anonymously with no
+`imagePullSecret`. The manifest has caught up with the registry but not
+with the tag: OPS-42 merged with commit `b2153d2`, so `k8s/deployment.yaml:43`
+now names the `ghcr.io` image, but at `30a12f7` it still pins `main-ecd031b`.
+Moving the pin to `main-30a12f7` is open as PR #58 (OPS-, SEC-, AB- numbers
+here are TAS backlog tickets). Until that merges, `kubectl apply -k k8s/`
+rolls production back one commit, to a build without the space-membership
+change described under How it fits.
 
-It registers 247 handlers across 34 route groups under `/api/v1`
+It registers 248 handlers across 34 route groups under `/api/v1`
 (`internal/handlers/routes.go:333`). The deployment's probes now split liveness
 from readiness (`k8s/deployment.yaml:63`, `k8s/deployment.yaml:71`), and on the
 live service both report healthy. Every call to the deployed hostname in this
@@ -82,9 +92,9 @@ installed that CA locally, drop `-k`.
 
 ```bash
 curl -sS -k https://aether-api.tas.scharber.com/health/live
-{"status":"alive","timestamp":"2026-09-24T18:21:47.708913201Z"}
+{"status":"alive","timestamp":"2026-09-28T20:30:06.359103706Z"}
 curl -sS -k https://aether-api.tas.scharber.com/health/ready
-{"status":"ready","timestamp":"2026-09-24T18:21:47.850434982Z","services":{"kafka":{"status":"healthy","response_time_ms":807243},"neo4j":{"status":"healthy","response_time_ms":925202},"storage":{"status":"healthy","response_time_ms":664557}}}
+{"status":"ready","timestamp":"2026-09-28T20:30:06.466163338Z","services":{"kafka":{"status":"healthy","response_time_ms":1652919},"neo4j":{"status":"healthy","response_time_ms":1151498},"storage":{"status":"healthy","response_time_ms":886850}}}
 ```
 
 The split is the OPS-39 fix (commit `5a928ee`). Before it, both probes pointed
@@ -104,18 +114,19 @@ Deployment asks the scheduler to spread replicas across nodes with a soft
 `topologySpreadConstraints` (`k8s/deployment.yaml:33`). It is soft on purpose:
 with two nodes a hard constraint would leave a replica Pending whenever one node
 is down. The cost is that a rollout can co-locate both replicas, and on
-2026-09-24 both pods were on `um773dev` — so the service currently survives a
+2026-09-24 both pods were on `um773dev`. They were again after the
+2026-09-28 rollout of `main-30a12f7`, so the service currently survives a
 pod restart but not the loss of that node. Deleting one pod rebalances them.
 
-What is genuinely unfinished, verified against the code at `ecd031b`:
+What is genuinely unfinished, verified against the code at `30a12f7`:
 
 - **`APIServer.Shutdown()` does nothing.** It logs and returns nil
-  (`internal/handlers/routes.go:908`). The HTTP server itself does drain — `main`
+  (`internal/handlers/routes.go:913`). The HTTP server itself does drain — `main`
   gives outstanding requests 30 seconds (`cmd/server/main.go:278`) — but external
   connections are closed by process exit, not by the shutdown path.
 - **The `/api/v1/admin` group registers no routes.** The group and its
   `RequireRole("admin")` middleware exist; the handlers behind it were never
-  written (`internal/handlers/routes.go:882`).
+  written (`internal/handlers/routes.go:887`).
 - **Most service-layer unit tests are still excluded from the build.** Seven
   files under `internal/services/` carry `//go:build ignore`. The package now
   does run tests — the source resolution for DBHub (the SQL-console Model Context Protocol (MCP) server
@@ -137,14 +148,24 @@ What is genuinely unfinished, verified against the code at `ecd031b`:
   checkboxes ("Go project structure", "Neo4j database setup", "Redis
   integration") are still unticked against software that has been serving
   requests for eight months.
+- **The space-membership check has a server but no deployed caller yet.**
+  `GET /api/v1/spaces/:id/membership` is live in `main-30a12f7` (see How it
+  fits), but the agent-builder change that calls it is on the unmerged
+  `fix/ab-5-space-isolation` branch of `tas-agent-builder`, and the deployed
+  agent-builder on 2026-09-28 was `tas-agent-builder:events-d224fd4`, which
+  predates it. Until that ships, agent-builder still does not check that a
+  caller belongs to the space it is asked about.
 
 CI on `main` is green: the Tests, CI/CD Pipeline, Performance Testing, and
-Progressive Testing workflows all succeeded on the push of `ecd031b`
-(2026-09-24), as did the scheduled Security Scanning run that morning.
+Progressive Testing workflows all succeeded on the push of `30a12f7`
+(2026-09-28), as did the scheduled Security Scanning run that morning. CI
+no longer depended on the withdrawn MinIO registries after commit `b2153d2`
+moved its test MinIO to the frozen `bitnamilegacy/minio` image. Every job
+had been failing at the MinIO pull before that, before Go was even set up.
 
 ### Build and test
 
-`make build` is clean at `ecd031b`:
+`make build` is clean at `30a12f7`:
 
 ```bash
 make build
@@ -158,9 +179,9 @@ go build -o bin/aether-backend cmd/server/main.go
 make test-unit
 Running unit tests...
 PASS
-ok  	github.com/Tributary-ai-services/aether-be/internal/validation	(cached)
+ok  	github.com/Tributary-ai-services/aether-be/internal/validation	0.034s
 PASS
-ok  	github.com/Tributary-ai-services/aether-be/pkg/errors	0.009s
+ok  	github.com/Tributary-ai-services/aether-be/pkg/errors	0.006s
 ```
 
 `make test-unit` only covers those two packages (`Makefile:270`). The newer
@@ -169,11 +190,15 @@ nothing running:
 
 ```bash
 go test ./internal/config ./internal/handlers ./internal/services ./internal/streaming
-ok  	github.com/Tributary-ai-services/aether-be/internal/config	0.006s
-ok  	github.com/Tributary-ai-services/aether-be/internal/handlers	0.079s
-ok  	github.com/Tributary-ai-services/aether-be/internal/services	0.132s
-ok  	github.com/Tributary-ai-services/aether-be/internal/streaming	0.051s
+ok  	github.com/Tributary-ai-services/aether-be/internal/config	0.003s
+ok  	github.com/Tributary-ai-services/aether-be/internal/handlers	0.037s
+ok  	github.com/Tributary-ai-services/aether-be/internal/services	0.031s
+ok  	github.com/Tributary-ai-services/aether-be/internal/streaming	0.011s
 ```
+
+Commit `30a12f7` added no unit tests for the new membership handler or the
+space-header forwarding; the packages above pass, but that path is not
+exercised by them.
 
 **`make test` fails on a clean checkout, and that is expected rather than a
 regression.** It runs `go test -v ./...` (`Makefile:28`), which sweeps in
@@ -201,7 +226,18 @@ a DeepLake stub, Redis, MinIO, and Keycloak. Bringing up only this service on
 observed in the 2026-08-26 run); it does not make them pass. In the 2026-09-24
 `go test ./...` run every package outside `tests/integration` passed, including
 `tests/progressive` (unit tests for the canary / A/B rollout helpers described
-in `docs/PROGRESSIVE_TESTING.md`).
+in `docs/PROGRESSIVE_TESTING.md`). That full sweep was not re-run for the
+2026-09-28 refresh.
+
+On a machine with no cached MinIO image, `docker-compose.test.yml` will not
+come up at all. Its `minio-test` service still names `minio/minio:latest`
+(`docker-compose.test.yml:47`), the image CI abandoned in `b2153d2`, and on
+2026-09-28 an anonymous pull of it failed with
+`pull access denied for minio/minio, repository does not exist or may require 'docker login'`.
+That failure is the repository's, not your machine's. CI's replacement,
+`bitnamilegacy/minio`, is the likely substitute, but it starts differently:
+its entrypoint runs the server itself and creates buckets from
+`MINIO_DEFAULT_BUCKETS`, so the compose file needs more than an image swap.
 
 ## Quick start
 
@@ -222,7 +258,13 @@ NEO4J_URI=bolt://localhost:7687 NEO4J_PASSWORD=password NEO4J_DATABASE=neo4j \
 {"level":"info","msg":"Starting HTTP server","address":":8099"}
 ```
 
-Confirm it is serving (re-run on 2026-09-24 against `ecd031b`):
+Live Streams, named in the Kafka line, is the Aether page that shows platform
+activity events in real time. It is described under How it fits.
+
+Confirm it is serving. The output below is from the 2026-09-24 run against
+`ecd031b`. It was re-run on 2026-09-28 against `30a12f7` (on ports 17687 and
+8097 to avoid local collisions), and the boot lines and response shapes were
+identical:
 
 ```bash
 curl -sS http://localhost:8099/health
@@ -260,6 +302,11 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:8099/api/v1/users/me
 {"code":"UNAUTHORIZED","message":"User not authenticated"}
 HTTP 401
 ```
+
+The new `/api/v1/spaces/:id/membership` route behaves the same way locally,
+returning that 401 with `User not authenticated` (checked 2026-09-28 at
+`30a12f7`), because it needs the Keycloak subject to decide membership
+(`internal/handlers/space_membership.go:51`).
 
 Routes that carry no user context do work, which makes them the useful local
 smoke test. The frontend log-ingest endpoint is one:
@@ -317,6 +364,20 @@ by the backend. The realm's token endpoint is
 `https://keycloak.tas.scharber.com/realms/aether/protocol/openid-connect/token`,
 confirmed from its discovery document.
 
+The allow-list is built in code from `KEYCLOAK_URL` and `KEYCLOAK_REALM`
+alone. It always holds `<KEYCLOAK_URL>/realms/<realm>`
+(`internal/auth/keycloak.go:97`), and five hard-coded `KEYCLOAK_URL` values
+each add alternate issuers (`internal/auth/keycloak.go:104` through
+`internal/auth/keycloak.go:137`). Production's value,
+`http://keycloak-shared.tas-shared:8080`, is one of them, and it adds
+`http://` and `https://keycloak.tas.scharber.com/realms/aether`
+(`internal/auth/keycloak.go:125`). That is why a token minted through the
+public hostname is accepted by a backend that talks to Keycloak over the
+in-cluster address. Any other `KEYCLOAK_URL` accepts only its own issuer, so
+a token whose `iss` differs from that URL is rejected. `docker-compose.yml`
+sets a `KEYCLOAK_ALLOWED_ISSUERS` variable (`docker-compose.yml:23`), but no
+Go code reads it, so it has no effect.
+
 The example sends the `id_token`, not the `access_token`, because that is
 what the middleware is written to verify: it passes the bearer value to
 `VerifyIDToken` (`internal/middleware/auth.go:57`), which checks the signature
@@ -339,6 +400,18 @@ likely pass those checks too, but that was not tested; use `id_token`.
 > to this service — nothing reads it (see Configuration) — so only the user
 > credentials are relevant here. Obtain working credentials from the realm
 > owner before relying on this step.
+
+The repository offers two partial routes to a credential of your own, and
+neither was run for this file. `scripts/create-test-user.sh` creates a user
+with the `user` role in the `aether` realm through the Keycloak admin API
+(`scripts/create-test-user.sh:6`). It needs Keycloak *admin* credentials,
+supplied as `KEYCLOAK_ADMIN` / `KEYCLOAK_PASSWORD`, and it targets the
+production Keycloak unless you pass `--keycloak-url`. For a fully local
+setup, `docker-compose.test.yml` defines a `keycloak-test` container on
+`:8081` (`docker-compose.test.yml:104`). It starts in dev mode with no realm
+import, so it has no `aether` realm until you create one. Its default URL
+`http://localhost:8081` matches this service's default `KEYCLOAK_URL`, so the
+issuer lines up once the realm exists.
 
 ```bash
 # Substitute credentials that the aether realm actually accepts.
@@ -365,16 +438,32 @@ readiness. That asymmetry is the thing worth remembering at 2am.
 | Dependency | Where it runs | If it is down |
 |---|---|---|
 | Neo4j | `neo4j-0`, namespace `aether-be`, plain `bolt://` on 7687 | Process exits at startup (`cmd/server/main.go:62`); `/health/ready` returns 503 if it drops later |
-| Keycloak | `keycloak-shared`, namespace `tas-shared`, realm `aether` | Fatal at startup while `KEYCLOAK_ENABLED` is true (`cmd/server/main.go:76`) |
+| Keycloak | `keycloak-shared`, namespace `tas-shared`, realm `aether` | Fatal at startup while `KEYCLOAK_ENABLED` is true (`cmd/server/main.go:76`); see the note below the table |
 | MinIO (S3) | `minio-shared`, namespace `tas-shared` | Boots; file operations disabled (`cmd/server/main.go:86`); readiness reports `degraded`, still 200 |
 | Kafka | `kafka-shared`, namespace `tas-shared` | Boots in degraded mode and reconnects on its own (see below); readiness reports `degraded`, still 200 |
 | PostgreSQL / TimescaleDB | `timescaledb-shared`, namespace `tas-shared` | Boots; security events go to stdout and Kafka only |
 | TimescaleDB `tas_events` | `timescaledb-shared`, namespace `tas-shared`, via `TIMESCALE_DSN` | Boots; `/api/v1/streams/stats` returns 200 with `"source":"unavailable"` (`cmd/server/main.go:202`) |
-| Redis | `redis-shared`, namespace `tas-shared`, password required since 2026-09-18 | Boots; podcast progress tracking disabled (`internal/handlers/routes.go:191`) |
-| AudiModal | `audimodal`, same namespace | Boots; document processing calls fail per request |
-| DeepLake API | `deeplake-api`, same namespace | Boots; vector search calls fail per request |
+| Redis | `redis-shared`, namespace `tas-shared`, password required since 2026-09-18 | Boots; podcast progress tracking disabled entirely (`internal/handlers/routes.go:191`) |
+| AudiModal | `audimodal`, namespace `aether-be` | Boots; document processing calls fail per request |
+| DeepLake API | `deeplake-api`, namespace `aether-be` | Boots; vector search calls fail per request |
 | LLM Router | `llm-router`, namespace `tas-llm-router` | Boots; `/api/v1/router/*` returns `502 EXTERNAL_SERVICE_ERROR` |
+| Agent Builder | `agent-builder`, namespace `tas-agent-builder` | Boots, even with `AGENT_BUILDER_URL` unset (`internal/handlers/routes.go:92`); `/api/v1/agents/*` calls fail per request |
 | Argo Workflows | namespace `argo` | Boots; workflow execution submission fails |
+
+An unreachable Keycloak with `KEYCLOAK_ENABLED=true` stops the process before
+it binds a port. The client fetches the realm's OIDC discovery document at
+startup, and that fetch failing returns
+`failed to create OIDC provider: <cause>` (`internal/auth/keycloak.go:78`),
+which `main` logs at fatal level as `Failed to initialize Keycloak client`
+with that error attached, then exits (`cmd/server/main.go:76`). Those strings
+are quoted from the code. This failure was not reproduced for this file, so
+the exact `<cause>` text an operator would see has not been captured.
+
+Podcast progress needs both Redis and Kafka, for different halves. Without
+Redis the progress service is never created, so progress tracking is off
+(`internal/handlers/routes.go:191`). With Redis but no Kafka the service
+exists but never subscribes to the `podcast.progress` topic, so it receives
+no progress events (`internal/handlers/routes.go:195`).
 
 Kafka's row changed with OPS-39. The service used to test the broker once at
 boot and, if that failed, leave Kafka disabled for the life of the process — a
@@ -411,17 +500,64 @@ graph LR
   BE --> AM[audimodal]
   BE --> DL[deeplake-api]
   BE --> LR[llm-router]
+  BE -->|X-Space-ID / X-Space-Type| AB[agent-builder]
   BE --> ARGO[Argo Workflows]
   BE --> MIN[(MinIO)]
   BE --> KFK[(Kafka)]
   AM -->|webhook| BE
   ARGO -->|webhook| BE
+  AB -.->|GET /spaces/:id/membership| BE
 ```
 
 Two callbacks come back in: AudiModal posts to
 `/webhooks/audimodal/processing-complete` when a document finishes processing,
 and workflow completion posts to `/webhooks/workflow-complete`. Both are
 registered without authentication (`internal/handlers/routes.go:340`).
+
+A third inbound call, dashed in the diagram, was added in commit `30a12f7`
+(AB-5). agent-builder stores agents keyed by `space_id` but holds no
+membership data, so it could never check that a caller belonged to the space
+it was asked about. This service is the only place that knows, so it now
+answers the question for other services at
+`GET /api/v1/spaces/:id/membership` (`internal/handlers/routes.go:614`). The
+caller passes the end user's own bearer token, and membership is decided by
+the same `SpaceContextService` the space middleware uses, so there is one
+definition of "in this space" rather than a copy that can drift. A member
+gets 200 with `member`, `space_type`, `space_id`, `tenant_id`, `user_role`,
+and `permissions`. Anyone else gets 403 with `"member":false`, whatever the
+reason: no such space, not a member, or someone else's personal space
+(`internal/handlers/space_membership.go:100`). One answer for every denial
+stops the endpoint being used to enumerate spaces. The response is
+deliberately narrower than the resolved context, which also carries the
+space's AudiModal API key, and that key must not leave this service
+(`internal/handlers/space_membership.go:13`). `space_type` may be passed as
+a query parameter. Without it, personal is tried before organization.
+
+In the other direction, every outbound agent-builder request now forwards the
+caller's verified space as `X-Space-ID` and `X-Space-Type`
+(`internal/services/agent.go:956`). The space middleware attaches the
+resolved context to the request context so the service layer can find it
+(`internal/middleware/space_context.go:104`), and `CreateAgent` attaches it
+itself because onboarding reaches it without the middleware
+(`internal/services/agent.go:78`). The header says which space to check, not
+that the check passed: agent-builder is meant to re-verify it against the
+endpoint above. Requests with no resolved space, such as the internal
+system-agent routes, send no header.
+
+The same commit closed a gap in this service. `GET /api/v1/agents` used to
+check membership of the space in the `X-Space-ID` header but filter on the
+`space_id` query parameter, so the two could name different spaces and only
+the unchecked one reached the query. It now filters on the space the caller
+was verified into and ignores `space_id` in the query string
+(`internal/handlers/agent.go:342`). A client that relied on `space_id` to
+list another space's agents gets its own space's agents instead.
+
+> [!UNVERIFIED] The membership endpoint's 200 and 403 responses were not
+> exercised live. The deployed route was confirmed to exist and to reject an
+> unauthenticated call with `401 Authorization token is required` on
+> 2026-09-28, but no working `aether` realm credentials were available (see
+> Calling the deployed API), and `30a12f7` ships no test for the handler. The
+> response shapes above are read from the code.
 
 ## Configuration
 
@@ -434,9 +570,10 @@ defaults that differ from what production runs, and the gap has bitten people.
 | `NEO4J_URI` | `bolt://localhost:7687` | `bolt://neo4j.aether-be.svc.cluster.local:7687` | Graph endpoint. Plain Bolt — TLS is off on this cluster. |
 | `NEO4J_DATABASE` | `aether` | `neo4j` | **Differs.** The default names a database a stock Neo4j does not have. |
 | `KEYCLOAK_ENABLED` | `true` | unset (so `true`) | `false` skips token verification entirely and leaves user-scoped routes returning 401. |
+| `KEYCLOAK_URL` | `http://localhost:8081` (`internal/config/config.go:356`) | `http://keycloak-shared.tas-shared:8080` | Where the OIDC provider is discovered, and the only input to the issuer allow-list besides the realm. See below the table. |
 | `KEYCLOAK_REALM` | `aether` | `aether` | Realm whose issuer must appear in the allow-list. |
 | `STORAGE_ENABLED` | `false` | `true` | **Differs.** Off by default, so local runs have no file storage unless you opt in. |
-| `KAFKA_ENABLED` | `false` | `true` | **Differs.** Off by default; event publishing, podcast progress, and the Live Streams hub need it. In production it is set on the Deployment's `env`, not in the ConfigMap. |
+| `KAFKA_ENABLED` | `false` | `true` | **Differs.** Off by default; event publishing, podcast progress events (which also need Redis, see How it fits), and the Live Streams hub need it. In production it is set on the Deployment's `env`, not in the ConfigMap. |
 | `POSTGRES_ENABLED` | `false` | `true` (claimed) — see the [!UNVERIFIED] note below: live boot logs show it off | **Differs, if the claim holds.** Off by default; security-event persistence needs it. |
 | `ROUTER_ENABLED` | `true` | `true` | Mounts the `/api/v1/router/*` proxy. When true, `ROUTER_SERVICE_BASE_URL`, `ROUTER_SERVICE_TIMEOUT`, and `ROUTER_SERVICE_CONNECT_TIMEOUT` must be non-empty (`internal/config/config.go:601`) — see below the table. |
 | `ARGO_WORKFLOWS_ENABLED` | `true` unless literally `"false"` | `true` | Whether workflow execution submits Argo `Workflow` objects. |
@@ -458,7 +595,7 @@ defaults that differ from what production runs, and the gap has bitten people.
 > that includes a database password, rather than through `secretKeyRef` like
 > every other credential here. The value is not reproduced in this file.
 > Neither it nor `KAFKA_ENABLED` / `KAFKA_BROKERS` appears anywhere under `k8s/`
-> or `deployments/` at `ecd031b`, so they were added to the live object out of
+> or `deployments/` at `30a12f7`, so they were added to the live object out of
 > band and the repository cannot recreate them: a Deployment rebuilt from
 > `k8s/` would boot with Kafka off and `/streams/stats` unavailable. Whether
 > they should move into the manifest (and the data source name (DSN) into
@@ -522,8 +659,9 @@ been failing outright against the live workload.
 - [`API_DOCUMENTATION.md`](API_DOCUMENTATION.md) — endpoint-by-endpoint request
   and response shapes, including the LLM Router proxy tiers. It is hand-written
   and partial: on 2026-09-24 it documented 80 distinct method-and-path pairs
-  against 247 route registrations in `internal/handlers/routes.go`, and it has
-  no entry for newer routes such as `/api/v1/streams/stats`. Read it for
+  against what were then 247 route registrations (248 at `30a12f7`) in
+  `internal/handlers/routes.go`, and it has no entry for newer routes such as
+  `/api/v1/streams/stats` or `/api/v1/spaces/:id/membership`. Read it for
   shapes, not as a complete route list.
 - **There is no machine-readable API contract.** No `api/openapi.yaml` or
   other OpenAPI/Swagger file exists in the repository, `swaggo` is not in
