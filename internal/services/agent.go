@@ -71,6 +71,12 @@ func (s *AgentService) CreateAgent(ctx context.Context, req models.AgentCreateRe
 		return nil, errors.Forbidden("Insufficient permissions to create agent")
 	}
 
+	// Carry the space on the context so the outbound agent-builder call
+	// forwards it. Callers reach here from routes with space middleware and
+	// from onboarding, which resolves a space itself and has no middleware in
+	// front of it; setting it here covers both.
+	ctx = models.WithSpaceContext(ctx, spaceCtx)
+
 	// Step 1: Create agent in agent-builder
 	agentBuilderResp, err := s.createAgentInBuilder(ctx, req, authToken)
 	if err != nil {
@@ -372,6 +378,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, httpReq)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -934,6 +941,27 @@ func (s *AgentService) deleteAgentInBuilder(ctx context.Context, agentBuilderID 
 	return err
 }
 
+// setSpaceHeaders forwards the caller's verified space context to
+// agent-builder.
+//
+// agent-builder scopes its queries by space_id but holds no membership data,
+// so it needs to be told which space this request is acting in. It does not
+// trust the header: it re-verifies membership against this service using the
+// same bearer token before honouring it (AB-5). Sending the header is
+// therefore a routing hint, not a grant.
+//
+// A request with no resolved space context (internal system-agent routes,
+// background sync) sends nothing and agent-builder falls back to the paths
+// that require no space.
+func setSpaceHeaders(ctx context.Context, req *http.Request) {
+	sc, ok := models.SpaceContextFromContext(ctx)
+	if !ok {
+		return
+	}
+	req.Header.Set("X-Space-ID", sc.SpaceID)
+	req.Header.Set("X-Space-Type", string(sc.SpaceType))
+}
+
 func (s *AgentService) makeAgentBuilderRequest(ctx context.Context, method, path string, body interface{}, authToken string) (map[string]interface{}, error) {
 	url := s.agentBuilderURL + path
 
@@ -962,6 +990,7 @@ func (s *AgentService) makeAgentBuilderRequest(ctx context.Context, method, path
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -1009,6 +1038,7 @@ func (s *AgentService) ProxySkillsList(ctx context.Context, queryString string, 
 	req.Header.Set("Content-Type", "application/json")
 	if authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+authToken)
+		setSpaceHeaders(ctx, req)
 	}
 
 	resp, err := s.httpClient.Do(req)
@@ -1596,6 +1626,7 @@ func (s *AgentService) getAgentRawFromBuilder(ctx context.Context, agentID strin
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, httpReq)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -1633,6 +1664,7 @@ func (s *AgentService) getAgentFromBuilder(ctx context.Context, agentID string, 
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, httpReq)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -1714,6 +1746,7 @@ func (s *AgentService) GetInternalAgents(ctx context.Context, authToken string) 
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, httpReq)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -1796,6 +1829,7 @@ func (s *AgentService) GetInternalAgentByID(ctx context.Context, agentID string,
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, httpReq)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -1910,6 +1944,7 @@ func (s *AgentService) ExecuteInternalAgent(ctx context.Context, agentID string,
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	setSpaceHeaders(ctx, httpReq)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	// Use longer timeout for execution requests

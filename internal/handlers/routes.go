@@ -608,6 +608,11 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		spaces.PUT("/:id", s.SpaceHandler.UpdateSpace)
 		spaces.DELETE("/:id", s.SpaceHandler.DeleteSpace)
 
+		// Membership check for service-to-service isolation enforcement.
+		// agent-builder calls this with the end user's own token before it
+		// scopes a query to a space (AB-5).
+		spaces.GET("/:id/membership", s.SpaceHandler.VerifySpaceMembership)
+
 		// Space member management routes
 		spaces.GET("/:id/members", s.SpaceHandler.ListSpaceMembers)
 		spaces.POST("/:id/members", s.SpaceHandler.AddSpaceMember)

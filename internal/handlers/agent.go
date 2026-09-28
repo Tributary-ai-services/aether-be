@@ -334,10 +334,12 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 		return
 	}
 
-	// Parse query parameters
+	// Parse query parameters. space_id is NOT taken from the query string:
+	// it is the space the caller was verified into, so a request cannot ask
+	// for one space in the header and be answered about another (AB-5).
 	req := models.AgentSearchRequest{
 		Query:     c.Query("query"),
-		SpaceID:   c.Query("space_id"),
+		SpaceID:   resolvedSpaceID(c),
 		TeamID:    c.Query("team_id"),
 		SpaceType: models.SpaceType(c.Query("space_type")),
 		Limit:     20, // Default limit
@@ -659,6 +661,25 @@ func (h *AgentHandler) ExecuteAgent(c *gin.Context) {
 }
 
 // Helper methods
+
+// resolvedSpaceID returns the space the caller was verified into by
+// SpaceContextMiddleware, or "" when the route carries no space context.
+//
+// Agent routes must scope to this value rather than to a client-supplied
+// space_id: the middleware checks membership of the space in the header, but
+// until AB-5 the queries filtered on the query-string parameter, so the two
+// could name different spaces and only the unchecked one reached the query.
+func resolvedSpaceID(c *gin.Context) string {
+	raw, exists := c.Get(middleware.SpaceContextKey)
+	if !exists {
+		return ""
+	}
+	sc, ok := raw.(*models.SpaceContext)
+	if !ok || sc == nil {
+		return ""
+	}
+	return sc.SpaceID
+}
 
 // extractAuthToken extracts the Bearer token from the Authorization header
 func extractAuthToken(c *gin.Context) string {
