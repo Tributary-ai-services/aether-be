@@ -98,6 +98,11 @@ func SpaceContextMiddleware(spaceService *services.SpaceContextService, log *log
 		// Store space context in gin context
 		c.Set(SpaceContextKey, spaceContext)
 
+		// Also carry it on the request context so downstream service calls
+		// can forward the verified space to other services (agent-builder
+		// re-verifies it, but it has to be told which space to check).
+		c.Request = c.Request.WithContext(models.WithSpaceContext(c.Request.Context(), spaceContext))
+
 		logger.Debug("Space context resolved",
 			zap.String("user_id", userID.(string)),
 			zap.String("space_type", string(spaceContext.SpaceType)),

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"time"
 )
 
@@ -136,4 +137,29 @@ type SpaceResponse struct {
 	Visibility  string    `json:"visibility"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// spaceContextKeyType is the private key type for carrying a resolved
+// SpaceContext on a context.Context. A distinct type keeps it from
+// colliding with any other package's context keys.
+type spaceContextKeyType struct{}
+
+// WithSpaceContext returns a context carrying the resolved space context.
+// The space context middleware attaches it to the request context so that
+// outbound service calls (notably agent-builder) can forward the space the
+// caller was verified into, without every service signature having to grow
+// a parameter.
+func WithSpaceContext(ctx context.Context, sc *SpaceContext) context.Context {
+	if sc == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, spaceContextKeyType{}, sc)
+}
+
+// SpaceContextFromContext returns the resolved space context, if one was
+// attached. Callers must handle the absent case: several endpoints (health,
+// internal system-agent routes) legitimately run without a space.
+func SpaceContextFromContext(ctx context.Context) (*SpaceContext, bool) {
+	sc, ok := ctx.Value(spaceContextKeyType{}).(*SpaceContext)
+	return sc, ok && sc != nil
 }
