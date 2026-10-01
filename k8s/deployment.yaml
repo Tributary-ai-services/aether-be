@@ -40,7 +40,7 @@ spec:
       serviceAccountName: aether-backend
       containers:
       - name: aether-backend
-        image: ghcr.io/tributary-ai-services/aether-be:main-ecd031b
+        image: ghcr.io/tributary-ai-services/aether-be:main-30a12f7
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
