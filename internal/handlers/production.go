@@ -988,7 +988,7 @@ func (h *ProductionHandler) NotebookChat(c *gin.Context) {
 	var conversationHistory []models.ConversationMessage
 	if conversationID != "" && h.conversationService != nil {
 		// Load history from persisted messages
-		persistedMessages, msgErr := h.conversationService.GetAllMessages(c.Request.Context(), conversationID)
+		persistedMessages, msgErr := h.conversationService.GetAllMessages(c.Request.Context(), conversationID, spaceContext.TenantID)
 		if msgErr != nil {
 			h.logger.Warn("Failed to load persisted messages, falling back to client history", zap.Error(msgErr))
 		} else if len(persistedMessages) > 0 {
@@ -1031,11 +1031,11 @@ func (h *ProductionHandler) NotebookChat(c *gin.Context) {
 	// Persist messages
 	if conversationID != "" && h.conversationService != nil {
 		// Persist user message
-		_, _ = h.conversationService.AddMessage(c.Request.Context(), conversationID, "user", req.Message, false, nil)
+		_, _ = h.conversationService.AddMessage(c.Request.Context(), conversationID, spaceContext.TenantID, "user", req.Message, false, nil)
 		// Persist assistant response
-		_, _ = h.conversationService.AddMessage(c.Request.Context(), conversationID, "assistant", response.Content, false, nil)
+		_, _ = h.conversationService.AddMessage(c.Request.Context(), conversationID, spaceContext.TenantID, "assistant", response.Content, false, nil)
 		// Auto-name conversation from first message
-		_ = h.conversationService.UpdateConversationNameFromMessage(c.Request.Context(), conversationID, req.Message)
+		_ = h.conversationService.UpdateConversationNameFromMessage(c.Request.Context(), conversationID, spaceContext.TenantID, req.Message)
 	}
 
 	h.logger.Info("Notebook chat completed",

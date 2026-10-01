@@ -152,13 +152,14 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 
 	// Link to space
 	linkQuery := `
-		MATCH (d:Database {id: $db_id})
+		MATCH (d:Database {id: $db_id, tenant_id: $tenant_id})
 		MATCH (sp:Space {id: $space_id})
 		CREATE (d)-[:BELONGS_TO {created_at: datetime()}]->(sp)
 	`
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, linkQuery, map[string]any{
-		"db_id":    db.ID,
-		"space_id": spaceID,
+		"db_id":     db.ID,
+		"space_id":  spaceID,
+		"tenant_id": tenantID,
 	})
 	if err != nil {
 		s.logger.Warn("Failed to link database to space (space may not exist)",
@@ -170,13 +171,14 @@ func (s *DatabaseService) CreateDatabase(ctx context.Context, userID, tenantID, 
 
 	// Link to owner
 	ownerQuery := `
-		MATCH (d:Database {id: $db_id})
+		MATCH (d:Database {id: $db_id, tenant_id: $tenant_id})
 		MATCH (u:User {id: $user_id})
 		CREATE (u)-[:OWNS {created_at: datetime()}]->(d)
 	`
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, ownerQuery, map[string]any{
-		"db_id":   db.ID,
-		"user_id": userID,
+		"db_id":     db.ID,
+		"user_id":   userID,
+		"tenant_id": tenantID,
 	})
 	if err != nil {
 		s.logger.Warn("Failed to link database to owner",

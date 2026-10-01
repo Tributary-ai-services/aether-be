@@ -129,7 +129,13 @@ func (h *ConversationHandler) GetConversation(c *gin.Context) {
 		return
 	}
 
-	conversation, err := h.conversationService.GetConversation(c.Request.Context(), conversationID, userID)
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	conversation, err := h.conversationService.GetConversation(c.Request.Context(), conversationID, userID, spaceContext.TenantID)
 	if err != nil {
 		h.logger.Error("Failed to get conversation", zap.Error(err))
 		handleServiceError(c, err)
@@ -160,7 +166,13 @@ func (h *ConversationHandler) UpdateConversation(c *gin.Context) {
 		return
 	}
 
-	conversation, err := h.conversationService.UpdateConversation(c.Request.Context(), conversationID, req, userID)
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	conversation, err := h.conversationService.UpdateConversation(c.Request.Context(), conversationID, req, userID, spaceContext.TenantID)
 	if err != nil {
 		h.logger.Error("Failed to update conversation", zap.Error(err))
 		handleServiceError(c, err)
@@ -228,7 +240,13 @@ func (h *ConversationHandler) GetMessages(c *gin.Context) {
 		}
 	}
 
-	messages, err := h.conversationService.GetMessages(c.Request.Context(), conversationID, limit, offset)
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	messages, err := h.conversationService.GetMessages(c.Request.Context(), conversationID, spaceContext.TenantID, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to get messages", zap.Error(err))
 		handleServiceError(c, err)

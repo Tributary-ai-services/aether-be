@@ -140,7 +140,13 @@ func (h *CommentHandler) UpdateComment(c *gin.Context) {
 		return
 	}
 
-	comment, err := h.commentService.UpdateComment(c.Request.Context(), notebookID, commentID, req, userID)
+	spaceContext, err := middleware.GetSpaceContext(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errors.BadRequest("Space context is required"))
+		return
+	}
+
+	comment, err := h.commentService.UpdateComment(c.Request.Context(), notebookID, commentID, req, userID, spaceContext.TenantID)
 	if err != nil {
 		h.logger.Error("Failed to update comment", zap.Error(err))
 		handleServiceError(c, err)

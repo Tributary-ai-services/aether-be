@@ -292,6 +292,9 @@ func (s *ChunkService) SearchChunks(ctx context.Context, req models.ChunkSearchR
 		whereClause += " AND " + fmt.Sprintf("(%s)", whereConditions[i])
 	}
 
+	// tenant-exempt: the filter is injected, not literal. whereConditions is
+	// seeded unconditionally with "c.tenant_id = $tenant_id" above, so every
+	// generated query carries it; the static check cannot see through Sprintf.
 	query := fmt.Sprintf(`
 		MATCH (c:Chunk)
 		%s

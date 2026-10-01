@@ -109,10 +109,11 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 					dependencies: $dependencies,
 					template_name: $template_name,
 					template_type: $template_type,
-					when_condition: $when_condition
+					when_condition: $when_condition,
+					tenant_id: $tenant_id
 				})
 				WITH s
-				MATCH (w:Workflow {id: $workflow_id})
+				MATCH (w:Workflow {id: $workflow_id, tenant_id: $tenant_id})
 				CREATE (w)-[:HAS_STEP]->(s)
 				RETURN s
 			`
@@ -140,6 +141,7 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 				"template_name":  step.TemplateName,
 				"template_type":  step.TemplateType,
 				"when_condition": step.When,
+				"tenant_id":      spaceContext.TenantID,
 			}
 
 			_, err := tx.Run(ctx, stepQuery, stepParams)
@@ -162,10 +164,11 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 					configuration: $configuration,
 					is_active: $is_active,
 					trigger_count: $trigger_count,
-					created_at: $created_at
+					created_at: $created_at,
+					tenant_id: $tenant_id
 				})
 				WITH t
-				MATCH (w:Workflow {id: $workflow_id})
+				MATCH (w:Workflow {id: $workflow_id, tenant_id: $tenant_id})
 				CREATE (w)-[:HAS_TRIGGER]->(t)
 				RETURN t
 			`
@@ -179,6 +182,7 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req models.CreateW
 				"is_active":     trigger.IsActive,
 				"trigger_count": trigger.TriggerCount,
 				"created_at":    trigger.CreatedAt,
+				"tenant_id":     spaceContext.TenantID,
 			}
 
 			_, err := tx.Run(ctx, triggerQuery, triggerParams)
@@ -393,14 +397,14 @@ func (s *WorkflowService) UpdateWorkflow(ctx context.Context, workflowID string,
 func (s *WorkflowService) createVersionSnapshot(ctx context.Context, workflowID string, spaceContext *models.SpaceContext) error {
 	// Get the current version count
 	countQuery := `
-		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id})
+		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id, tenant_id: $tenant_id})
 		RETURN count(wv) AS cnt
 	`
 	session := s.neo4j.Session(ctx)
 	defer session.Close(ctx)
 
 	countResult, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		result, err := tx.Run(ctx, countQuery, map[string]interface{}{"workflow_id": workflowID})
+		result, err := tx.Run(ctx, countQuery, map[string]interface{}{"workflow_id": workflowID, "tenant_id": spaceContext.TenantID})
 		if err != nil {
 			return nil, err
 		}
@@ -443,10 +447,11 @@ func (s *WorkflowService) createVersionSnapshot(ctx context.Context, workflowID 
 			description: $description,
 			snapshot: $snapshot,
 			created_at: $created_at,
-			created_by: $created_by
+			created_by: $created_by,
+			tenant_id: $tenant_id
 		})
 		WITH wv
-		MATCH (w:Workflow {id: $workflow_id})
+		MATCH (w:Workflow {id: $workflow_id, tenant_id: $tenant_id})
 		SET w.version = $label
 		RETURN wv
 	`
@@ -461,6 +466,7 @@ func (s *WorkflowService) createVersionSnapshot(ctx context.Context, workflowID 
 			"snapshot":    string(snapshotJSON),
 			"created_at":  time.Now(),
 			"created_by":  spaceContext.UserID,
+			"tenant_id":   spaceContext.TenantID,
 		})
 	})
 	if err != nil {
@@ -474,7 +480,7 @@ func (s *WorkflowService) createVersionSnapshot(ctx context.Context, workflowID 
 // ListWorkflowVersions returns all versions of a workflow
 func (s *WorkflowService) ListWorkflowVersions(ctx context.Context, workflowID string, spaceContext *models.SpaceContext) ([]models.WorkflowVersion, error) {
 	query := `
-		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id})
+		MATCH (wv:WorkflowVersion {workflow_id: $workflow_id, tenant_id: $tenant_id})
 		RETURN wv
 		ORDER BY wv.version DESC
 	`
@@ -483,7 +489,7 @@ func (s *WorkflowService) ListWorkflowVersions(ctx context.Context, workflowID s
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		result, err := tx.Run(ctx, query, map[string]interface{}{"workflow_id": workflowID})
+		result, err := tx.Run(ctx, query, map[string]interface{}{"workflow_id": workflowID, "tenant_id": spaceContext.TenantID})
 		if err != nil {
 			return nil, err
 		}
@@ -697,7 +703,7 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, workflowID string
 			organization_id: $organization_id
 		})
 		WITH e
-		MATCH (w:Workflow {id: $workflow_id})
+		MATCH (w:Workflow {id: $workflow_id, tenant_id: $tenant_id})
 		CREATE (w)-[:HAS_EXECUTION]->(e)
 		SET w.execution_count = w.execution_count + 1,
 		    w.last_executed = $started_at
@@ -1613,6 +1619,10 @@ func (s *WorkflowService) UpdateExecutionStatus(ctx context.Context, workflowID,
 		internalStatus = strings.ToLower(status)
 	}
 
+	// tenant-exempt: Argo status callback. Reached from the webhook handler via
+	// the executionUpdater interface (notification.go), which carries no user or
+	// space context — there is no tenant to filter by. The workflow_id comes from
+	// the Argo workflow TAS itself submitted, not from a client request.
 	query := `
 		MATCH (e:WorkflowExecution {workflow_id: $workflow_id})
 		WHERE e.id = $execution_id OR e.id CONTAINS $execution_id
@@ -1630,6 +1640,7 @@ func (s *WorkflowService) UpdateExecutionStatus(ctx context.Context, workflowID,
 	if executionID == "" || strings.Contains(executionID, "-") {
 		// executionID from Argo is the Argo workflow name (e.g., "my-workflow-abc123"),
 		// not the internal execution ID. Try to match the most recent submitted execution.
+		// tenant-exempt: same Argo callback path as above.
 		query = `
 			MATCH (w:Workflow {id: $workflow_id})-[:HAS_EXECUTION]->(e:WorkflowExecution)
 			WHERE e.status = 'submitted'
@@ -1693,6 +1704,8 @@ func (s *WorkflowService) UpdateExecutionStatus(ctx context.Context, workflowID,
 	}
 
 	// Update workflow aggregate stats
+	// tenant-exempt: same Argo callback path; recomputes aggregate counters for
+	// the workflow the callback names.
 	statsQuery := `
 		MATCH (w:Workflow {id: $workflow_id})-[:HAS_EXECUTION]->(e:WorkflowExecution)
 		WHERE e.status IN ['completed', 'failed']
@@ -1732,7 +1745,7 @@ func (s *WorkflowService) PublishProductionArtifact(ctx context.Context, workflo
 			created_at: $created_at
 		})
 		WITH a
-		MATCH (w:Workflow {id: $workflow_id})
+		MATCH (w:Workflow {id: $workflow_id, tenant_id: $tenant_id})
 		CREATE (w)-[:HAS_ARTIFACT]->(a)
 		RETURN a
 	`

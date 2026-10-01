@@ -51,7 +51,7 @@ func (s *CommentService) CreateComment(ctx context.Context, notebookID string, r
 	var query string
 	if resourceType == "conversation" {
 		query = `
-			MATCH (target:ChatConversation {id: $resource_id}), (u:User {id: $user_id})
+			MATCH (target:ChatConversation {id: $resource_id, tenant_id: $tenant_id}), (u:User {id: $user_id})
 			CREATE (c:Comment {
 				id: $id,
 				content: $content,
@@ -74,7 +74,7 @@ func (s *CommentService) CreateComment(ctx context.Context, notebookID string, r
 		`
 	} else {
 		query = `
-			MATCH (target:Notebook {id: $resource_id}), (u:User {id: $user_id})
+			MATCH (target:Notebook {id: $resource_id, tenant_id: $tenant_id}), (u:User {id: $user_id})
 			CREATE (c:Comment {
 				id: $id,
 				content: $content,
@@ -125,12 +125,14 @@ func (s *CommentService) CreateComment(ctx context.Context, notebookID string, r
 	// If reply, create REPLY_TO relationship
 	if req.ParentID != "" {
 		replyQuery := `
-			MATCH (child:Comment {id: $child_id}), (parent:Comment {id: $parent_id})
+			MATCH (child:Comment {id: $child_id, tenant_id: $tenant_id}),
+			      (parent:Comment {id: $parent_id, tenant_id: $tenant_id})
 			CREATE (child)-[:REPLY_TO]->(parent)
 		`
 		_, _ = s.neo4j.ExecuteQueryWithLogging(ctx, replyQuery, map[string]interface{}{
 			"child_id":  commentID,
 			"parent_id": req.ParentID,
+			"tenant_id": tenantID,
 		})
 	}
 
@@ -154,7 +156,7 @@ func (s *CommentService) GetComments(ctx context.Context, notebookID, tenantID, 
 
 	// Get top-level comments with author info
 	query := `
-		MATCH (c:Comment {resource_id: $resource_id, resource_type: $resource_type})
+		MATCH (c:Comment {resource_id: $resource_id, resource_type: $resource_type, tenant_id: $tenant_id})
 		WHERE c.parent_id IS NULL OR c.parent_id = ''
 		MATCH (c)-[:AUTHORED_BY]->(author:User)
 		OPTIONAL MATCH (reply:Comment)-[:REPLY_TO]->(c)
@@ -178,6 +180,7 @@ func (s *CommentService) GetComments(ctx context.Context, notebookID, tenantID, 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"resource_id":   resourceID,
 		"resource_type": resourceType,
+		"tenant_id":     tenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to get comments", err)
@@ -250,14 +253,14 @@ func (s *CommentService) GetComments(ctx context.Context, notebookID, tenantID, 
 }
 
 // UpdateComment updates a comment (only by author)
-func (s *CommentService) UpdateComment(ctx context.Context, notebookID, commentID string, req models.UpdateCommentRequest, userID string) (*models.CommentResponse, error) {
+func (s *CommentService) UpdateComment(ctx context.Context, notebookID, commentID string, req models.UpdateCommentRequest, userID, tenantID string) (*models.CommentResponse, error) {
 	mentions := req.Mentions
 	if mentions == nil {
 		mentions = []string{}
 	}
 
 	query := `
-		MATCH (c:Comment {id: $comment_id, resource_id: $notebook_id, author_id: $user_id})
+		MATCH (c:Comment {id: $comment_id, resource_id: $notebook_id, author_id: $user_id, tenant_id: $tenant_id})
 		MATCH (c)-[:AUTHORED_BY]->(author:User)
 		SET c.content = $content, c.mentions = $mentions, c.edited = true,
 		    c.edited_at = datetime(), c.updated_at = datetime()
@@ -270,6 +273,7 @@ func (s *CommentService) UpdateComment(ctx context.Context, notebookID, commentI
 		"comment_id":  commentID,
 		"notebook_id": notebookID,
 		"user_id":     userID,
+		"tenant_id":   tenantID,
 		"content":     req.Content,
 		"mentions":    mentions,
 	})
@@ -289,13 +293,19 @@ func (s *CommentService) UpdateComment(ctx context.Context, notebookID, commentI
 // DeleteComment deletes a comment (by author or notebook owner)
 func (s *CommentService) DeleteComment(ctx context.Context, notebookID, commentID, userID string, spaceCtx *models.SpaceContext) error {
 	// Check if user is the comment author
+	tenantID := ""
+	if spaceCtx != nil {
+		tenantID = spaceCtx.TenantID
+	}
+
 	checkQuery := `
-		MATCH (c:Comment {id: $comment_id, resource_id: $notebook_id})
+		MATCH (c:Comment {id: $comment_id, resource_id: $notebook_id, tenant_id: $tenant_id})
 		RETURN c.author_id
 	`
 	checkResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, checkQuery, map[string]interface{}{
 		"comment_id":  commentID,
 		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to check comment", err)
@@ -319,7 +329,7 @@ func (s *CommentService) DeleteComment(ctx context.Context, notebookID, commentI
 
 	// Delete comment and its relationships
 	query := `
-		MATCH (c:Comment {id: $comment_id, resource_id: $notebook_id})
+		MATCH (c:Comment {id: $comment_id, resource_id: $notebook_id, tenant_id: $tenant_id})
 		OPTIONAL MATCH (reply:Comment)-[:REPLY_TO]->(c)
 		DETACH DELETE reply, c
 		RETURN count(c) as deleted
@@ -327,6 +337,7 @@ func (s *CommentService) DeleteComment(ctx context.Context, notebookID, commentI
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"comment_id":  commentID,
 		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to delete comment", err)
