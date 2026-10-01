@@ -954,8 +954,8 @@ func (s *AgentService) deleteAgentInBuilder(ctx context.Context, agentBuilderID 
 // It returns "" for the routes that deliberately run without a space context:
 // /api/v1/agents/internal and /api/v1/internal/*, used for service-to-service
 // calls from agent-builder, plus background sync. Queries below pair this with
-// an "$tenant_id = '' OR a.tenant_id = $tenant_id" predicate so those paths
-// keep working while every space-resolved request is pinned to its own tenant.
+// a predicate that admits the empty tenant, so those paths keep working while
+// every space-resolved request is pinned to its own tenant.
 // The value is server-side only — a client cannot blank it to widen a query.
 func tenantFromContext(ctx context.Context) string {
 	if sc, ok := models.SpaceContextFromContext(ctx); ok && sc != nil {
