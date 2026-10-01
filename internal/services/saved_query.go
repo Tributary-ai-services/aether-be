@@ -115,13 +115,14 @@ func (s *SavedQueryService) CreateSavedQuery(ctx context.Context, userID, tenant
 
 	// Link to space
 	linkQuery := `
-		MATCH (sq:SavedQuery {id: $query_id})
+		MATCH (sq:SavedQuery {id: $query_id, tenant_id: $tenant_id})
 		MATCH (sp:Space {id: $space_id})
 		CREATE (sq)-[:BELONGS_TO {created_at: datetime()}]->(sp)
 	`
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, linkQuery, map[string]any{
-		"query_id": query.ID,
-		"space_id": spaceID,
+		"query_id":  query.ID,
+		"space_id":  spaceID,
+		"tenant_id": tenantID,
 	})
 	if err != nil {
 		s.logger.Warn("Failed to link saved query to space",
@@ -133,13 +134,14 @@ func (s *SavedQueryService) CreateSavedQuery(ctx context.Context, userID, tenant
 
 	// Link to owner
 	ownerQuery := `
-		MATCH (sq:SavedQuery {id: $query_id})
+		MATCH (sq:SavedQuery {id: $query_id, tenant_id: $tenant_id})
 		MATCH (u:User {id: $user_id})
 		CREATE (u)-[:OWNS {created_at: datetime()}]->(sq)
 	`
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, ownerQuery, map[string]any{
-		"query_id": query.ID,
-		"user_id":  userID,
+		"query_id":  query.ID,
+		"user_id":   userID,
+		"tenant_id": tenantID,
 	})
 	if err != nil {
 		s.logger.Warn("Failed to link saved query to owner",
@@ -151,13 +153,14 @@ func (s *SavedQueryService) CreateSavedQuery(ctx context.Context, userID, tenant
 
 	// Link to database
 	dbLinkQuery := `
-		MATCH (sq:SavedQuery {id: $query_id})
-		MATCH (d:Database {id: $database_id})
+		MATCH (sq:SavedQuery {id: $query_id, tenant_id: $tenant_id})
+		MATCH (d:Database {id: $database_id, tenant_id: $tenant_id})
 		CREATE (sq)-[:USES_DATABASE {created_at: datetime()}]->(d)
 	`
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, dbLinkQuery, map[string]any{
 		"query_id":    query.ID,
 		"database_id": req.DatabaseID,
+		"tenant_id":   tenantID,
 	})
 	if err != nil {
 		s.logger.Warn("Failed to link saved query to database",
@@ -539,7 +542,7 @@ func (s *SavedQueryService) ExecuteSavedQuery(ctx context.Context, queryID, tena
 	// Update stats in Neo4j (fire and forget)
 	go func() {
 		updateQuery := `
-			MATCH (sq:SavedQuery {id: $query_id})
+			MATCH (sq:SavedQuery {id: $query_id, tenant_id: $tenant_id})
 			SET sq.last_executed_at = datetime($last_executed_at),
 			    sq.last_executed_by = $last_executed_by,
 			    sq.execution_count = $execution_count,
@@ -549,6 +552,7 @@ func (s *SavedQueryService) ExecuteSavedQuery(ctx context.Context, queryID, tena
 		`
 		params := map[string]any{
 			"query_id":         queryID,
+			"tenant_id":        tenantID,
 			"last_executed_at": sq.LastExecutedAt.Format(time.RFC3339),
 			"last_executed_by": sq.LastExecutedBy,
 			"execution_count":  sq.ExecutionCount,

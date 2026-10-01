@@ -161,11 +161,35 @@ This document tracks the implementation of the space-based tenant model in the A
 - **Need**: Configure which endpoints require space context vs. optional
 - **Need**: Add space-based authorization rules to protected routes
 
-### 2. Database Query Filtering (HIGH PRIORITY)
-- **Status**: Service methods accept SpaceContext but queries need explicit tenant filtering
-- **Need**: Update all Neo4j queries to include `WHERE tenant_id = $tenant_id` clauses
-- **Files**: All service layer database operations (notebook.go, document.go, user.go)
-- **Critical**: Without this, there's no actual data isolation between spaces
+### 2. Database Query Filtering — ✅ DONE 2026-09-30 (TEST-3)
+- **Status**: Done for every tenant-scoped label. This section is the source TEST-3
+  was carried from, and it sat here as HIGH PRIORITY from 2026-08-13 with "the rest"
+  never enumerated. It is enumerated now.
+- **What was audited**: 232 Cypher literals in `internal/` touch a tenant-scoped
+  label. A query counts as isolated when it constrains on `tenant_id` **or**
+  `space_id` — the two are 1:1, enforced by the live `space_tenant_id_unique`
+  constraint — or reaches the node through a parent that does.
+- **What was wrong**: the plumbing was already there and simply unused.
+  `ConversationService.ListConversations`, `CommentService.GetComments`,
+  `FindDocumentByURL` and `FindDocumentByAudiModalFileID` each took a `tenantID`
+  argument and never bound it into the Cypher. `FindDocumentByURL` additionally
+  fell back to matching on bare filename across every tenant.
+- **Child nodes** (`ChatMessage`, `WorkflowStep`, `WorkflowVersion`,
+  `WorkflowTrigger`) carry no `tenant_id` in production — 0 of 46. They are reached
+  only through their tenant-filtered parent, and new ones are stamped on write.
+  No backfill was needed.
+- **Enforcement**: `internal/services/tenant_isolation_lint_test.go` fails CI when a
+  new query skips the filter. It lives in code because it cannot live in the
+  database: the cluster runs **Neo4j 5.15 Community**, where property-existence and
+  node-key constraints are Enterprise-only.
+- **Exemptions** are listed in that test with a reason each — cross-space sharing,
+  invitations (cross-tenant by definition), Argo callbacks, background sweepers,
+  and queries whose filter is assembled with `fmt.Sprintf` and so invisible to a
+  literal scan.
+- **Still open (TEST-7)**: 10 queries in `team.go` and `organization.go`. `tenant_id`
+  is the wrong axis for the layer that *defines* tenancy; those rely on `MEMBER_OF`
+  and `organization_id` traversal. Production holds **zero Team nodes**, so that
+  surface is unexercised against real data.
 
 ### 3. Data Migration Scripts
 - **Need**: Scripts to assign personal spaces to existing users
@@ -178,8 +202,12 @@ This document tracks the implementation of the space-based tenant model in the A
 - **Need**: Add space-based authorization rules
 
 ### 5. Testing and Validation
+- **Integration tests for tenant isolation**: ✅ DONE 2026-09-30 (TEST-2).
+  `tests/integration/tenant_isolation_test.go` seeds two tenants against a real
+  Neo4j and asserts, in both directions, that cross-tenant reads return nothing,
+  cross-tenant writes are rejected, and a tenant's own access still works. The
+  tests were verified to fail when a filter is removed before being trusted green.
 - **Need**: Unit tests for space context resolution
-- **Need**: Integration tests for tenant isolation
 - **Need**: End-to-end tests with frontend
 
 ## 🔧 Current Issues

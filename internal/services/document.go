@@ -434,6 +434,10 @@ func (s *DocumentService) GetDocumentByID(ctx context.Context, documentID string
 	}
 
 	// Second try: check if document's notebook is shared with the user (cross-space access)
+	//
+	// tenant-exempt: cross-space by design. The first query above is the
+	// tenant-scoped path; this is reached only when that misses, and requires a
+	// SHARED_WITH edge from the document's notebook to this specific user.
 	sharedQuery := `
 		MATCH (d:Document {id: $document_id})
 		MATCH (n:Notebook {id: d.notebook_id})-[:SHARED_WITH]->(u:User {id: $user_id})
@@ -848,6 +852,9 @@ func (s *DocumentService) SearchDocuments(ctx context.Context, req models.Docume
 		whereClause += " AND " + fmt.Sprintf("(%s)", whereConditions[i])
 	}
 
+	// tenant-exempt: the filter is injected, not literal. whereConditions is
+	// seeded unconditionally with "d.tenant_id = $tenant_id" and "d.space_id =
+	// $space_id" above, so every generated query carries both.
 	query := fmt.Sprintf(`
 		MATCH (d:Document)
 		%s
@@ -901,6 +908,11 @@ func (s *DocumentService) SearchDocuments(ctx context.Context, req models.Docume
 // We first retrieve the document to get its tenant_id for proper isolation
 func (s *DocumentService) UpdateProcessingResult(ctx context.Context, documentID string, status string, result map[string]interface{}, errorMsg string) error {
 	// First get the document's tenant_id
+	// tenant-exempt: this query resolves the document's tenant rather than
+	// filtering by it — it cannot constrain on a value it exists to discover. The
+	// id comes from a document this service created or already fetched in the
+	// upload/processing flow, never straight off a client request, and the
+	// resolved tenant_id is bound into the write below.
 	tenantQuery := `
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
@@ -1002,36 +1014,6 @@ func (s *DocumentService) updateProcessingResultWithTenant(ctx context.Context, 
 
 // Helper methods (simplified implementations)
 
-func (s *DocumentService) verifyNotebookAccess(ctx context.Context, notebookID, userID string) (bool, error) {
-	query := `
-		MATCH (n:Notebook {id: $notebook_id})
-		WHERE n.visibility = 'public' OR 
-		      n.owner_id = $user_id OR 
-		      EXISTS((n)-[:SHARED_WITH]->(:User {id: $user_id}))
-		RETURN count(n) > 0 as has_access
-	`
-
-	params := map[string]interface{}{
-		"notebook_id": notebookID,
-		"user_id":     userID,
-	}
-
-	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
-	if err != nil {
-		return false, err
-	}
-
-	if len(result.Records) > 0 {
-		if hasAccess, found := result.Records[0].Get("has_access"); found {
-			if hasAccessBool, ok := hasAccess.(bool); ok {
-				return hasAccessBool, nil
-			}
-		}
-	}
-
-	return false, nil
-}
-
 func (s *DocumentService) createDocumentRelationships(ctx context.Context, documentID, notebookID, ownerID string, tenantID string, sizeBytes int64) error {
 	// Note: ownerID is the Keycloak ID from JWT, so we match on keycloak_id not id
 	query := `
@@ -1060,6 +1042,11 @@ func (s *DocumentService) createDocumentRelationships(ctx context.Context, docum
 // updateDocumentStatusWithJobID updates a document's status, processing result, and processing_job_id
 func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, documentID, status string, result map[string]interface{}, errorMsg, processingJobID string) error {
 	// First get the document's tenant_id
+	// tenant-exempt: this query resolves the document's tenant rather than
+	// filtering by it — it cannot constrain on a value it exists to discover. The
+	// id comes from a document this service created or already fetched in the
+	// upload/processing flow, never straight off a client request, and the
+	// resolved tenant_id is bound into the write below.
 	tenantQuery := `
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
@@ -1149,6 +1136,11 @@ func (s *DocumentService) updateDocumentStatusWithJobID(ctx context.Context, doc
 
 func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, status string, result map[string]interface{}, errorMsg string) error {
 	// First get the document's tenant_id
+	// tenant-exempt: this query resolves the document's tenant rather than
+	// filtering by it — it cannot constrain on a value it exists to discover. The
+	// id comes from a document this service created or already fetched in the
+	// upload/processing flow, never straight off a client request, and the
+	// resolved tenant_id is bound into the write below.
 	tenantQuery := `
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
@@ -1228,6 +1220,8 @@ func (s *DocumentService) updateDocumentStatus(ctx context.Context, documentID, 
 func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
 	// Query for documents that are in processing state OR have placeholder data
 	// Placeholder data is indicated by specific placeholder text or hardcoded processing time
+	// tenant-exempt: background sweeper. Reconciles AudiModal processing state for
+	// every tenant on a timer, with no request or space context to scope it to.
 	query := `
 		MATCH (d:Document)
 		WHERE (d.status = "processing" OR 
@@ -1308,6 +1302,11 @@ func (s *DocumentService) RefreshProcessingResults(ctx context.Context) error {
 // updateDocumentWithProcessingResults updates a document with AI processing results
 func (s *DocumentService) updateDocumentWithProcessingResults(ctx context.Context, documentID, extractedText string, processingTime int64, confidenceScore float64) error {
 	// First get the document's tenant_id
+	// tenant-exempt: this query resolves the document's tenant rather than
+	// filtering by it — it cannot constrain on a value it exists to discover. The
+	// id comes from a document this service created or already fetched in the
+	// upload/processing flow, never straight off a client request, and the
+	// resolved tenant_id is bound into the write below.
 	tenantQuery := `
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
@@ -1358,6 +1357,11 @@ func (s *DocumentService) updateDocumentWithProcessingResults(ctx context.Contex
 
 func (s *DocumentService) updateDocumentStorage(ctx context.Context, documentID, storagePath, storageBucket string) error {
 	// First get the document's tenant_id
+	// tenant-exempt: this query resolves the document's tenant rather than
+	// filtering by it — it cannot constrain on a value it exists to discover. The
+	// id comes from a document this service created or already fetched in the
+	// upload/processing flow, never straight off a client request, and the
+	// resolved tenant_id is bound into the write below.
 	tenantQuery := `
 		MATCH (d:Document {id: $document_id})
 		RETURN d.tenant_id as tenant_id
@@ -1397,21 +1401,6 @@ func (s *DocumentService) updateDocumentStorage(ctx context.Context, documentID,
 
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
 	return err
-}
-
-func (s *DocumentService) canUserAccessDocument(ctx context.Context, document *models.Document, userID string) bool {
-	// Owner can always access
-	if document.OwnerID == userID {
-		return true
-	}
-
-	// Check notebook access
-	hasAccess, err := s.verifyNotebookAccess(ctx, document.NotebookID, userID)
-	if err != nil {
-		return false
-	}
-
-	return hasAccess
 }
 
 func (s *DocumentService) canUserWriteDocument(ctx context.Context, document *models.Document, userID string) bool {
@@ -2386,6 +2375,10 @@ func (s *DocumentService) getDocumentForRetry(ctx context.Context, documentID, t
 func (s *DocumentService) deleteDocumentRecord(ctx context.Context, documentID string) error {
 	// Delete document and decrement notebook counts in a single query
 	// This handles the case where a document is cleaned up after a failed upload
+	//
+	// tenant-exempt: rollback path. Both callers pass document.ID for a document
+	// this service created moments earlier in the same upload flow; the id is
+	// never client-supplied.
 	query := `
 		MATCH (d:Document {id: $document_id})
 		OPTIONAL MATCH (d)-[:BELONGS_TO]->(n:Notebook)
@@ -2459,7 +2452,12 @@ func (s *DocumentService) FindDocumentByURL(ctx context.Context, url, tenantID s
 		return document, nil
 	}
 
-	// Fallback: try to find by filename across all tenants (for cross-tenant sync scenarios)
+	// Fallback: try to find by filename within the same tenant.
+	//
+	// This used to search across all tenants "for cross-tenant sync scenarios",
+	// which meant two tenants holding a file of the same name could be served each
+	// other's document — the most recently updated one won (TEST-3). The tenant
+	// was already a parameter here; it is now bound.
 	// Extract filename from URL or path
 	filename := extractFilenameFromPath(url)
 	if filename == "" {
@@ -2471,7 +2469,7 @@ func (s *DocumentService) FindDocumentByURL(ctx context.Context, url, tenantID s
 		zap.String("original_url", url))
 
 	fallbackQuery := `
-		MATCH (d:Document)
+		MATCH (d:Document {tenant_id: $tenant_id})
 		WHERE d.name = $filename
 		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
 		       d.mime_type, d.size_bytes, d.checksum, d.storage_path, d.storage_bucket,
@@ -2483,7 +2481,8 @@ func (s *DocumentService) FindDocumentByURL(ctx context.Context, url, tenantID s
 	`
 
 	fallbackParams := map[string]interface{}{
-		"filename": filename,
+		"filename":  filename,
+		"tenant_id": tenantID,
 	}
 
 	result, err = s.neo4j.ExecuteQueryWithLogging(ctx, fallbackQuery, fallbackParams)
@@ -2519,7 +2518,7 @@ func (s *DocumentService) FindDocumentByAudiModalFileID(ctx context.Context, aud
 
 	// Query by processing_job_id which stores the audimodal file ID
 	query := `
-		MATCH (d:Document)
+		MATCH (d:Document {tenant_id: $tenant_id})
 		WHERE d.processing_job_id = $audimodal_file_id
 		RETURN d.id, d.name, d.description, d.type, d.status, d.original_name,
 		       d.mime_type, d.size_bytes, d.checksum, d.storage_path, d.storage_bucket,
@@ -2531,6 +2530,7 @@ func (s *DocumentService) FindDocumentByAudiModalFileID(ctx context.Context, aud
 
 	params := map[string]interface{}{
 		"audimodal_file_id": audimodalFileID,
+		"tenant_id":         tenantID,
 	}
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)

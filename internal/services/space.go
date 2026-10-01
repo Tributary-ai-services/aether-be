@@ -1207,6 +1207,9 @@ func (s *SpaceService) CheckConsistency(ctx context.Context) (*ConsistencyCheckR
 
 // checkNotebookConsistency checks if notebook embedded fields match their BELONGS_TO relationship
 func (s *SpaceService) checkNotebookConsistency(ctx context.Context) ([]*InconsistencyReport, error) {
+	// tenant-exempt: platform-wide data-integrity audit. Its job is to find
+	// notebooks whose space_id does not match their BELONGS_TO edge, which means
+	// it must look past the very field a tenant filter would trust.
 	query := `
 		MATCH (n:Notebook)
 		WHERE n.space_id IS NOT NULL
@@ -1322,6 +1325,9 @@ func (s *SpaceService) countOrphanedEntities(ctx context.Context) (map[string]in
 	counts := make(map[string]int)
 
 	// Count orphaned notebooks (have space_id but no BELONGS_TO)
+	//
+	// tenant-exempt: platform-wide orphan count, same reasoning as
+	// checkNotebookConsistency — it looks for notebooks with no Space to scope to.
 	notebookQuery := `
 		MATCH (n:Notebook)
 		WHERE n.space_id IS NOT NULL
@@ -1384,6 +1390,8 @@ func (s *SpaceService) countOrphanedEntities(ctx context.Context) (map[string]in
 func (s *SpaceService) getTotals(ctx context.Context) (map[string]int, error) {
 	totals := make(map[string]int)
 
+	// tenant-exempt: platform-wide totals for the admin consistency report.
+	// Returns counts only, never rows, and is not reachable from a tenant route.
 	query := `
 		MATCH (n:Notebook)
 		WITH count(n) as notebook_count

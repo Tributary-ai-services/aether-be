@@ -59,7 +59,7 @@ func (s *ConversationService) CreateConversation(ctx context.Context, notebookID
 	}
 
 	query := `
-		MATCH (n:Notebook {id: $notebook_id}), (u:User {id: $user_id})
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}), (u:User {id: $user_id})
 		CREATE (conv:ChatConversation {
 			id: $id,
 			name: $name,
@@ -103,7 +103,7 @@ func (s *ConversationService) CreateConversation(ctx context.Context, notebookID
 // ListConversations returns conversations for a notebook, ordered by updated_at DESC
 func (s *ConversationService) ListConversations(ctx context.Context, notebookID, tenantID string) (*models.ConversationListResponse, error) {
 	query := `
-		MATCH (conv:ChatConversation {notebook_id: $notebook_id})
+		MATCH (conv:ChatConversation {notebook_id: $notebook_id, tenant_id: $tenant_id})
 		OPTIONAL MATCH (msg:ChatMessage)-[:PART_OF]->(conv)
 		WITH conv, msg
 		ORDER BY msg.created_at DESC
@@ -116,6 +116,7 @@ func (s *ConversationService) ListConversations(ctx context.Context, notebookID,
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"notebook_id": notebookID,
+		"tenant_id":   tenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to list conversations", err)
@@ -137,9 +138,9 @@ func (s *ConversationService) ListConversations(ctx context.Context, notebookID,
 }
 
 // GetConversation returns a conversation with all its messages
-func (s *ConversationService) GetConversation(ctx context.Context, conversationID, userID string) (*models.ConversationResponse, error) {
+func (s *ConversationService) GetConversation(ctx context.Context, conversationID, userID, tenantID string) (*models.ConversationResponse, error) {
 	query := `
-		MATCH (conv:ChatConversation {id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
 		OPTIONAL MATCH (msg:ChatMessage)-[:PART_OF]->(conv)
 		WITH conv, msg
 		ORDER BY msg.created_at DESC
@@ -151,6 +152,7 @@ func (s *ConversationService) GetConversation(ctx context.Context, conversationI
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to get conversation", err)
@@ -167,9 +169,9 @@ func (s *ConversationService) GetConversation(ctx context.Context, conversationI
 }
 
 // UpdateConversation renames a conversation
-func (s *ConversationService) UpdateConversation(ctx context.Context, conversationID string, req models.UpdateConversationRequest, userID string) (*models.ConversationResponse, error) {
+func (s *ConversationService) UpdateConversation(ctx context.Context, conversationID string, req models.UpdateConversationRequest, userID, tenantID string) (*models.ConversationResponse, error) {
 	query := `
-		MATCH (conv:ChatConversation {id: $conversation_id, user_id: $user_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, user_id: $user_id, tenant_id: $tenant_id})
 		SET conv.name = $name, conv.updated_at = datetime()
 		RETURN conv.id, conv.name, conv.notebook_id, conv.user_id,
 		       conv.message_count, conv.created_at, conv.updated_at
@@ -178,6 +180,7 @@ func (s *ConversationService) UpdateConversation(ctx context.Context, conversati
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"conversation_id": conversationID,
 		"user_id":         userID,
+		"tenant_id":       tenantID,
 		"name":            req.Name,
 	})
 	if err != nil {
@@ -192,13 +195,19 @@ func (s *ConversationService) UpdateConversation(ctx context.Context, conversati
 
 // DeleteConversation deletes a conversation and all its messages and associated comments
 func (s *ConversationService) DeleteConversation(ctx context.Context, conversationID, userID string, spaceCtx *models.SpaceContext) error {
+	tenantID := ""
+	if spaceCtx != nil {
+		tenantID = spaceCtx.TenantID
+	}
+
 	// Verify ownership
 	checkQuery := `
-		MATCH (conv:ChatConversation {id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
 		RETURN conv.user_id, conv.notebook_id
 	`
 	checkResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, checkQuery, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to check conversation", err)
@@ -223,17 +232,20 @@ func (s *ConversationService) DeleteConversation(ctx context.Context, conversati
 		}
 	}
 
-	// Delete messages, associated comments, and the conversation
+	// Delete messages, associated comments, and the conversation.
+	// Messages and comments are reached only through the tenant-filtered
+	// conversation, so they inherit its isolation.
 	query := `
-		MATCH (conv:ChatConversation {id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
 		OPTIONAL MATCH (msg:ChatMessage)-[:PART_OF]->(conv)
-		OPTIONAL MATCH (c:Comment {resource_id: $conversation_id, resource_type: 'conversation'})
+		OPTIONAL MATCH (c:Comment {resource_id: $conversation_id, resource_type: 'conversation', tenant_id: $tenant_id})
 		OPTIONAL MATCH (reply:Comment)-[:REPLY_TO]->(c)
 		DETACH DELETE reply, c, msg, conv
 		RETURN count(conv) as deleted
 	`
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to delete conversation", err)
@@ -242,8 +254,12 @@ func (s *ConversationService) DeleteConversation(ctx context.Context, conversati
 	return nil
 }
 
-// AddMessage adds a message to a conversation
-func (s *ConversationService) AddMessage(ctx context.Context, conversationID, role, content string, isError bool, metadata map[string]interface{}) (*models.ChatMessageResponse, error) {
+// AddMessage adds a message to a conversation.
+//
+// The message is stamped with the conversation's tenant_id so that it carries
+// its own isolation key, and the conversation itself is matched under
+// tenantID, so a caller cannot append to another tenant's conversation.
+func (s *ConversationService) AddMessage(ctx context.Context, conversationID, tenantID, role, content string, isError bool, metadata map[string]interface{}) (*models.ChatMessageResponse, error) {
 	messageID := uuid.New().String()
 	now := time.Now()
 
@@ -252,10 +268,11 @@ func (s *ConversationService) AddMessage(ctx context.Context, conversationID, ro
 	}
 
 	query := `
-		MATCH (conv:ChatConversation {id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
 		CREATE (msg:ChatMessage {
 			id: $id,
 			conversation_id: $conversation_id,
+			tenant_id: $tenant_id,
 			role: $role,
 			content: $content,
 			is_error: $is_error,
@@ -272,6 +289,7 @@ func (s *ConversationService) AddMessage(ctx context.Context, conversationID, ro
 	params := map[string]interface{}{
 		"id":              messageID,
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 		"role":            role,
 		"content":         content,
 		"is_error":        isError,
@@ -290,8 +308,12 @@ func (s *ConversationService) AddMessage(ctx context.Context, conversationID, ro
 	return s.recordToMessageResponse(result.Records[0]), nil
 }
 
-// GetMessages returns paginated messages for a conversation
-func (s *ConversationService) GetMessages(ctx context.Context, conversationID string, limit, offset int) (*models.ChatMessageListResponse, error) {
+// GetMessages returns paginated messages for a conversation.
+//
+// Messages are reached through the conversation rather than by their own
+// conversation_id property, so the tenant filter on the conversation is what
+// isolates them. A conversation ID belonging to another tenant yields no rows.
+func (s *ConversationService) GetMessages(ctx context.Context, conversationID, tenantID string, limit, offset int) (*models.ChatMessageListResponse, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -301,11 +323,13 @@ func (s *ConversationService) GetMessages(ctx context.Context, conversationID st
 
 	// Get total count
 	countQuery := `
-		MATCH (msg:ChatMessage {conversation_id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
+		      <-[:PART_OF]-(msg:ChatMessage)
 		RETURN count(msg) as total
 	`
 	countResult, err := s.neo4j.ExecuteQueryWithLogging(ctx, countQuery, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to count messages", err)
@@ -320,7 +344,8 @@ func (s *ConversationService) GetMessages(ctx context.Context, conversationID st
 
 	// Get messages
 	query := `
-		MATCH (msg:ChatMessage {conversation_id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
+		      <-[:PART_OF]-(msg:ChatMessage)
 		RETURN msg.id, msg.conversation_id, msg.role, msg.content,
 		       msg.is_error, msg.created_at
 		ORDER BY msg.created_at ASC
@@ -330,6 +355,7 @@ func (s *ConversationService) GetMessages(ctx context.Context, conversationID st
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 		"offset":          int64(offset),
 		"limit":           int64(limit),
 	})
@@ -349,9 +375,10 @@ func (s *ConversationService) GetMessages(ctx context.Context, conversationID st
 }
 
 // GetAllMessages returns all messages for a conversation (for building LLM context)
-func (s *ConversationService) GetAllMessages(ctx context.Context, conversationID string) ([]*models.ChatMessageResponse, error) {
+func (s *ConversationService) GetAllMessages(ctx context.Context, conversationID, tenantID string) ([]*models.ChatMessageResponse, error) {
 	query := `
-		MATCH (msg:ChatMessage {conversation_id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
+		      <-[:PART_OF]-(msg:ChatMessage)
 		RETURN msg.id, msg.conversation_id, msg.role, msg.content,
 		       msg.is_error, msg.created_at
 		ORDER BY msg.created_at ASC
@@ -359,6 +386,7 @@ func (s *ConversationService) GetAllMessages(ctx context.Context, conversationID
 
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to get messages", err)
@@ -373,15 +401,16 @@ func (s *ConversationService) GetAllMessages(ctx context.Context, conversationID
 }
 
 // UpdateConversationName updates name from first message if still default
-func (s *ConversationService) UpdateConversationNameFromMessage(ctx context.Context, conversationID, message string) error {
+func (s *ConversationService) UpdateConversationNameFromMessage(ctx context.Context, conversationID, tenantID, message string) error {
 	name := generateConversationName(message)
 	query := `
-		MATCH (conv:ChatConversation {id: $conversation_id})
+		MATCH (conv:ChatConversation {id: $conversation_id, tenant_id: $tenant_id})
 		WHERE conv.name STARTS WITH 'New Conversation'
 		SET conv.name = $name
 	`
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"conversation_id": conversationID,
+		"tenant_id":       tenantID,
 		"name":            name,
 	})
 	return err

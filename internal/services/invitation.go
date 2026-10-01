@@ -59,7 +59,7 @@ func (s *InvitationService) CreateInvitation(ctx context.Context, notebookID str
 	existingUser := s.findUserByEmail(ctx, req.Email)
 	if existingUser != nil {
 		// User exists - create SHARED_WITH directly
-		if err := s.notebookService.createSharingRelationship(ctx, notebookID, existingUser.ID, "", req.Permission, inviterID); err != nil {
+		if err := s.notebookService.createSharingRelationship(ctx, notebookID, existingUser.ID, "", req.Permission, inviterID, spaceCtx.TenantID); err != nil {
 			return nil, err
 		}
 
@@ -116,7 +116,7 @@ func (s *InvitationService) CreateInvitation(ctx context.Context, notebookID str
 		MATCH (u:User {id: $inviter_id})
 		CREATE (u)-[:INVITED]->(inv)
 		WITH inv
-		MATCH (n:Notebook {id: $resource_id})
+		MATCH (n:Notebook {id: $resource_id, tenant_id: $tenant_id})
 		CREATE (inv)-[:FOR_RESOURCE]->(n)
 		RETURN inv.id
 	`
@@ -168,12 +168,17 @@ func (s *InvitationService) CreateInvitation(ctx context.Context, notebookID str
 
 // AcceptInvitation accepts an invitation by token
 func (s *InvitationService) AcceptInvitation(ctx context.Context, token, userID string) (*models.InvitationResponse, error) {
+	// tenant-exempt: accepting an invitation is cross-tenant by definition — the
+	// invitee belongs to a different tenant from the inviter, which is the whole
+	// point of an invitation. The single-use secret token is the capability here,
+	// not the tenant; it is matched alongside status and an expiry check.
 	query := `
 		MATCH (inv:Invitation {token: $token, status: 'pending'})
 		WHERE inv.expires_at > datetime()
 		SET inv.status = 'accepted', inv.accepted_at = datetime()
 		RETURN inv.id, inv.inviter_id, inv.invitee_email, inv.resource_id,
-		       inv.resource_type, inv.permission, inv.message, inv.expires_at, inv.created_at
+		       inv.resource_type, inv.permission, inv.message, inv.expires_at, inv.created_at,
+		       inv.tenant_id
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"token": token,
@@ -199,8 +204,15 @@ func (s *InvitationService) AcceptInvitation(ctx context.Context, token, userID 
 		inviterID = v.(string)
 	}
 
+	// The share is created in the tenant that owns the notebook — recorded on the
+	// invitation when the owner issued it — not in the accepting user's tenant.
+	var invTenantID string
+	if v, ok := record.Get("inv.tenant_id"); ok && v != nil {
+		invTenantID, _ = v.(string)
+	}
+
 	// Create the SHARED_WITH relationship
-	if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID); err != nil {
+	if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID, invTenantID); err != nil {
 		s.logger.Error("Failed to create sharing from accepted invitation", zap.Error(err))
 		return nil, err
 	}
@@ -241,13 +253,14 @@ func (s *InvitationService) CancelInvitation(ctx context.Context, notebookID, in
 	}
 
 	query := `
-		MATCH (inv:Invitation {id: $invitation_id, resource_id: $notebook_id, status: 'pending'})
+		MATCH (inv:Invitation {id: $invitation_id, resource_id: $notebook_id, status: 'pending', tenant_id: $tenant_id})
 		SET inv.status = 'cancelled'
 		RETURN inv.id
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"invitation_id": invitationID,
 		"notebook_id":   notebookID,
+		"tenant_id":     spaceCtx.TenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to cancel invitation", err)
@@ -271,7 +284,7 @@ func (s *InvitationService) GetInvitationsForNotebook(ctx context.Context, noteb
 	}
 
 	query := `
-		MATCH (inv:Invitation {resource_id: $notebook_id})
+		MATCH (inv:Invitation {resource_id: $notebook_id, tenant_id: $tenant_id})
 		WHERE inv.status IN ['pending']
 		OPTIONAL MATCH (inviter:User {id: inv.inviter_id})
 		RETURN inv.id, inv.inviter_id, inv.invitee_email, inv.resource_id,
@@ -282,6 +295,7 @@ func (s *InvitationService) GetInvitationsForNotebook(ctx context.Context, noteb
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"notebook_id": notebookID,
+		"tenant_id":   spaceCtx.TenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to get invitations", err)
@@ -355,6 +369,10 @@ func (s *InvitationService) GetPendingInvitations(ctx context.Context, userID st
 		return &models.InvitationListResponse{Invitations: []*models.InvitationResponse{}, Total: 0}, nil
 	}
 
+	// tenant-exempt: lists invitations addressed TO this user, which by design
+	// arrive from other tenants. Scoped by the caller's own verified email
+	// rather than by tenant; filtering on the invitee's tenant would hide every
+	// genuine invitation.
 	query := `
 		MATCH (inv:Invitation {invitee_email: $email, status: 'pending'})
 		WHERE inv.expires_at > datetime()
@@ -418,11 +436,14 @@ func (s *InvitationService) GetPendingInvitations(ctx context.Context, userID st
 
 // ProcessPendingInvitations auto-accepts pending invitations for a newly registered user
 func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userID, email string) {
+	// tenant-exempt: runs at registration to auto-accept invitations addressed
+	// to this email, which originate in other tenants. Same reasoning as
+	// GetPendingInvitations.
 	query := `
 		MATCH (inv:Invitation {invitee_email: $email, status: 'pending'})
 		WHERE inv.expires_at > datetime()
 		SET inv.status = 'accepted', inv.accepted_at = datetime()
-		RETURN inv.id, inv.resource_id, inv.permission, inv.inviter_id
+		RETURN inv.id, inv.resource_id, inv.permission, inv.inviter_id, inv.tenant_id
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"email": email,
@@ -433,7 +454,7 @@ func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userI
 	}
 
 	for _, record := range result.Records {
-		var resourceID, permission, inviterID string
+		var resourceID, permission, inviterID, invTenantID string
 		if v, ok := record.Get("inv.resource_id"); ok && v != nil {
 			resourceID = v.(string)
 		}
@@ -443,8 +464,12 @@ func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userI
 		if v, ok := record.Get("inv.inviter_id"); ok && v != nil {
 			inviterID = v.(string)
 		}
+		// Share into the notebook owner's tenant, recorded on the invitation.
+		if v, ok := record.Get("inv.tenant_id"); ok && v != nil {
+			invTenantID, _ = v.(string)
+		}
 
-		if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID); err != nil {
+		if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID, invTenantID); err != nil {
 			s.logger.Error("Failed to create sharing from pending invitation",
 				zap.String("resource_id", resourceID),
 				zap.Error(err),

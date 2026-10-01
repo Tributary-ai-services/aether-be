@@ -741,6 +741,9 @@ func (s *ProductionService) executePodcastRenderer(ctx context.Context, script s
 
 // ListRenderers returns available renderer workflows (workflows with type='renderer' and status='active')
 func (s *ProductionService) ListRenderers(ctx context.Context) ([]map[string]interface{}, error) {
+	// tenant-exempt: the renderer catalogue is platform-global, not tenant data.
+	// These are the built-in rendering workflows every tenant picks from, matched
+	// on type='renderer' AND status='active' rather than by owner.
 	query := `
 		MATCH (w:Workflow {type: 'renderer', status: 'active'})
 		RETURN w.id AS id, w.name AS name, w.description AS description,
@@ -1168,6 +1171,10 @@ func (s *ProductionService) GetProductionByID(ctx context.Context, productionID,
 	}
 
 	// Second try: check if production's notebook is shared with the user (cross-space access)
+	//
+	// tenant-exempt: sharing crosses spaces by design, so a tenant filter here
+	// would defeat the feature. Isolation comes from the SHARED_WITH edge to this
+	// specific requesting user, which only the notebook owner can create.
 	sharedQuery := `
 		MATCH (p:Production {id: $production_id})
 		MATCH (n:Notebook {id: p.notebook_id})-[:SHARED_WITH]->(u:User {id: $user_id})
@@ -1526,6 +1533,9 @@ func (s *ProductionService) updateProduction(ctx context.Context, production *mo
 // for longer than the given threshold and marks them as failed. This handles
 // cases where async goroutines were lost due to pod restarts.
 func (s *ProductionService) CleanupStaleProductions(ctx context.Context, staleThreshold time.Duration) (int, error) {
+	// tenant-exempt: background sweeper. Marks productions abandoned by a lost
+	// goroutine (pod restart) as failed across every tenant; it is invoked on a
+	// timer with no request context, so there is no tenant to scope it to.
 	query := `
 		MATCH (p:Production)
 		WHERE p.status IN ['processing', 'rendering', 'queued', 'retrying']

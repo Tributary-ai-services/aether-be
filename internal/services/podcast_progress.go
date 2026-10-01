@@ -298,6 +298,9 @@ func (s *PodcastProgressService) handleFailed(ctx context.Context, productionID 
 
 // Neo4j update helpers
 
+// tenant-exempt: async progress writer. Called from the podcast generation
+// goroutine for a productionID this service itself created and holds; there is
+// no request, user or space context on this path. The id is never client-supplied.
 func (s *PodcastProgressService) updateNeo4jProgressPhase(ctx context.Context, productionID, phase string) {
 	query := `
 		MATCH (p:Production {id: $id})
@@ -330,6 +333,8 @@ func (s *PodcastProgressService) updateNeo4jCompleted(ctx context.Context, produ
 
 	metadataJSON, _ := json.Marshal(metadata)
 
+	// tenant-exempt: async progress writer, same path as updateNeo4jProgressPhase —
+	// the podcast generation goroutine holds this productionID; no request context.
 	query := `
 		MATCH (p:Production {id: $id})
 		SET p.status = $status,
@@ -352,6 +357,9 @@ func (s *PodcastProgressService) updateNeo4jCompleted(ctx context.Context, produ
 	}
 }
 
+// tenant-exempt: async progress writer. Called from the podcast generation
+// goroutine for a productionID this service itself created and holds; there is
+// no request, user or space context on this path. The id is never client-supplied.
 func (s *PodcastProgressService) updateNeo4jFailed(ctx context.Context, productionID, errorMessage string, retryCount int) {
 	query := `
 		MATCH (p:Production {id: $id})

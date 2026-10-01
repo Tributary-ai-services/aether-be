@@ -199,6 +199,10 @@ func (s *NotebookService) GetNotebookByID(ctx context.Context, notebookID string
 	}
 
 	// Second try: check if notebook (or any ancestor) is shared with the user (cross-space access)
+	//
+	// tenant-exempt: cross-space by design — see GetSharedWithMe. The first query
+	// above is the tenant-scoped path; this one is reached only when that misses,
+	// and requires a SHARED_WITH edge to this user on the notebook or an ancestor.
 	sharedQuery := `
 		MATCH (n:Notebook {id: $notebook_id})
 		WHERE n.status = 'active' AND EXISTS {
@@ -447,6 +451,8 @@ func (s *NotebookService) ListNotebooks(ctx context.Context, userID string, spac
 	}
 
 	// Get total count (space notebooks + shared notebooks)
+	// tenant-exempt: the space half below IS tenant-filtered; the n2 half counts
+	// notebooks shared with this user from other tenants, which is the feature.
 	countQuery := `
 		MATCH (n:Notebook)
 		WHERE n.status = 'active'
@@ -557,6 +563,10 @@ func (s *NotebookService) SearchNotebooks(ctx context.Context, req models.Notebo
 		sharedWhereClause += " AND " + fmt.Sprintf("(%s)", sharedFilterConditions[i])
 	}
 
+	// tenant-exempt: filters are injected, not literal. spaceWhereConditions is
+	// seeded unconditionally with "n.tenant_id = $tenant_id" and "n.space_id =
+	// $space_id" above, so the first UNION branch is tenant-scoped; the second is
+	// the shared-notebook branch, cross-space by design.
 	query := fmt.Sprintf(`
 		MATCH (n:Notebook)
 		%s
@@ -627,7 +637,7 @@ func (s *NotebookService) ShareNotebook(ctx context.Context, notebookID string, 
 	// Create sharing relationships
 	for _, sharedUserID := range req.UserIDs {
 		for _, permission := range req.Permissions {
-			if err := s.createSharingRelationship(ctx, notebookID, sharedUserID, "", permission, userID); err != nil {
+			if err := s.createSharingRelationship(ctx, notebookID, sharedUserID, "", permission, userID, spaceCtx.TenantID); err != nil {
 				s.logger.Error("Failed to create sharing relationship",
 					zap.String("notebook_id", notebookID),
 					zap.String("shared_user_id", sharedUserID),
@@ -641,7 +651,7 @@ func (s *NotebookService) ShareNotebook(ctx context.Context, notebookID string, 
 
 	for _, groupID := range req.GroupIDs {
 		for _, permission := range req.Permissions {
-			if err := s.createSharingRelationship(ctx, notebookID, "", groupID, permission, userID); err != nil {
+			if err := s.createSharingRelationship(ctx, notebookID, "", groupID, permission, userID, spaceCtx.TenantID); err != nil {
 				s.logger.Error("Failed to create group sharing relationship",
 					zap.String("notebook_id", notebookID),
 					zap.String("group_id", groupID),
@@ -772,13 +782,13 @@ func (s *NotebookService) createBelongsToSpaceRelationship(ctx context.Context, 
 	return nil
 }
 
-func (s *NotebookService) createSharingRelationship(ctx context.Context, notebookID, userID, groupID, permission, grantedBy string) error {
+func (s *NotebookService) createSharingRelationship(ctx context.Context, notebookID, userID, groupID, permission, grantedBy, tenantID string) error {
 	// Normalize permission (view->read, edit->write)
 	permission = models.NormalizePermission(permission)
 
 	if userID != "" {
 		query := `
-			MATCH (n:Notebook {id: $notebook_id}), (u:User {id: $user_id})
+			MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}), (u:User {id: $user_id})
 			MERGE (n)-[r:SHARED_WITH]->(u)
 			ON CREATE SET r.permission = $permission,
 			              r.granted_by = $granted_by,
@@ -793,6 +803,7 @@ func (s *NotebookService) createSharingRelationship(ctx context.Context, noteboo
 			"user_id":     userID,
 			"permission":  permission,
 			"granted_by":  grantedBy,
+			"tenant_id":   tenantID,
 		}
 
 		result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -812,7 +823,7 @@ func (s *NotebookService) createSharingRelationship(ctx context.Context, noteboo
 
 	if groupID != "" {
 		query := `
-			MATCH (n:Notebook {id: $notebook_id}), (t:Team {id: $group_id})
+			MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id}), (t:Team {id: $group_id})
 			MERGE (n)-[r:SHARED_WITH_TEAM]->(t)
 			ON CREATE SET r.permission = $permission,
 			              r.granted_by = $granted_by,
@@ -827,6 +838,7 @@ func (s *NotebookService) createSharingRelationship(ctx context.Context, noteboo
 			"group_id":    groupID,
 			"permission":  permission,
 			"granted_by":  grantedBy,
+			"tenant_id":   tenantID,
 		}
 
 		result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -847,42 +859,11 @@ func (s *NotebookService) createSharingRelationship(ctx context.Context, noteboo
 	return nil
 }
 
-func (s *NotebookService) canUserAccessNotebook(ctx context.Context, notebook *models.Notebook, userID string) bool {
-	return notebook.CanBeAccessedBy(userID)
-}
-
-func (s *NotebookService) canUserWriteNotebook(ctx context.Context, notebook *models.Notebook, userID string) bool {
-	// Owner can always write
-	if notebook.OwnerID == userID {
-		return true
-	}
-
-	// Check write/admin permissions from sharing relationships
-	query := `
-		MATCH (n:Notebook {id: $notebook_id})-[r:SHARED_WITH]->(u:User {id: $user_id})
-		WHERE r.permission IN ['write', 'admin']
-		RETURN r.permission
-	`
-	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
-		"notebook_id": notebook.ID,
-		"user_id":     userID,
-	})
-	if err != nil {
-		s.logger.Error("Failed to check write permission", zap.Error(err))
-		return false
-	}
-
-	return len(result.Records) > 0
-}
-
-// canUserAccessSharedNotebook checks if a user has any shared access to a notebook
-func (s *NotebookService) canUserAccessSharedNotebook(ctx context.Context, notebookID, userID string) bool {
-	return s.getSharePermission(ctx, notebookID, userID) != ""
-}
-
 // getSharePermission returns the SHARED_WITH permission for a user on a notebook (or ancestor).
 // Returns empty string if no share exists.
 func (s *NotebookService) getSharePermission(ctx context.Context, notebookID, userID string) string {
+	// tenant-exempt: resolves the permission on a share that by definition crosses
+	// tenants. Scoped by the SHARED_WITH edge to this user; see GetSharedWithMe.
 	query := `
 		MATCH (n:Notebook {id: $notebook_id})
 		MATCH (n)<-[:CONTAINS*0..]-(ancestor:Notebook)-[r:SHARED_WITH]->(u:User {id: $user_id})
@@ -920,13 +901,14 @@ func (s *NotebookService) RevokeShare(ctx context.Context, notebookID, targetUse
 	}
 
 	query := `
-		MATCH (n:Notebook {id: $notebook_id})-[r:SHARED_WITH]->(u:User {id: $target_user_id})
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})-[r:SHARED_WITH]->(u:User {id: $target_user_id})
 		DELETE r
 		RETURN count(r) as deleted
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"notebook_id":    notebookID,
 		"target_user_id": targetUserID,
+		"tenant_id":      spaceCtx.TenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to revoke share", err)
@@ -959,13 +941,14 @@ func (s *NotebookService) GetNotebookShares(ctx context.Context, notebookID, use
 	if notebook.OwnerID != userID {
 		// Check if user has admin permission
 		query := `
-			MATCH (n:Notebook {id: $notebook_id})-[r:SHARED_WITH]->(u:User {id: $user_id})
+			MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})-[r:SHARED_WITH]->(u:User {id: $user_id})
 			WHERE r.permission = 'admin'
 			RETURN r.permission
 		`
 		result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 			"notebook_id": notebookID,
 			"user_id":     userID,
+			"tenant_id":   spaceCtx.TenantID,
 		})
 		if err != nil || len(result.Records) == 0 {
 			return nil, errors.Forbidden("Only notebook owner or admin can view shares")
@@ -973,7 +956,7 @@ func (s *NotebookService) GetNotebookShares(ctx context.Context, notebookID, use
 	}
 
 	query := `
-		MATCH (n:Notebook {id: $notebook_id})-[r:SHARED_WITH]->(u:User)
+		MATCH (n:Notebook {id: $notebook_id, tenant_id: $tenant_id})-[r:SHARED_WITH]->(u:User)
 		RETURN u.id as user_id, u.username as username, u.full_name as full_name,
 		       u.avatar_url as avatar_url, u.email as email,
 		       r.permission as permission, r.granted_by as granted_by, r.granted_at as granted_at
@@ -1026,6 +1009,11 @@ func (s *NotebookService) GetNotebookShares(ctx context.Context, notebookID, use
 
 // GetSharedWithMe returns notebooks shared with the current user
 func (s *NotebookService) GetSharedWithMe(ctx context.Context, userID string) (*models.SharedNotebooksListResponse, error) {
+	// tenant-exempt: cross-space sharing path. A notebook shared with this user
+	// lives in the owner's tenant, not the caller's, so a tenant filter would hide
+	// every share. Isolation is the SHARED_WITH edge to this specific user, which
+	// only the notebook owner can create (see createSharingRelationship, which does
+	// require the notebook to be in the sharer's tenant).
 	query := `
 		MATCH (n:Notebook)-[r:SHARED_WITH]->(u:User {id: $user_id})
 		WHERE n.status = 'active'
