@@ -116,7 +116,7 @@ func (s *InvitationService) CreateInvitation(ctx context.Context, notebookID str
 		MATCH (u:User {id: $inviter_id})
 		CREATE (u)-[:INVITED]->(inv)
 		WITH inv
-		MATCH (n:Notebook {id: $resource_id})
+		MATCH (n:Notebook {id: $resource_id, tenant_id: $tenant_id})
 		CREATE (inv)-[:FOR_RESOURCE]->(n)
 		RETURN inv.id
 	`
@@ -168,6 +168,10 @@ func (s *InvitationService) CreateInvitation(ctx context.Context, notebookID str
 
 // AcceptInvitation accepts an invitation by token
 func (s *InvitationService) AcceptInvitation(ctx context.Context, token, userID string) (*models.InvitationResponse, error) {
+	// tenant-exempt: accepting an invitation is cross-tenant by definition — the
+	// invitee belongs to a different tenant from the inviter, which is the whole
+	// point of an invitation. The single-use secret token is the capability here,
+	// not the tenant; it is matched alongside status and an expiry check.
 	query := `
 		MATCH (inv:Invitation {token: $token, status: 'pending'})
 		WHERE inv.expires_at > datetime()
@@ -241,13 +245,14 @@ func (s *InvitationService) CancelInvitation(ctx context.Context, notebookID, in
 	}
 
 	query := `
-		MATCH (inv:Invitation {id: $invitation_id, resource_id: $notebook_id, status: 'pending'})
+		MATCH (inv:Invitation {id: $invitation_id, resource_id: $notebook_id, status: 'pending', tenant_id: $tenant_id})
 		SET inv.status = 'cancelled'
 		RETURN inv.id
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"invitation_id": invitationID,
 		"notebook_id":   notebookID,
+		"tenant_id":     spaceCtx.TenantID,
 	})
 	if err != nil {
 		return errors.Database("Failed to cancel invitation", err)
@@ -271,7 +276,7 @@ func (s *InvitationService) GetInvitationsForNotebook(ctx context.Context, noteb
 	}
 
 	query := `
-		MATCH (inv:Invitation {resource_id: $notebook_id})
+		MATCH (inv:Invitation {resource_id: $notebook_id, tenant_id: $tenant_id})
 		WHERE inv.status IN ['pending']
 		OPTIONAL MATCH (inviter:User {id: inv.inviter_id})
 		RETURN inv.id, inv.inviter_id, inv.invitee_email, inv.resource_id,
@@ -282,6 +287,7 @@ func (s *InvitationService) GetInvitationsForNotebook(ctx context.Context, noteb
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"notebook_id": notebookID,
+		"tenant_id":   spaceCtx.TenantID,
 	})
 	if err != nil {
 		return nil, errors.Database("Failed to get invitations", err)
@@ -355,6 +361,10 @@ func (s *InvitationService) GetPendingInvitations(ctx context.Context, userID st
 		return &models.InvitationListResponse{Invitations: []*models.InvitationResponse{}, Total: 0}, nil
 	}
 
+	// tenant-exempt: lists invitations addressed TO this user, which by design
+	// arrive from other tenants. Scoped by the caller's own verified email
+	// rather than by tenant; filtering on the invitee's tenant would hide every
+	// genuine invitation.
 	query := `
 		MATCH (inv:Invitation {invitee_email: $email, status: 'pending'})
 		WHERE inv.expires_at > datetime()
@@ -418,6 +428,9 @@ func (s *InvitationService) GetPendingInvitations(ctx context.Context, userID st
 
 // ProcessPendingInvitations auto-accepts pending invitations for a newly registered user
 func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userID, email string) {
+	// tenant-exempt: runs at registration to auto-accept invitations addressed
+	// to this email, which originate in other tenants. Same reasoning as
+	// GetPendingInvitations.
 	query := `
 		MATCH (inv:Invitation {invitee_email: $email, status: 'pending'})
 		WHERE inv.expires_at > datetime()
