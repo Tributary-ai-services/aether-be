@@ -59,7 +59,7 @@ func (s *InvitationService) CreateInvitation(ctx context.Context, notebookID str
 	existingUser := s.findUserByEmail(ctx, req.Email)
 	if existingUser != nil {
 		// User exists - create SHARED_WITH directly
-		if err := s.notebookService.createSharingRelationship(ctx, notebookID, existingUser.ID, "", req.Permission, inviterID); err != nil {
+		if err := s.notebookService.createSharingRelationship(ctx, notebookID, existingUser.ID, "", req.Permission, inviterID, spaceCtx.TenantID); err != nil {
 			return nil, err
 		}
 
@@ -177,7 +177,8 @@ func (s *InvitationService) AcceptInvitation(ctx context.Context, token, userID 
 		WHERE inv.expires_at > datetime()
 		SET inv.status = 'accepted', inv.accepted_at = datetime()
 		RETURN inv.id, inv.inviter_id, inv.invitee_email, inv.resource_id,
-		       inv.resource_type, inv.permission, inv.message, inv.expires_at, inv.created_at
+		       inv.resource_type, inv.permission, inv.message, inv.expires_at, inv.created_at,
+		       inv.tenant_id
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"token": token,
@@ -203,8 +204,15 @@ func (s *InvitationService) AcceptInvitation(ctx context.Context, token, userID 
 		inviterID = v.(string)
 	}
 
+	// The share is created in the tenant that owns the notebook — recorded on the
+	// invitation when the owner issued it — not in the accepting user's tenant.
+	var invTenantID string
+	if v, ok := record.Get("inv.tenant_id"); ok && v != nil {
+		invTenantID, _ = v.(string)
+	}
+
 	// Create the SHARED_WITH relationship
-	if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID); err != nil {
+	if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID, invTenantID); err != nil {
 		s.logger.Error("Failed to create sharing from accepted invitation", zap.Error(err))
 		return nil, err
 	}
@@ -435,7 +443,7 @@ func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userI
 		MATCH (inv:Invitation {invitee_email: $email, status: 'pending'})
 		WHERE inv.expires_at > datetime()
 		SET inv.status = 'accepted', inv.accepted_at = datetime()
-		RETURN inv.id, inv.resource_id, inv.permission, inv.inviter_id
+		RETURN inv.id, inv.resource_id, inv.permission, inv.inviter_id, inv.tenant_id
 	`
 	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, map[string]interface{}{
 		"email": email,
@@ -446,7 +454,7 @@ func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userI
 	}
 
 	for _, record := range result.Records {
-		var resourceID, permission, inviterID string
+		var resourceID, permission, inviterID, invTenantID string
 		if v, ok := record.Get("inv.resource_id"); ok && v != nil {
 			resourceID = v.(string)
 		}
@@ -456,8 +464,12 @@ func (s *InvitationService) ProcessPendingInvitations(ctx context.Context, userI
 		if v, ok := record.Get("inv.inviter_id"); ok && v != nil {
 			inviterID = v.(string)
 		}
+		// Share into the notebook owner's tenant, recorded on the invitation.
+		if v, ok := record.Get("inv.tenant_id"); ok && v != nil {
+			invTenantID, _ = v.(string)
+		}
 
-		if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID); err != nil {
+		if err := s.notebookService.createSharingRelationship(ctx, resourceID, userID, "", permission, inviterID, invTenantID); err != nil {
 			s.logger.Error("Failed to create sharing from pending invitation",
 				zap.String("resource_id", resourceID),
 				zap.Error(err),
