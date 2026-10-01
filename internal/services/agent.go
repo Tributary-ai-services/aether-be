@@ -603,6 +603,8 @@ func (s *AgentService) AddKnowledgeSource(ctx context.Context, agentID, notebook
 	// Create SEARCHES_IN relationship
 	query := `
 		MATCH (a:Agent {id: $agentId}), (n:Notebook {id: $notebookId})
+		WHERE ($tenant_id = '' OR a.tenant_id = $tenant_id)
+		  AND ($tenant_id = '' OR n.tenant_id = $tenant_id)
 		CREATE (a)-[:SEARCHES_IN {
 			added_at: datetime($addedAt),
 			added_by: $addedBy,
@@ -615,6 +617,7 @@ func (s *AgentService) AddKnowledgeSource(ctx context.Context, agentID, notebook
 	params := map[string]interface{}{
 		"agentId":        agentID,
 		"notebookId":     notebookID,
+		"tenant_id":      tenantFromContext(ctx),
 		"addedAt":        time.Now().Format(time.RFC3339),
 		"addedBy":        userID,
 		"searchStrategy": "hybrid", // Default to hybrid search
@@ -650,12 +653,14 @@ func (s *AgentService) RemoveKnowledgeSource(ctx context.Context, agentID, noteb
 
 	query := `
 		MATCH (a:Agent {id: $agentId})-[r:SEARCHES_IN]->(n:Notebook {id: $notebookId})
+		WHERE $tenant_id = '' OR a.tenant_id = $tenant_id
 		DELETE r
 	`
 
 	params := map[string]interface{}{
 		"agentId":    agentID,
 		"notebookId": notebookID,
+		"tenant_id":  tenantFromContext(ctx),
 	}
 
 	_, err = s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -680,6 +685,7 @@ func (s *AgentService) GetAgentKnowledgeSources(ctx context.Context, agentID, us
 
 	query := `
 		MATCH (a:Agent {id: $agentId})-[r:SEARCHES_IN]->(n:Notebook)
+		WHERE $tenant_id = '' OR a.tenant_id = $tenant_id
 		RETURN n.id as notebook_id, n.name as notebook_name,
 		       r.search_weight as search_weight, r.filters as filters,
 		       r.added_at as added_at, r.added_by as added_by
@@ -687,7 +693,8 @@ func (s *AgentService) GetAgentKnowledgeSources(ctx context.Context, agentID, us
 	`
 
 	params := map[string]interface{}{
-		"agentId": agentID,
+		"agentId":   agentID,
+		"tenant_id": tenantFromContext(ctx),
 	}
 
 	records, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -941,6 +948,22 @@ func (s *AgentService) deleteAgentInBuilder(ctx context.Context, agentBuilderID 
 	return err
 }
 
+// tenantFromContext returns the tenant the current request is acting in, as
+// resolved by SpaceContextMiddleware and carried on the request context.
+//
+// It returns "" for the routes that deliberately run without a space context:
+// /api/v1/agents/internal and /api/v1/internal/*, used for service-to-service
+// calls from agent-builder, plus background sync. Queries below pair this with
+// an "$tenant_id = '' OR a.tenant_id = $tenant_id" predicate so those paths
+// keep working while every space-resolved request is pinned to its own tenant.
+// The value is server-side only — a client cannot blank it to widen a query.
+func tenantFromContext(ctx context.Context) string {
+	if sc, ok := models.SpaceContextFromContext(ctx); ok && sc != nil {
+		return sc.TenantID
+	}
+	return ""
+}
+
 // setSpaceHeaders forwards the caller's verified space context to
 // agent-builder.
 //
@@ -1124,6 +1147,7 @@ func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Age
 func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Agent) error {
 	query := `
 		MATCH (a:Agent {id: $id})
+		WHERE $tenant_id = '' OR a.tenant_id = $tenant_id
 		SET a.name = $name,
 		    a.description = $description,
 		    a.status = $status,
@@ -1138,6 +1162,7 @@ func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Age
 
 	params := map[string]interface{}{
 		"id":          agent.ID,
+		"tenant_id":   tenantFromContext(ctx),
 		"name":        agent.Name,
 		"description": agent.Description,
 		"status":      string(agent.Status),
@@ -1161,11 +1186,13 @@ func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Age
 func (s *AgentService) deleteAgentInNeo4j(ctx context.Context, agentID string) error {
 	query := `
 		MATCH (a:Agent {id: $agentId})
+		WHERE $tenant_id = '' OR a.tenant_id = $tenant_id
 		DETACH DELETE a
 	`
 
 	params := map[string]interface{}{
-		"agentId": agentID,
+		"agentId":   agentID,
+		"tenant_id": tenantFromContext(ctx),
 	}
 
 	_, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -1181,12 +1208,14 @@ func (s *AgentService) getAgentFromNeo4j(ctx context.Context, agentID string) (*
 	// This handles the case where ListAgents returns agent-builder IDs
 	query := `
 		MATCH (a:Agent)
-		WHERE a.id = $agentId OR a.agent_builder_id = $agentId
+		WHERE (a.id = $agentId OR a.agent_builder_id = $agentId)
+		  AND ($tenant_id = '' OR a.tenant_id = $tenant_id)
 		RETURN a
 	`
 
 	params := map[string]interface{}{
-		"agentId": agentID,
+		"agentId":   agentID,
+		"tenant_id": tenantFromContext(ctx),
 	}
 
 	records, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
@@ -1234,6 +1263,7 @@ func (s *AgentService) HasDefaultAgent(ctx context.Context, spaceID string) (boo
 func (s *AgentService) createOwnershipRelationship(ctx context.Context, agentID, userID string) error {
 	query := `
 		MATCH (a:Agent {id: $agentId}), (u:User {id: $userId})
+		WHERE $tenant_id = '' OR a.tenant_id = $tenant_id
 		CREATE (a)-[:OWNED_BY {
 			created_at: datetime($createdAt)
 		}]->(u)
@@ -1242,6 +1272,7 @@ func (s *AgentService) createOwnershipRelationship(ctx context.Context, agentID,
 	params := map[string]interface{}{
 		"agentId":   agentID,
 		"userId":    userID,
+		"tenant_id": tenantFromContext(ctx),
 		"createdAt": time.Now().Format(time.RFC3339),
 	}
 
@@ -1256,6 +1287,7 @@ func (s *AgentService) createOwnershipRelationship(ctx context.Context, agentID,
 func (s *AgentService) createTeamRelationship(ctx context.Context, agentID, teamID, userID string) error {
 	query := `
 		MATCH (a:Agent {id: $agentId}), (t:Team {id: $teamId})
+		WHERE $tenant_id = '' OR a.tenant_id = $tenant_id
 		CREATE (a)-[:MANAGED_BY_TEAM {
 			assigned_at: datetime($assignedAt),
 			assigned_by: $assignedBy
@@ -1265,6 +1297,7 @@ func (s *AgentService) createTeamRelationship(ctx context.Context, agentID, team
 	params := map[string]interface{}{
 		"agentId":    agentID,
 		"teamId":     teamID,
+		"tenant_id":  tenantFromContext(ctx),
 		"assignedAt": time.Now().Format(time.RFC3339),
 		"assignedBy": userID,
 	}
@@ -1336,122 +1369,6 @@ func (s *AgentService) buildAgentResponse(ctx context.Context, agent *models.Age
 	// This can be optimized later with more complex queries
 
 	return response, nil
-}
-
-func (s *AgentService) buildListAgentsQuery(req models.AgentSearchRequest, userID string, userTeams []string) string {
-	query := `
-		MATCH (a:Agent)
-		WHERE (
-			a.owner_id = $userId OR
-			a.is_public = true OR
-			(a.team_id IN $userTeams)
-		)
-	`
-
-	conditions := make([]string, 0)
-
-	if req.Query != "" {
-		conditions = append(conditions, "a.search_text CONTAINS $query")
-	}
-	if req.SpaceID != "" {
-		conditions = append(conditions, "a.space_id = $spaceId")
-	}
-	if req.TeamID != "" {
-		conditions = append(conditions, "a.team_id = $teamId")
-	}
-	if req.Status != "" {
-		conditions = append(conditions, "a.status = $status")
-	}
-	if req.SpaceType != "" {
-		conditions = append(conditions, "a.space_type = $spaceType")
-	}
-	if req.IsPublic != nil {
-		conditions = append(conditions, "a.is_public = $isPublic")
-	}
-	if req.IsTemplate != nil {
-		conditions = append(conditions, "a.is_template = $isTemplate")
-	}
-
-	if len(conditions) > 0 {
-		query += " AND " + strings.Join(conditions, " AND ")
-	}
-
-	query += `
-		RETURN a
-		ORDER BY a.updated_at DESC
-	`
-
-	if req.Limit > 0 {
-		query += " SKIP $offset LIMIT $limit"
-	}
-
-	return query
-}
-
-func (s *AgentService) buildListAgentsParams(req models.AgentSearchRequest, userID string, userTeams []string) map[string]interface{} {
-	params := map[string]interface{}{
-		"userId":    userID,
-		"userTeams": userTeams,
-	}
-
-	if req.Query != "" {
-		params["query"] = req.Query
-	}
-	if req.SpaceID != "" {
-		params["spaceId"] = req.SpaceID
-	}
-	if req.TeamID != "" {
-		params["teamId"] = req.TeamID
-	}
-	if req.Status != "" {
-		params["status"] = string(req.Status)
-	}
-	if req.SpaceType != "" {
-		params["spaceType"] = string(req.SpaceType)
-	}
-	if req.IsPublic != nil {
-		params["isPublic"] = *req.IsPublic
-	}
-	if req.IsTemplate != nil {
-		params["isTemplate"] = *req.IsTemplate
-	}
-	if req.Limit > 0 {
-		params["limit"] = req.Limit
-		params["offset"] = req.Offset
-	}
-
-	return params
-}
-
-func (s *AgentService) getAgentCount(ctx context.Context, req models.AgentSearchRequest, userID string, userTeams []string) (int, error) {
-	// Similar to list query but with COUNT instead of RETURN
-	query := strings.Replace(
-		s.buildListAgentsQuery(req, userID, userTeams),
-		"RETURN a ORDER BY a.updated_at DESC",
-		"RETURN count(a) as total",
-		1,
-	)
-
-	// Remove SKIP/LIMIT for count
-	if strings.Contains(query, "SKIP") {
-		parts := strings.Split(query, "SKIP")
-		query = parts[0]
-	}
-
-	params := s.buildListAgentsParams(req, userID, userTeams)
-	delete(params, "limit")
-	delete(params, "offset")
-
-	records, err := s.neo4j.ExecuteQueryWithLogging(ctx, query, params)
-	if err != nil {
-		return 0, errors.Database("Failed to count agents", err)
-	}
-
-	if len(records.Records) == 0 {
-		return 0, nil
-	}
-
-	return int(records.Records[0].Values[0].(int64)), nil
 }
 
 func (s *AgentService) filtersToJSON(filters map[string]interface{}) string {
