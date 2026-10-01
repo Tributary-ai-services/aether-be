@@ -15,7 +15,7 @@ answers:
   - "Which settings change behaviour, and do the code defaults match what production runs?"
   - "Do the tests pass, and if some fail, is that my machine or the repository?"
   - "Where is the API contract and the deeper design documentation?"
-verified_against: "aether-be@30a12f7, 2026-09-28"
+verified_against: "aether-be@72cfc06, 2026-09-30"
 depth: standard
 ---
 
@@ -36,7 +36,9 @@ and produce things from them — summaries, reports, podcasts. This repository i
 the server that makes that possible. It holds the authoritative record of who
 owns what: users, spaces (the tenancy boundary that isolates one user's or
 organization's data from everyone else's, either a `personal` space or an
-`organization` space), teams, organizations, notebooks, documents,
+`organization` space; every space belongs to exactly one tenant, and the
+tenant's `tenant_id` stamped on each graph node is the key that keeps one
+tenant's data out of another's queries), teams, organizations, notebooks, documents,
 conversations, comments, agents, workflows, and the artifacts ("productions")
 those workflows emit. All of it lives as nodes and relationships in Neo4j, and
 every read or write from the frontend goes through this service.
@@ -59,10 +61,10 @@ repository.
 
 ## Status & scope
 
-**As of 2026-09-28, this is deployed and carrying traffic.** It is not an early
+**As of 2026-09-30, this is deployed and carrying traffic.** It is not an early
 prototype, which is what this section said until the 2026-08-26 refresh — that
 claim was eight months stale. This file was last verified against commit
-`30a12f7` on 2026-09-28.
+`72cfc06` on 2026-09-30.
 
 ```
 $ kubectl get deploy aether-backend -n aether-be -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,IMAGE:.spec.template.spec.containers[0].image
@@ -73,13 +75,18 @@ aether-backend   2       ghcr.io/tributary-ai-services/aether-be:main-30a12f7
 Two replicas in namespace `aether-be`, created 2025-12-16, reachable at
 `https://aether-api.tas.scharber.com`. The running image is the CI-built
 `ghcr.io` image of commit `30a12f7`, pulled anonymously with no
-`imagePullSecret`. The manifest has caught up with the registry but not
-with the tag: OPS-42 merged with commit `b2153d2`, so `k8s/deployment.yaml:43`
-now names the `ghcr.io` image, but at `30a12f7` it still pins `main-ecd031b`.
-Moving the pin to `main-30a12f7` is open as PR #58 (OPS-, SEC-, AB- numbers
-here are TAS backlog tickets). Until that merges, `kubectl apply -k k8s/`
-rolls production back one commit, to a build without the space-membership
-change described under How it fits.
+`imagePullSecret`. **That is one commit behind `main`.** The head of `main` is
+`72cfc06`, which binds every tenant-scoped query to its tenant (see Tenant
+isolation under How it fits); on 2026-09-30 it had merged but not been rolled
+out, so production does not yet have those filters.
+
+The manifest has caught up with the registry but not with the tag: OPS-42
+merged with commit `b2153d2`, so `k8s/deployment.yaml:43` names the `ghcr.io`
+image, but at `72cfc06` it still pins `main-ecd031b`. Moving the pin to
+`main-30a12f7` is open as PR #58 (OPS-, SEC-, AB-, TEST- numbers here are TAS
+backlog tickets), and was still open on 2026-09-30. Until a pin catches up,
+`kubectl apply -k k8s/` rolls production back to `ecd031b`, a build without
+either the space-membership change or the tenant filters.
 
 It registers 248 handlers across 34 route groups under `/api/v1`
 (`internal/handlers/routes.go:333`). The deployment's probes now split liveness
@@ -92,9 +99,9 @@ installed that CA locally, drop `-k`.
 
 ```bash
 curl -sS -k https://aether-api.tas.scharber.com/health/live
-{"status":"alive","timestamp":"2026-09-28T20:30:06.359103706Z"}
+{"status":"alive","timestamp":"2026-10-01T01:00:24.529010176Z"}
 curl -sS -k https://aether-api.tas.scharber.com/health/ready
-{"status":"ready","timestamp":"2026-09-28T20:30:06.466163338Z","services":{"kafka":{"status":"healthy","response_time_ms":1652919},"neo4j":{"status":"healthy","response_time_ms":1151498},"storage":{"status":"healthy","response_time_ms":886850}}}
+{"status":"ready","timestamp":"2026-10-01T01:00:24.607001901Z","services":{"kafka":{"status":"healthy","response_time_ms":721828},"neo4j":{"status":"healthy","response_time_ms":1173356},"storage":{"status":"healthy","response_time_ms":603621}}}
 ```
 
 The split is the OPS-39 fix (commit `5a928ee`). Before it, both probes pointed
@@ -115,10 +122,12 @@ Deployment asks the scheduler to spread replicas across nodes with a soft
 with two nodes a hard constraint would leave a replica Pending whenever one node
 is down. The cost is that a rollout can co-locate both replicas, and on
 2026-09-24 both pods were on `um773dev`. They were again after the
-2026-09-28 rollout of `main-30a12f7`, so the service currently survives a
-pod restart but not the loss of that node. Deleting one pod rebalances them.
+2026-09-28 rollout of `main-30a12f7`, and still were on 2026-09-30, so the
+service currently survives a pod restart but not the loss of that node.
+Deleting one pod rebalances them. (The timestamps in the health output above
+are UTC; that check ran on the evening of 2026-09-30, Pacific time.)
 
-What is genuinely unfinished, verified against the code at `30a12f7`:
+What is genuinely unfinished, verified against the code at `72cfc06`:
 
 - **`APIServer.Shutdown()` does nothing.** It logs and returns nil
   (`internal/handlers/routes.go:913`). The HTTP server itself does drain — `main`
@@ -135,8 +144,9 @@ What is genuinely unfinished, verified against the code at `30a12f7`:
   tests landed with it — but the older service tests remain switched off.
   Unit coverage beyond `internal/validation` and `pkg/errors` is narrow: the
   readiness policy and liveness contract (`internal/handlers`), config
-  validation (`internal/config`), Kafka and DBHub behaviour
-  (`internal/services`), and the streaming hub (`internal/streaming`).
+  validation (`internal/config`), Kafka and DBHub behaviour and the
+  tenant-isolation source check (`internal/services`), and the streaming hub
+  (`internal/streaming`).
 - **Argo Workflows submission is wired but cold.** The generator targets
   namespace `argo` with service account `argo-workflow-runner`
   (`internal/services/argo_generator.go:37`), `ARGO_WORKFLOWS_ENABLED` is `"true"`
@@ -148,24 +158,40 @@ What is genuinely unfinished, verified against the code at `30a12f7`:
   checkboxes ("Go project structure", "Neo4j database setup", "Redis
   integration") are still unticked against software that has been serving
   requests for eight months.
-- **The space-membership check has a server but no deployed caller yet.**
-  `GET /api/v1/spaces/:id/membership` is live in `main-30a12f7` (see How it
-  fits), but the agent-builder change that calls it is on the unmerged
-  `fix/ab-5-space-isolation` branch of `tas-agent-builder`, and the deployed
-  agent-builder on 2026-09-28 was `tas-agent-builder:events-d224fd4`, which
-  predates it. Until that ships, agent-builder still does not check that a
-  caller belongs to the space it is asked about.
+- **The tenant filters are merged but not deployed.** See the first
+  paragraphs of this section: production runs `main-30a12f7`, and the
+  filtering in `72cfc06` reaches users only when a newer image is rolled out.
+- **Ten queries in the team and organization layer are still unfiltered.**
+  `team.go` (6) and `organization.go` (4) are tracked as TEST-7 rather than
+  fixed, because `tenant_id` is the wrong axis for the nodes that define
+  tenancy and the right one has not been settled. The lint test pins that
+  count so it cannot grow (`internal/services/tenant_isolation_lint_test.go:135`).
+- **The space-membership check now has a deployed caller, but no observed
+  call.** `GET /api/v1/spaces/:id/membership` is live in `main-30a12f7` (see
+  How it fits). The agent-builder side merged as `tas-agent-builder` PR #18 on
+  2026-09-28 and runs as `tas-agent-builder:spaceiso-892ff8f`. A Loki search
+  of `aether-backend` logs for `/membership` over the 48 hours to 2026-09-30
+  found no request, so the round trip has not been seen working in production.
 
-CI on `main` is green: the Tests, CI/CD Pipeline, Performance Testing, and
-Progressive Testing workflows all succeeded on the push of `30a12f7`
-(2026-09-28), as did the scheduled Security Scanning run that morning. CI
-no longer depended on the withdrawn MinIO registries after commit `b2153d2`
+CI on `main` was green through `30a12f7`: the Tests, CI/CD Pipeline,
+Performance Testing, and Progressive Testing workflows all succeeded on its
+push (2026-09-28), and the scheduled Performance Testing and Security Scanning
+runs succeeded on 2026-09-29 and 2026-09-30. Of the push runs for `72cfc06`,
+Performance Testing had succeeded when this file was written; the other three
+were still running.
+
+> [!UNVERIFIED] The Tests, CI/CD Pipeline, and Progressive Testing outcomes
+> for `72cfc06` are not recorded here; they had not finished on 2026-09-30.
+> The same unit and integration tests were run locally against that commit
+> and passed (see below).
+
+CI no longer depended on the withdrawn MinIO registries after commit `b2153d2`
 moved its test MinIO to the frozen `bitnamilegacy/minio` image. Every job
 had been failing at the MinIO pull before that, before Go was even set up.
 
 ### Build and test
 
-`make build` is clean at `30a12f7`:
+`make build` is clean at `72cfc06`:
 
 ```bash
 make build
@@ -179,9 +205,9 @@ go build -o bin/aether-backend cmd/server/main.go
 make test-unit
 Running unit tests...
 PASS
-ok  	github.com/Tributary-ai-services/aether-be/internal/validation	0.034s
+ok  	github.com/Tributary-ai-services/aether-be/internal/validation	0.021s
 PASS
-ok  	github.com/Tributary-ai-services/aether-be/pkg/errors	0.006s
+ok  	github.com/Tributary-ai-services/aether-be/pkg/errors	0.004s
 ```
 
 `make test-unit` only covers those two packages (`Makefile:270`). The newer
@@ -191,14 +217,55 @@ nothing running:
 ```bash
 go test ./internal/config ./internal/handlers ./internal/services ./internal/streaming
 ok  	github.com/Tributary-ai-services/aether-be/internal/config	0.003s
-ok  	github.com/Tributary-ai-services/aether-be/internal/handlers	0.037s
-ok  	github.com/Tributary-ai-services/aether-be/internal/services	0.031s
-ok  	github.com/Tributary-ai-services/aether-be/internal/streaming	0.011s
+ok  	github.com/Tributary-ai-services/aether-be/internal/handlers	0.025s
+ok  	github.com/Tributary-ai-services/aether-be/internal/services	0.082s
+ok  	github.com/Tributary-ai-services/aether-be/internal/streaming	0.006s
 ```
 
-Commit `30a12f7` added no unit tests for the new membership handler or the
+`./internal/services` now includes `TestEveryTenantScopedQueryIsIsolated`,
+the tenant-isolation lint described under How it fits. It reads the Go source
+rather than a database, so it needs nothing running, and it is the check most
+likely to fail on a change you make here: add a Cypher query that reaches a
+tenant-scoped node without a tenant filter and this test names the file, the
+function, and the offending Cypher match clause. Run it on its own with:
+
+```bash
+go test -run TestEveryTenantScopedQueryIsIsolated -v ./internal/services
+=== RUN   TestEveryTenantScopedQueryIsIsolated
+--- PASS: TestEveryTenantScopedQueryIsIsolated (0.07s)
+PASS
+```
+
+Commit `30a12f7` added no unit tests for the membership handler or the
 space-header forwarding; the packages above pass, but that path is not
 exercised by them.
+
+The two-tenant isolation tests need a real Neo4j and nothing else. They sit
+behind the `integration` build tag, so neither `make test` nor `go test ./...`
+compiles them; run them with the tag. A throwaway container is the safe
+target. The skip message suggests port-forwarding the cluster's Neo4j instead,
+but the tests seed and then delete their own nodes, so that writes to the
+production graph.
+
+```bash
+docker run -d --rm --name iso-neo4j -p 17688:7687 -e NEO4J_AUTH=neo4j/password neo4j:5.15-community
+NEO4J_URI=bolt://localhost:17688 go test -tags=integration -count=1 -run TenantIsolation -v ./tests/integration/
+--- PASS: TestTenantIsolation_ReadsAcrossTenantsReturnNothing (4.47s)
+--- PASS: TestTenantIsolation_WritesAcrossTenantsAreRejected (0.61s)
+--- PASS: TestTenantIsolation_OwnTenantStillWorks (0.24s)
+PASS
+ok  	github.com/Tributary-ai-services/aether-be/tests/integration	5.338s
+```
+
+That run (2026-09-30, `72cfc06`) passed 25 subtests: 9 cross-tenant reads, 6
+cross-tenant writes, and 10 same-tenant operations that must keep working.
+`NEO4J_PASSWORD` defaults to `password` in the test. Without a reachable
+Neo4j the three tests skip with
+`Neo4j not reachable at bolt://localhost:7687 (...) — skipping tenant isolation tests`
+rather than fail. In CI they run inside the integration step, which is marked
+`continue-on-error` (`.github/workflows/test.yml:220`), so a red isolation test
+there does not block a merge; the lint test above runs in the blocking service
+test step (`.github/workflows/test.yml:212`).
 
 **`make test` fails on a clean checkout, and that is expected rather than a
 regression.** It runs `go test -v ./...` (`Makefile:28`), which sweeps in
@@ -217,7 +284,8 @@ FAIL	github.com/Tributary-ai-services/aether-be/tests/integration	150.348s
 
 Each of the five aborts in its suite setup
 (`tests/integration/api_format_test.go:24` and its siblings). With nothing
-listening, the first probe to fail is the backend itself:
+listening, the first probe to fail is the backend itself (the tenant-isolation
+file in the same directory is not among them; it is tagged and skips cleanly):
 `Service at http://localhost:8080/health not available after 30s`. They need
 the stack in `docker-compose.test.yml` — a WireMock (HTTP stub server) AudiModal stub on `:8084`,
 a DeepLake stub, Redis, MinIO, and Keycloak. Bringing up only this service on
@@ -227,7 +295,7 @@ observed in the 2026-08-26 run); it does not make them pass. In the 2026-09-24
 `go test ./...` run every package outside `tests/integration` passed, including
 `tests/progressive` (unit tests for the canary / A/B rollout helpers described
 in `docs/PROGRESSIVE_TESTING.md`). That full sweep was not re-run for the
-2026-09-28 refresh.
+2026-09-28 or 2026-09-30 refreshes.
 
 On a machine with no cached MinIO image, `docker-compose.test.yml` will not
 come up at all. Its `minio-test` service still names `minio/minio:latest`
@@ -262,9 +330,10 @@ Live Streams, named in the Kafka line, is the Aether page that shows platform
 activity events in real time. It is described under How it fits.
 
 Confirm it is serving. The output below is from the 2026-09-24 run against
-`ecd031b`. It was re-run on 2026-09-28 against `30a12f7` (on ports 17687 and
-8097 to avoid local collisions), and the boot lines and response shapes were
-identical:
+`ecd031b`. It was re-run on 2026-09-28 against `30a12f7` and on 2026-09-30
+against `72cfc06` (on other local ports, to avoid collisions), and the boot
+lines, the `/health`, `/health/live`, `/api/v1/users/me` and `/api/v1/logs`
+responses below were identical in shape each time:
 
 ```bash
 curl -sS http://localhost:8099/health
@@ -396,7 +465,8 @@ likely pass those checks too, but that was not tested; use `id_token`.
 > `unauthorized_client`. Both appear to have drifted from the realm. The token
 > endpoint, the realm, and the `aether-frontend` client's direct-access grant
 > were each verified; only the credential values were not. The exchange was not
-> re-attempted in the 2026-09-24 refresh. The client secret no longer matters
+> re-attempted in the 2026-09-24, 2026-09-28 or 2026-09-30 refreshes; on
+> 2026-09-30 only the unauthenticated 401 above was re-checked. The client secret no longer matters
 > to this service — nothing reads it (see Configuration) — so only the user
 > credentials are relevant here. Obtain working credentials from the realm
 > owner before relying on this step.
@@ -521,7 +591,9 @@ it was asked about. This service is the only place that knows, so it now
 answers the question for other services at
 `GET /api/v1/spaces/:id/membership` (`internal/handlers/routes.go:614`). The
 caller passes the end user's own bearer token, and membership is decided by
-the same `SpaceContextService` the space middleware uses, so there is one
+the same `SpaceContextService` the space middleware uses (the service that
+resolves a user and a space id into the space's tenant, type, and the user's
+role and permissions in it; `internal/services/space_context.go:36`), so there is one
 definition of "in this space" rather than a copy that can drift. A member
 gets 200 with `member`, `space_type`, `space_id`, `tenant_id`, `user_role`,
 and `permissions`. Anyone else gets 403 with `"member":false`, whatever the
@@ -535,7 +607,7 @@ a query parameter. Without it, personal is tried before organization.
 
 In the other direction, every outbound agent-builder request now forwards the
 caller's verified space as `X-Space-ID` and `X-Space-Type`
-(`internal/services/agent.go:956`). The space middleware attaches the
+(`internal/services/agent.go:979`). The space middleware attaches the
 resolved context to the request context so the service layer can find it
 (`internal/middleware/space_context.go:104`), and `CreateAgent` attaches it
 itself because onboarding reaches it without the middleware
@@ -559,6 +631,60 @@ list another space's agents gets its own space's agents instead.
 > Calling the deployed API), and `30a12f7` ships no test for the handler. The
 > response shapes above are read from the code.
 
+### Tenant isolation
+
+Every space belongs to exactly one tenant, and every tenant-scoped node in the
+graph (notebooks, documents, conversations and their messages, comments,
+agents, workflows and their steps, productions, saved queries, invitations,
+and the rest) carries that tenant's `tenant_id`. Isolation means a query only
+ever reaches nodes in the caller's tenant, whatever ids the caller supplies.
+
+Until commit `72cfc06` (TEST-3, TEST-2) that held for some queries and not
+others. Conversation, comment, workflow, saved-query, agent, invitation,
+sharing and document-lookup queries matched by id alone, so knowing another
+tenant's UUID was enough to read or change its row. `ListConversations` and
+`GetComments` were the plainest cases: each accepted a `tenantID` argument and
+never put it in the Cypher. `FindDocumentByURL` fell back to matching a bare
+filename across every tenant, so two tenants holding a file of the same name
+could be served each other's document. All of these now bind the tenant. Child
+nodes such as `ChatMessage` and `WorkflowStep` are reached through their
+tenant-filtered parent rather than by their own id, and are stamped with
+`tenant_id` when written. Agent queries read the tenant from the request
+context (`internal/services/agent.go:960`) and admit an empty tenant only for
+the internal routes agent-builder calls without a space, a value the client
+cannot set.
+
+The rule is enforced by a test, not by the database. The cluster runs Neo4j
+5.15 Community, which has no property-existence or node-key constraints, so
+"every Notebook carries a `tenant_id`" cannot be declared in the schema. The
+lint test walks every Cypher literal under `internal/` and fails on any
+tenant-scoped node that is neither filtered on `tenant_id` or `space_id` nor
+reachable from one that is. Queries that legitimately cross tenants (an
+invitation, a notebook shared into another space, timer-driven sweepers, the
+platform-wide integrity audit) carry a `tenant-exempt:` comment, and each one
+is also listed in a frozen map in the test
+(`internal/services/tenant_isolation_lint_test.go:82`), so adding an exemption
+is a diff a reviewer sees. The lint cannot see filters assembled with
+`fmt.Sprintf`, which is what the two-tenant integration tests under Build and
+test are for.
+
+Two limits are worth knowing. The team and organization layer is out of
+scope (TEST-7, see Status & scope). And none of this is in production until an
+image built from `72cfc06` or later is deployed.
+
+Migration `migrations/007_tenant_isolation_reset.cypher` came with the change,
+and it is **not** a step you need to run to get isolation. Its header says so:
+nothing in the code fix depends on it. It deletes test users and six ownerless
+tenants from the production graph (dry-run counts measured 2026-09-30 are
+recorded in the header), and leaves an optional third step commented out,
+because that step would delete 24 real chat messages to add a property that
+isolation does not rely on. It destroys data irreversibly and asks for a
+verified backup first. The commit that added it says it was not executed.
+
+> [!UNVERIFIED] Whether migration 007 has since been applied to production was
+> not checked against the live graph for this file; the statement above rests
+> on commit `72cfc06` saying it had not been run as of 2026-09-30.
+
 ## Configuration
 
 Configuration is environment variables only, loaded in `internal/config/config.go`.
@@ -567,35 +693,43 @@ defaults that differ from what production runs, and the gap has bitten people.
 
 | Variable | Code default | Production value | What it changes |
 |---|---|---|---|
+| HTTP listen port (PORT) | `8080` (`internal/config/config.go:321`) | `8080` | The port the server binds. The quick start overrides it to stay clear of anything else you run locally. |
 | `NEO4J_URI` | `bolt://localhost:7687` | `bolt://neo4j.aether-be.svc.cluster.local:7687` | Graph endpoint. Plain Bolt — TLS is off on this cluster. |
 | `NEO4J_DATABASE` | `aether` | `neo4j` | **Differs.** The default names a database a stock Neo4j does not have. |
 | `KEYCLOAK_ENABLED` | `true` | unset (so `true`) | `false` skips token verification entirely and leaves user-scoped routes returning 401. |
 | `KEYCLOAK_URL` | `http://localhost:8081` (`internal/config/config.go:356`) | `http://keycloak-shared.tas-shared:8080` | Where the OIDC provider is discovered, and the only input to the issuer allow-list besides the realm. See below the table. |
 | `KEYCLOAK_REALM` | `aether` | `aether` | Realm whose issuer must appear in the allow-list. |
 | `STORAGE_ENABLED` | `false` | `true` | **Differs.** Off by default, so local runs have no file storage unless you opt in. |
+| `S3_ENDPOINT` / `S3_BUCKET` / `AWS_REGION` | empty / `aether-storage` / `us-east-1` (`internal/config/config.go:365`) | `http://minio-shared.tas-shared:9000` / `aether-storage` / `us-east-1` | Where file bytes go when storage is on. Credentials are `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `aether-backend-secret`; validation refuses to boot without them while `STORAGE_ENABLED=true`. `S3_USE_SSL` (default `true`) is not set in production. |
 | `KAFKA_ENABLED` | `false` | `true` | **Differs.** Off by default; event publishing, podcast progress events (which also need Redis, see How it fits), and the Live Streams hub need it. In production it is set on the Deployment's `env`, not in the ConfigMap. |
-| `POSTGRES_ENABLED` | `false` | `true` (claimed) — see the [!UNVERIFIED] note below: live boot logs show it off | **Differs, if the claim holds.** Off by default; security-event persistence needs it. |
+| `KAFKA_BROKERS` | `localhost:9092` (`internal/config/config.go:374`) | `kafka-shared.tas-shared:9092` | Comma-separated broker list. Set in both the ConfigMap and the Deployment's `env`, to the same value; the `env` entry is the one that wins. |
+| `REDIS_ADDR` / `REDIS_DB` | `localhost:6379` / `0` (`internal/config/config.go:349`) | `redis-shared.tas-shared:6379` / `0` | Redis for podcast progress. `REDIS_PASSWORD` defaults to empty, but `redis-shared` requires one; production reads it from `aether-backend-secret` (see How it fits for the matching rule). |
+| `AGENT_BUILDER_URL` | unset (`internal/handlers/routes.go:91`) | `http://agent-builder.tas-agent-builder:8087/api/v1` | Base URL for every `/api/v1/agents/*` call. Unset, the service boots and logs `AGENT_BUILDER_URL not configured - agent endpoints will not work`. |
+| `AUDIMODAL_BASE_URL` / `AUDIMODAL_ENABLED` | `http://audimodal:8080` / `true` (`internal/config/config.go:386`) | `http://audimodal.aether-be:8080` / `true` | Document processing. The API key in production comes from secret `audimodal-api-auth`, key `api-key`, through the Deployment's `env`, which takes precedence over the `AUDIMODAL_API_KEY` key also present in `aether-backend-secret`. |
+| `DEEPLAKE_BASE_URL` / `DEEPLAKE_ENABLED` | `http://localhost:8000` / `true` (`internal/config/config.go:406`) | `http://deeplake-api.aether-be:8000` / `true` | Vector search and embeddings. `DEEPLAKE_API_KEY` is in `aether-backend-secret`. |
+| `POSTGRES_ENABLED` | `false` (`internal/config/config.go:338`) | unset, so `false` — set in neither the ConfigMap, the Deployment's `env`, nor `aether-backend-secret` (re-checked 2026-09-30), and both replicas logged `PostgreSQL disabled` at boot on 2026-09-24 | Security-event persistence to PostgreSQL. Off in production; whether that is intended is open (see the note below). |
 | `ROUTER_ENABLED` | `true` | `true` | Mounts the `/api/v1/router/*` proxy. When true, `ROUTER_SERVICE_BASE_URL`, `ROUTER_SERVICE_TIMEOUT`, and `ROUTER_SERVICE_CONNECT_TIMEOUT` must be non-empty (`internal/config/config.go:601`) — see below the table. |
 | `ARGO_WORKFLOWS_ENABLED` | `true` unless literally `"false"` | `true` | Whether workflow execution submits Argo `Workflow` objects. |
 | `TIMESCALE_DSN` | unset | set on the Deployment's `env` | Backs `/api/v1/streams/stats` with the TimescaleDB `events_1m` aggregate. Unset or unreachable, the route answers 200 with `"source":"unavailable"`. |
 | `DBHUB_DEFAULT_SOURCE` | empty | unset | The DBHub source id the SQL console uses for connections that do not record their own. Empty on purpose: sending a guessed source is worse than sending none. |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | `debug` / `json` | Production runs at debug, which is a meaningful volume difference in Loki. |
 
-> [!UNVERIFIED] The `POSTGRES_ENABLED` production value of `true` above is
-> contradicted by what is running. On 2026-09-24 neither ConfigMap
-> `aether-backend-config` nor the Deployment's `env` sets `POSTGRES_ENABLED`,
-> so the code default of `false` applies (`internal/config/config.go:338`), and
-> both production replicas logged
+> [!UNVERIFIED] Whether PostgreSQL security-event persistence is *meant* to be
+> off in production is not known. That it is off is established: no source of
+> configuration sets `POSTGRES_ENABLED` (re-checked 2026-09-30), and both
+> replicas logged
 > `PostgreSQL disabled - security events will only be logged to stdout/Kafka`
-> at boot (Loki, `{namespace="aether-be", container="aether-backend"}`). Treat
-> security-event persistence to PostgreSQL as off in production until an owner
-> confirms whether that is intended.
+> at boot on 2026-09-24 (Loki, `{namespace="aether-be", container="aether-backend"}`).
+> Earlier versions of this file claimed production ran it as `true`; no
+> evidence for that was found. Confirm the intent with an owner before relying
+> on security events being stored.
 
 > [!UNVERIFIED] `TIMESCALE_DSN` is set on the Deployment as a literal `value`
 > that includes a database password, rather than through `secretKeyRef` like
 > every other credential here. The value is not reproduced in this file.
 > Neither it nor `KAFKA_ENABLED` / `KAFKA_BROKERS` appears anywhere under `k8s/`
-> or `deployments/` at `30a12f7`, so they were added to the live object out of
+> or `deployments/` at `72cfc06` (re-checked 2026-09-30, and all three are
+> still on the live Deployment's `env`), so they were added to the live object out of
 > band and the repository cannot recreate them: a Deployment rebuilt from
 > `k8s/` would boot with Kafka off and `/streams/stats` unavailable. Whether
 > they should move into the manifest (and the data source name (DSN) into
@@ -608,7 +742,7 @@ anything else you have listening.
 
 Non-secret production values live in ConfigMap `aether-backend-config`,
 namespace `aether-be`. Secrets live in secret `aether-backend-secret`, same
-namespace, which holds 19 keys including `NEO4J_PASSWORD`, `REDIS_PASSWORD`,
+namespace, which held 18 keys on 2026-09-30, including `NEO4J_PASSWORD`, `REDIS_PASSWORD`,
 `AWS_SECRET_ACCESS_KEY`, `OAUTH_ENCRYPTION_KEY`, and `ROUTER_API_KEY`. Read them
 from the cluster when you need them; none of their values belong in this file,
 in a shell history, or in a screenshot.
@@ -628,9 +762,9 @@ instead of silently.
 reads it: token verification checks signatures against the realm's public keys
 and user creation authenticates as `admin-cli`, so the client secret only
 reached an OAuth code-exchange path that is never called (the reasoning is in
-the comment at `internal/config/config.go:124`). The live secret still carries
-a `KEYCLOAK_CLIENT_SECRET` key, whose value Keycloak rejected on 2026-08-26; it is unused
-and can be removed.
+the comment at `internal/config/config.go:124`). The live secret no longer
+carries a `KEYCLOAK_CLIENT_SECRET` key: it was listed there on 2026-09-24 and
+was gone when the key names were re-read on 2026-09-30.
 
 Config validation runs at startup (`internal/config/config.go:588`) and refuses
 to boot on a missing `NEO4J_PASSWORD`, missing storage credentials while
@@ -659,7 +793,7 @@ been failing outright against the live workload.
 - [`API_DOCUMENTATION.md`](API_DOCUMENTATION.md) — endpoint-by-endpoint request
   and response shapes, including the LLM Router proxy tiers. It is hand-written
   and partial: on 2026-09-24 it documented 80 distinct method-and-path pairs
-  against what were then 247 route registrations (248 at `30a12f7`) in
+  against what were then 247 route registrations (248 at `72cfc06`) in
   `internal/handlers/routes.go`, and it has no entry for newer routes such as
   `/api/v1/streams/stats` or `/api/v1/spaces/:id/membership`. Read it for
   shapes, not as a complete route list.
@@ -676,6 +810,9 @@ been failing outright against the live workload.
 - [`docs/TESTING_README.md`](docs/TESTING_README.md) and
   [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — what the test suites cover and how
   to bring up the dependencies `make test` expects.
+- [`SPACE_BACKEND_IMPLEMENTATION_STATUS.md`](SPACE_BACKEND_IMPLEMENTATION_STATUS.md)
+  — the space and tenancy work item by item, including the per-query record
+  of what the TEST-3 filtering covered and what is still open as TEST-7.
 - [`k8s/NEO4J-SETUP.md`](k8s/NEO4J-SETUP.md) — cluster Neo4j configuration,
   including why Bolt TLS is off.
 - Cross-service data models, including the identifier chain from Keycloak
