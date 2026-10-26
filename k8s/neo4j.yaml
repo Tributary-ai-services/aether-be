@@ -91,6 +91,18 @@ spec:
           mountPath: /plugins
         - name: bolt-certs
           mountPath: /var/lib/neo4j/certificates
+        # startupProbe gates liveness until the first success, so a slow
+        # start is not mistaken for a hang. The node's data lives on a
+        # spinning USB disk, and after the 2026-10-23 server move Neo4j's
+        # store recovery outlasted liveness (60s delay + 3 x 30s), which
+        # killed it (exit 143) before Bolt ever opened. 90 x 10s = 15 min
+        # covers recovery; once started, liveness keeps its fast threshold.
+        startupProbe:
+          tcpSocket:
+            port: 7687
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 90
         livenessProbe:
           tcpSocket:
             port: 7687
