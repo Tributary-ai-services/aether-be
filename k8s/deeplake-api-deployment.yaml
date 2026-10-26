@@ -17,8 +17,9 @@ spec:
     spec:
       containers:
       - name: deeplake-api
-        image: registry-api.tas.scharber.com/deeplake-api:latest
-        imagePullPolicy: Always
+        # Pinned 2026-10-26 to the digest that was already running (no content change).
+        image: registry-api.tas.scharber.com/deeplake-api@sha256:602df0211a274d2cbc3a6d6d96f68ff2c7245fa8cfe7ab5217d965a30091feb1  # only ever tagged :latest
+        imagePullPolicy: IfNotPresent
         ports:
         - name: http
           containerPort: 8000
