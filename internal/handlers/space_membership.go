@@ -23,6 +23,10 @@ type SpaceMembershipResponse struct {
 	TenantID    string           `json:"tenant_id"`
 	UserRole    string           `json:"user_role"`
 	Permissions []string         `json:"permissions"`
+	// OrganizationID is the Organization owning the space ("" for personal
+	// spaces and unlinked organization spaces). agent-builder matches
+	// "organization" agent visibility on it (Plan #22 AB-13).
+	OrganizationID string `json:"organization_id"`
 }
 
 // VerifySpaceMembership reports whether the authenticated caller is a member
@@ -81,12 +85,13 @@ func (h *SpaceHandler) VerifySpaceMembership(c *gin.Context) {
 		}
 
 		c.JSON(http.StatusOK, SpaceMembershipResponse{
-			Member:      true,
-			SpaceType:   spaceContext.SpaceType,
-			SpaceID:     spaceContext.SpaceID,
-			TenantID:    spaceContext.TenantID,
-			UserRole:    spaceContext.UserRole,
-			Permissions: spaceContext.Permissions,
+			Member:         true,
+			SpaceType:      spaceContext.SpaceType,
+			SpaceID:        spaceContext.SpaceID,
+			TenantID:       spaceContext.TenantID,
+			UserRole:       spaceContext.UserRole,
+			Permissions:    spaceContext.Permissions,
+			OrganizationID: spaceContext.OrganizationID,
 		})
 		return
 	}

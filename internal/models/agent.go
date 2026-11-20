@@ -15,6 +15,29 @@ const (
 	AgentStatusDisabled  AgentStatus = "disabled"
 )
 
+// AgentVisibility says who may USE an agent (Plan #22 D15, AB-13). It never
+// changes who owns it or who is billed. agent-builder is the authority and
+// enforces it; aether-be passes it through and mirrors it on the Agent node.
+type AgentVisibility string
+
+const (
+	// AgentVisibilityPrivate: the owner, in the space it was created in.
+	AgentVisibilityPrivate AgentVisibility = "private"
+	// AgentVisibilityOrganization: anyone working in a space that belongs to
+	// the agent's Organization (matched on OrganizationID).
+	AgentVisibilityOrganization AgentVisibility = "organization"
+	// AgentVisibilityPublic: everyone. agent-builder requires an admin role.
+	AgentVisibilityPublic AgentVisibility = "public"
+)
+
+// visibilityFromIsPublic is the pre-AB-13 meaning of the boolean.
+func visibilityFromIsPublic(isPublic bool) AgentVisibility {
+	if isPublic {
+		return AgentVisibilityPublic
+	}
+	return AgentVisibilityPrivate
+}
+
 // AgentType represents the type/behavior of an agent
 type AgentType string
 
@@ -48,10 +71,13 @@ type Agent struct {
 	// Team assignment for organization spaces
 	TeamID string `json:"team_id,omitempty" validate:"omitempty,uuid"`
 
-	// Visibility and sharing
-	IsPublic   bool `json:"is_public"`
-	IsTemplate bool `json:"is_template"`
-	IsInternal bool `json:"is_internal"` // System agents available to all users
+	// Visibility and sharing. IsPublic is kept for one release and always
+	// equals Visibility == public.
+	Visibility     AgentVisibility `json:"visibility"`
+	OrganizationID string          `json:"organization_id,omitempty"`
+	IsPublic       bool            `json:"is_public"`
+	IsTemplate     bool            `json:"is_template"`
+	IsInternal     bool            `json:"is_internal"` // System agents available to all users
 
 	// Metadata and search
 	Tags       []string `json:"tags,omitempty"`
@@ -76,10 +102,12 @@ type AgentCreateRequest struct {
 	Type        AgentType `json:"type" validate:"required,oneof=qa conversational producer"`
 	SpaceID     string    `json:"space_id" validate:"required"`
 	TeamID      string    `json:"team_id,omitempty" validate:"omitempty,uuid"`
-	IsPublic    bool      `json:"is_public"`
-	IsTemplate  bool      `json:"is_template"`
-	Tags        []string  `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
-	Skills      []string  `json:"skills,omitempty"`
+	// Visibility supersedes IsPublic. When it is set, IsPublic is ignored.
+	Visibility AgentVisibility `json:"visibility,omitempty" validate:"omitempty,oneof=private organization public"`
+	IsPublic   bool            `json:"is_public"`
+	IsTemplate bool            `json:"is_template"`
+	Tags       []string        `json:"tags,omitempty" validate:"dive,tag,min=1,max=50"`
+	Skills     []string        `json:"skills,omitempty"`
 
 	// Agent-builder specific configuration (passed through)
 	SystemPrompt string                 `json:"system_prompt" validate:"required,min=1"`
@@ -100,10 +128,12 @@ type AgentUpdateRequest struct {
 	Description *string    `json:"description,omitempty" validate:"omitempty,max=1000"`
 	Type        *AgentType `json:"type,omitempty" validate:"omitempty,oneof=qa conversational producer"`
 	Status      *string    `json:"status,omitempty" validate:"omitempty,oneof=draft published disabled"`
-	IsPublic    *bool      `json:"is_public,omitempty"`
-	IsTemplate  *bool      `json:"is_template,omitempty"`
-	Tags        []string   `json:"tags,omitempty" validate:"dive,min=1,max=50"`
-	Skills      []string   `json:"skills,omitempty"`
+	// Visibility supersedes IsPublic. When it is set, IsPublic is ignored.
+	Visibility *AgentVisibility `json:"visibility,omitempty" validate:"omitempty,oneof=private organization public"`
+	IsPublic   *bool            `json:"is_public,omitempty"`
+	IsTemplate *bool            `json:"is_template,omitempty"`
+	Tags       []string         `json:"tags,omitempty" validate:"dive,min=1,max=50"`
+	Skills     []string         `json:"skills,omitempty"`
 
 	// Agent-builder specific updates (passed through)
 	SystemPrompt *string                `json:"system_prompt,omitempty" validate:"omitempty,min=1"`
@@ -122,21 +152,23 @@ type AgentUpdateRequest struct {
 
 // AgentResponse represents an agent response with related data
 type AgentResponse struct {
-	ID             string      `json:"id"`
-	AgentBuilderID string      `json:"agent_builder_id"`
-	Name           string      `json:"name"`
-	Description    string      `json:"description"`
-	Status         AgentStatus `json:"status"`
-	Type           AgentType   `json:"type"`
-	OwnerID        string      `json:"owner_id"`
-	SpaceType      SpaceType   `json:"space_type"`
-	SpaceID        string      `json:"space_id"`
-	TeamID         string      `json:"team_id,omitempty"`
-	IsPublic       bool        `json:"is_public"`
-	IsTemplate     bool        `json:"is_template"`
-	IsInternal     bool        `json:"is_internal"`
-	Tags           []string    `json:"tags,omitempty"`
-	Skills         []string    `json:"skills,omitempty"`
+	ID             string          `json:"id"`
+	AgentBuilderID string          `json:"agent_builder_id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Status         AgentStatus     `json:"status"`
+	Type           AgentType       `json:"type"`
+	OwnerID        string          `json:"owner_id"`
+	SpaceType      SpaceType       `json:"space_type"`
+	SpaceID        string          `json:"space_id"`
+	TeamID         string          `json:"team_id,omitempty"`
+	Visibility     AgentVisibility `json:"visibility"`
+	OrganizationID string          `json:"organization_id,omitempty"`
+	IsPublic       bool            `json:"is_public"`
+	IsTemplate     bool            `json:"is_template"`
+	IsInternal     bool            `json:"is_internal"`
+	Tags           []string        `json:"tags,omitempty"`
+	Skills         []string        `json:"skills,omitempty"`
 
 	// Agent configuration (from agent-builder)
 	SystemPrompt string                 `json:"system_prompt,omitempty"`
@@ -241,7 +273,9 @@ func NewAgent(req AgentCreateRequest, ownerID string, spaceCtx *SpaceContext) *A
 		SpaceID:           spaceCtx.SpaceID,
 		TenantID:          spaceCtx.TenantID,
 		TeamID:            req.TeamID,
-		IsPublic:          req.IsPublic,
+		Visibility:        req.EffectiveVisibility(),
+		OrganizationID:    spaceCtx.OrganizationID,
+		IsPublic:          req.EffectiveVisibility() == AgentVisibilityPublic,
 		IsTemplate:        req.IsTemplate,
 		IsInternal:        false, // User-created agents are never internal
 		Tags:              req.Tags,
@@ -269,6 +303,8 @@ func (a *Agent) ToResponse() *AgentResponse {
 		SpaceType:         a.SpaceType,
 		SpaceID:           a.SpaceID,
 		TeamID:            a.TeamID,
+		Visibility:        a.EffectiveVisibility(),
+		OrganizationID:    a.OrganizationID,
 		IsPublic:          a.IsPublic,
 		IsTemplate:        a.IsTemplate,
 		IsInternal:        a.IsInternal,
@@ -297,8 +333,9 @@ func (a *Agent) Update(req AgentUpdateRequest) {
 	if req.Status != nil {
 		a.Status = AgentStatus(*req.Status)
 	}
-	if req.IsPublic != nil {
-		a.IsPublic = *req.IsPublic
+	if v, ok := req.EffectiveVisibility(); ok {
+		a.Visibility = v
+		a.IsPublic = v == AgentVisibilityPublic
 	}
 	if req.IsTemplate != nil {
 		a.IsTemplate = *req.IsTemplate
@@ -348,15 +385,23 @@ func (a *Agent) IsOrganizationAgent() bool {
 	return a.SpaceType == SpaceTypeOrganization
 }
 
-// CanBeAccessedBy checks if a user can access this agent
-func (a *Agent) CanBeAccessedBy(userID string, userTeams []string) bool {
+// CanBeAccessedBy checks if a user can access this agent. callerOrgID is the
+// Organization of the space the caller is working in ("" for a personal space
+// or none); an "organization" agent is readable only from a space of its own
+// Organization (Plan #22 AB-13, mirrors agent-builder's read rule).
+func (a *Agent) CanBeAccessedBy(userID string, userTeams []string, callerOrgID string) bool {
 	// Owner can always access
 	if a.OwnerID == userID {
 		return true
 	}
 
 	// Public agents can be accessed by anyone
-	if a.IsPublic {
+	if a.EffectiveVisibility() == AgentVisibilityPublic {
+		return true
+	}
+
+	if a.EffectiveVisibility() == AgentVisibilityOrganization &&
+		a.OrganizationID != "" && a.OrganizationID == callerOrgID {
 		return true
 	}
 
@@ -511,4 +556,34 @@ type AgentExecutionStats struct {
 	AverageResponseTime  int        `json:"average_response_time_ms"`
 	TotalCostUSD         float64    `json:"total_cost_usd"`
 	LastExecutedAt       *time.Time `json:"last_executed_at,omitempty"`
+}
+
+// EffectiveVisibility is the visibility a create request asks for: Visibility
+// when set, otherwise the legacy IsPublic boolean.
+func (r AgentCreateRequest) EffectiveVisibility() AgentVisibility {
+	if r.Visibility != "" {
+		return r.Visibility
+	}
+	return visibilityFromIsPublic(r.IsPublic)
+}
+
+// EffectiveVisibility reports the visibility an update request asks for, and
+// false when it asks for no change. Visibility wins over the legacy IsPublic.
+func (r AgentUpdateRequest) EffectiveVisibility() (AgentVisibility, bool) {
+	if r.Visibility != nil && *r.Visibility != "" {
+		return *r.Visibility, true
+	}
+	if r.IsPublic != nil {
+		return visibilityFromIsPublic(*r.IsPublic), true
+	}
+	return "", false
+}
+
+// EffectiveVisibility returns the agent's visibility, deriving it from
+// IsPublic for nodes written before AB-13 (which carry no visibility).
+func (a *Agent) EffectiveVisibility() AgentVisibility {
+	if a.Visibility != "" {
+		return a.Visibility
+	}
+	return visibilityFromIsPublic(a.IsPublic)
 }
