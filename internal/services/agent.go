@@ -86,7 +86,17 @@ func (s *AgentService) CreateAgent(ctx context.Context, req models.AgentCreateRe
 
 	// Step 2: Create agent metadata in Neo4j
 	agent := models.NewAgent(req, spaceCtx.UserID, spaceCtx)
-	agent.AgentBuilderID = agentBuilderResp["agent"].(map[string]interface{})["id"].(string)
+	builderAgent := agentBuilderResp["agent"].(map[string]interface{})
+	agent.AgentBuilderID = builderAgent["id"].(string)
+	// agent-builder decides visibility and the owning Organization; mirror
+	// what it stored rather than what was asked for.
+	if v, ok := builderAgent["visibility"].(string); ok && v != "" {
+		agent.Visibility = models.AgentVisibility(v)
+		agent.IsPublic = agent.Visibility == models.AgentVisibilityPublic
+	}
+	if org, ok := builderAgent["organization_id"].(string); ok {
+		agent.OrganizationID = org
+	}
 
 	if err := s.createAgentInNeo4j(ctx, agent); err != nil {
 		s.logger.Error("Failed to create agent in Neo4j", zap.Error(err))
@@ -118,8 +128,13 @@ func (s *AgentService) GetAgent(ctx context.Context, agentID string, userID stri
 		return nil, err
 	}
 
-	// Check access permissions
-	if !agent.CanBeAccessedBy(userID, userTeams) {
+	// Check access permissions. The caller's Organization comes from the space
+	// the request was verified into, when there is one.
+	callerOrgID := ""
+	if sc, ok := models.SpaceContextFromContext(ctx); ok && sc != nil {
+		callerOrgID = sc.OrganizationID
+	}
+	if !agent.CanBeAccessedBy(userID, userTeams, callerOrgID) {
 		return nil, errors.NotFound("Agent not found")
 	}
 
@@ -140,6 +155,11 @@ func (s *AgentService) GetAgent(ctx context.Context, agentID string, userID stri
 			if enriched != nil {
 				response.SystemPrompt = enriched.SystemPrompt
 				response.LLMConfig = enriched.LLMConfig
+				if enriched.Visibility != "" {
+					response.Visibility = enriched.Visibility
+					response.OrganizationID = enriched.OrganizationID
+					response.IsPublic = enriched.IsPublic
+				}
 				response.EnableKnowledge = enriched.EnableKnowledge
 				response.DocumentContext = enriched.DocumentContext
 				// Flatten document_context fields for frontend compatibility
@@ -226,8 +246,9 @@ func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, req mode
 			if req.Status != nil {
 				response.Status = models.AgentStatus(*req.Status)
 			}
-			if req.IsPublic != nil {
-				response.IsPublic = *req.IsPublic
+			if v, ok := req.EffectiveVisibility(); ok {
+				response.Visibility = v
+				response.IsPublic = v == models.AgentVisibilityPublic
 			}
 			if req.IsTemplate != nil {
 				response.IsTemplate = *req.IsTemplate
@@ -480,6 +501,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req models.AgentSearchReq
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
 		}
+		agent.Visibility, agent.OrganizationID = visibilityFromBuilder(agentMap)
 
 		// DEBUG: Log the created agent's type
 		s.logger.Info("DEBUG: Created AgentResponse", zap.String("agent_id", agent.ID), zap.String("agent_type", string(agent.Type)))
@@ -815,11 +837,11 @@ func (s *AgentService) createAgentInBuilder(ctx context.Context, req models.Agen
 		"system_prompt": req.SystemPrompt,
 		"llm_config":    req.LLMConfig,
 		"space_id":      req.SpaceID,
-		"is_public":     req.IsPublic,
 		"is_template":   req.IsTemplate,
 		"tags":          req.Tags,
 		"skills":        req.Skills,
 	}
+	applyVisibilityToBuilderReq(builderReq, req.Visibility, &req.IsPublic)
 
 	// Forward knowledge/document context configuration
 	if req.EnableKnowledge != nil {
@@ -874,9 +896,11 @@ func (s *AgentService) updateAgentInBuilder(ctx context.Context, agentBuilderID 
 	if req.Status != nil {
 		builderReq["status"] = *req.Status
 	}
-	if req.IsPublic != nil {
-		builderReq["is_public"] = *req.IsPublic
+	var visibility models.AgentVisibility
+	if req.Visibility != nil {
+		visibility = *req.Visibility
 	}
+	applyVisibilityToBuilderReq(builderReq, visibility, req.IsPublic)
 	if req.IsTemplate != nil {
 		builderReq["is_template"] = *req.IsTemplate
 	}
@@ -1032,7 +1056,7 @@ func (s *AgentService) makeAgentBuilderRequest(ctx context.Context, method, path
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(bodyBytes)),
 		)
-		return nil, errors.ExternalService(fmt.Sprintf("Agent-builder error: %s", string(bodyBytes)), nil)
+		return nil, builderError(resp.StatusCode, bodyBytes)
 	}
 
 	if method == "DELETE" {
@@ -1099,6 +1123,8 @@ func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Age
 			space_id: $spaceId,
 			tenant_id: $tenantId,
 			team_id: $teamId,
+			visibility: $visibility,
+			organization_id: $organizationId,
 			is_public: $isPublic,
 			is_template: $isTemplate,
 			is_internal: $isInternal,
@@ -1124,6 +1150,8 @@ func (s *AgentService) createAgentInNeo4j(ctx context.Context, agent *models.Age
 		"spaceId":           agent.SpaceID,
 		"tenantId":          agent.TenantID,
 		"teamId":            agent.TeamID,
+		"visibility":        string(agent.EffectiveVisibility()),
+		"organizationId":    agent.OrganizationID,
 		"isPublic":          agent.IsPublic,
 		"isTemplate":        agent.IsTemplate,
 		"isInternal":        agent.IsInternal,
@@ -1152,6 +1180,7 @@ func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Age
 		    a.description = $description,
 		    a.status = $status,
 		    a.type = $type,
+		    a.visibility = $visibility,
 		    a.is_public = $isPublic,
 		    a.is_template = $isTemplate,
 		    a.is_internal = $isInternal,
@@ -1167,6 +1196,7 @@ func (s *AgentService) updateAgentInNeo4j(ctx context.Context, agent *models.Age
 		"description": agent.Description,
 		"status":      string(agent.Status),
 		"type":        string(agent.Type),
+		"visibility":  string(agent.EffectiveVisibility()),
 		"isPublic":    agent.IsPublic,
 		"isTemplate":  agent.IsTemplate,
 		"isInternal":  agent.IsInternal,
@@ -1343,6 +1373,15 @@ func (s *AgentService) recordToAgent(record neo4j.Record) (*models.Agent, error)
 
 	if teamID, ok := props["team_id"].(string); ok {
 		agent.TeamID = teamID
+	}
+
+	// visibility / organization_id are absent on nodes written before AB-13;
+	// EffectiveVisibility then derives visibility from is_public.
+	if v, ok := props["visibility"].(string); ok {
+		agent.Visibility = models.AgentVisibility(v)
+	}
+	if org, ok := props["organization_id"].(string); ok {
+		agent.OrganizationID = org
 	}
 
 	if tags, ok := props["tags"].([]interface{}); ok {
@@ -1630,6 +1669,7 @@ func (s *AgentService) getAgentFromBuilder(ctx context.Context, agentID string, 
 	if isPublic, ok := builderResp["is_public"].(bool); ok {
 		agent.IsPublic = isPublic
 	}
+	agent.Visibility, agent.OrganizationID = visibilityFromBuilder(builderResp)
 
 	return agent, nil
 }
@@ -1942,6 +1982,7 @@ func (s *AgentService) mapToAgentResponse(agentMap map[string]interface{}) *mode
 	if isInternal, ok := agentMap["is_internal"].(bool); ok {
 		agent.IsInternal = isInternal
 	}
+	agent.Visibility, agent.OrganizationID = visibilityFromBuilder(agentMap)
 
 	// Parse LLM config - keep as map[string]interface{} as that's what AgentResponse expects
 	if llmConfig, ok := agentMap["llm_config"].(map[string]interface{}); ok {
@@ -2013,4 +2054,76 @@ func (s *AgentService) mapToAgentResponse(agentMap map[string]interface{}) *mode
 	}
 
 	return agent
+}
+
+// applyVisibilityToBuilderReq sets the sharing fields of an agent-builder
+// request. visibility, when set, is sent alone: agent-builder derives
+// is_public from it. Otherwise the legacy is_public is forwarded as the client
+// sent it (nil means the client did not send it).
+func applyVisibilityToBuilderReq(builderReq map[string]interface{}, visibility models.AgentVisibility, isPublic *bool) {
+	if visibility != "" {
+		builderReq["visibility"] = string(visibility)
+		return
+	}
+	if isPublic != nil {
+		builderReq["is_public"] = *isPublic
+	}
+}
+
+// visibilityFromBuilder reads visibility and organization_id from an
+// agent-builder agent object, deriving visibility from is_public when an
+// older agent-builder omits it.
+func visibilityFromBuilder(m map[string]interface{}) (models.AgentVisibility, string) {
+	org, _ := m["organization_id"].(string)
+	if v, ok := m["visibility"].(string); ok && v != "" {
+		return models.AgentVisibility(v), org
+	}
+	if isPublic, ok := m["is_public"].(bool); ok && isPublic {
+		return models.AgentVisibilityPublic, org
+	}
+	return models.AgentVisibilityPrivate, org
+}
+
+// builderError maps an agent-builder error response onto an APIError.
+//
+// A 400 or 403 is the caller's problem, not an outage, so it keeps its status
+// and agent-builder's machine-readable code (details.code), e.g.
+// visibility_public_requires_admin (403) or
+// visibility_organization_requires_org_space (400). Everything else stays a
+// 502, as before.
+func builderError(status int, body []byte) *errors.APIError {
+	var parsed struct {
+		Error   string `json:"error"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+	msg := parsed.Error
+	if msg == "" {
+		msg = parsed.Message
+	}
+	if msg == "" {
+		msg = string(body)
+	}
+	if status != http.StatusBadRequest && status != http.StatusForbidden {
+		return errors.ExternalService(fmt.Sprintf("Agent-builder error: %s", string(body)), nil)
+	}
+	// agent-builder's machine-readable code goes in the TOP-LEVEL `code`, which
+	// is what the aether UI reads (err.response.code). The status is set
+	// explicitly because a code like visibility_public_requires_admin is not
+	// in GetHTTPStatusCodeFromErrorCode's table; handleServiceError writes
+	// StatusCode as-is.
+	code := parsed.Code
+	if code == "" {
+		code = errors.ErrBadRequest
+		if status == http.StatusForbidden {
+			code = errors.ErrForbidden
+		}
+	}
+	return &errors.APIError{
+		Code:       code,
+		Message:    msg,
+		Details:    map[string]interface{}{"source": "agent-builder"},
+		StatusCode: status,
+	}
 }

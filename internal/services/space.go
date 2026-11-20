@@ -207,6 +207,37 @@ func (s *SpaceService) GetSpaceByID(ctx context.Context, spaceID string) (*model
 	return space, nil
 }
 
+// spaceOrganizationQuery returns the Organization that owns a space through
+// HAS_SPACE. Legacy organization-type spaces that a user OWNS directly have no
+// such edge and return no row.
+const spaceOrganizationQuery = `
+	MATCH (o:Organization)-[:HAS_SPACE]->(sp:Space {id: $space_id})
+	RETURN o.id AS organization_id
+	LIMIT 1
+`
+
+// GetSpaceOrganizationID returns the id of the Organization that owns spaceID
+// via HAS_SPACE, or "" when the space has no owning Organization. Plan #22
+// AB-13 matches an agent's "organization" visibility on this id.
+func (s *SpaceService) GetSpaceOrganizationID(ctx context.Context, spaceID string) (string, error) {
+	result, err := s.neo4j.ExecuteQueryWithLogging(ctx, spaceOrganizationQuery, map[string]interface{}{
+		"space_id": spaceID,
+	})
+	if err != nil {
+		s.logger.Error("Failed to look up space organization", zap.String("space_id", spaceID), zap.Error(err))
+		return "", errors.Database("Failed to look up space organization", err)
+	}
+	if len(result.Records) == 0 {
+		return "", nil
+	}
+	if val, ok := result.Records[0].Get("organization_id"); ok && val != nil {
+		if id, ok := val.(string); ok {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
 // GetUserSpaces retrieves all spaces a user has access to:
 // - Personal spaces: via OWNS relationship
 // - Organization spaces: via user's MEMBER_OF relationship to Organization which HAS_SPACE

@@ -171,15 +171,16 @@ func (s *SpaceContextService) resolveOrganizationSpaceFromOrg(ctx context.Contex
 	permissions := s.getRolePermissions(member.Role)
 
 	return &models.SpaceContext{
-		SpaceType:   models.SpaceTypeOrganization,
-		SpaceID:     org.ID,
-		TenantID:    org.TenantID,
-		APIKey:      org.TenantAPIKey,
-		UserID:      userID,
-		UserRole:    member.Role,
-		SpaceName:   org.Name,
-		ResolvedAt:  time.Now(),
-		Permissions: permissions,
+		SpaceType:      models.SpaceTypeOrganization,
+		SpaceID:        org.ID,
+		OrganizationID: org.ID,
+		TenantID:       org.TenantID,
+		APIKey:         org.TenantAPIKey,
+		UserID:         userID,
+		UserRole:       member.Role,
+		SpaceName:      org.Name,
+		ResolvedAt:     time.Now(),
+		Permissions:    permissions,
 	}, nil
 }
 
@@ -226,16 +227,25 @@ func (s *SpaceContextService) resolveOrganizationSpaceFromSpaceNode(ctx context.
 	// Map role to permissions
 	permissions := s.getRolePermissions(role)
 
+	// The owning Organization, if the space is linked by HAS_SPACE. A lookup
+	// failure denies rather than returning an empty org: an empty org would
+	// silently hide every organization-shared agent, which reads as data loss.
+	orgID, err := s.spaceService.GetSpaceOrganizationID(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &models.SpaceContext{
-		SpaceType:   models.SpaceTypeOrganization,
-		SpaceID:     spaceID,
-		TenantID:    space.TenantID,
-		APIKey:      "", // Space nodes may not have API keys directly
-		UserID:      userID,
-		UserRole:    role,
-		SpaceName:   space.Name,
-		ResolvedAt:  time.Now(),
-		Permissions: permissions,
+		SpaceType:      models.SpaceTypeOrganization,
+		SpaceID:        spaceID,
+		OrganizationID: orgID,
+		TenantID:       space.TenantID,
+		APIKey:         "", // Space nodes may not have API keys directly
+		UserID:         userID,
+		UserRole:       role,
+		SpaceName:      space.Name,
+		ResolvedAt:     time.Now(),
+		Permissions:    permissions,
 	}, nil
 }
 
@@ -366,12 +376,14 @@ func (s *SpaceContextService) GetUserSpaces(ctx context.Context, userID string) 
 
 			permissions := s.getRolePermissions(userRole)
 			response.OrganizationSpaces = append(response.OrganizationSpaces, &models.SpaceInfo{
-				SpaceType:   models.SpaceTypeOrganization,
-				SpaceID:     org.ID,
-				SpaceName:   org.Name,
-				TenantID:    org.TenantID,
-				UserRole:    userRole,
-				Permissions: permissions,
+				SpaceType:        models.SpaceTypeOrganization,
+				SpaceID:          org.ID,
+				SpaceName:        org.Name,
+				TenantID:         org.TenantID,
+				UserRole:         userRole,
+				Permissions:      permissions,
+				OrganizationID:   org.ID,
+				OrganizationName: org.Name,
 			})
 		}
 	}

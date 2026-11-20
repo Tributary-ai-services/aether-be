@@ -23,6 +23,14 @@ type SpaceContext struct {
 	TenantID string `json:"tenant_id"`
 	APIKey   string `json:"-"` // Not serialized
 
+	// OrganizationID is the Organization that owns this space, via
+	// (o:Organization)-[:HAS_SPACE]->(s:Space) or, for the legacy flow, the
+	// Organization node the space id names. Empty for personal spaces and for
+	// organization-type spaces with no HAS_SPACE edge. It is what an agent's
+	// "organization" visibility is matched on (Plan #22 AB-13), so it is never
+	// guessed: no edge, no organization.
+	OrganizationID string `json:"organization_id"`
+
 	// User context within the space
 	UserID   string `json:"user_id"`
 	UserRole string `json:"user_role"` // "owner" for personal, org role for organization
@@ -99,12 +107,13 @@ type SpaceInfo struct {
 // ToSpaceInfo converts SpaceContext to SpaceInfo (excludes sensitive data)
 func (sc *SpaceContext) ToSpaceInfo() *SpaceInfo {
 	return &SpaceInfo{
-		SpaceType:   sc.SpaceType,
-		SpaceID:     sc.SpaceID,
-		SpaceName:   sc.SpaceName,
-		TenantID:    sc.TenantID,
-		UserRole:    sc.UserRole,
-		Permissions: sc.Permissions,
+		SpaceType:      sc.SpaceType,
+		SpaceID:        sc.SpaceID,
+		SpaceName:      sc.SpaceName,
+		TenantID:       sc.TenantID,
+		UserRole:       sc.UserRole,
+		Permissions:    sc.Permissions,
+		OrganizationID: sc.OrganizationID,
 	}
 }
 

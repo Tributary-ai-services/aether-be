@@ -99,6 +99,7 @@ func (a *InternalAgent) ToAgentResponse() *models.AgentResponse {
 		SpaceType:      models.SpaceTypePersonal, // Internal agents are available in all spaces
 		SpaceID:        "",                       // Internal agents are not space-scoped
 		IsPublic:       true,                     // Internal agents are always public
+		Visibility:     models.AgentVisibilityPublic,
 		IsTemplate:     false,
 		Tags:           []string{"internal", "system"},
 		SystemPrompt:   a.SystemPrompt,
