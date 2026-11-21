@@ -165,6 +165,7 @@ func (s *TeamService) GetTeams(ctx context.Context, userID string, organizationI
 	if organizationID != "" {
 		query = `
 			MATCH (t:Team {organization_id: $organization_id})
+			WHERE t.archived_at IS NULL
 			OPTIONAL MATCH (t)<-[r:MEMBER_OF]-(u:User {id: $user_id})
 			WHERE t.visibility = 'public' OR t.visibility = 'organization' OR r IS NOT NULL
 			WITH t, r.role as user_role
@@ -179,6 +180,7 @@ func (s *TeamService) GetTeams(ctx context.Context, userID string, organizationI
 	} else {
 		query = `
 			MATCH (t:Team)<-[r:MEMBER_OF]-(u:User {id: $user_id})
+			WHERE t.archived_at IS NULL
 			WITH t, r.role as user_role
 			OPTIONAL MATCH (t)<-[:MEMBER_OF]-()
 			WITH t, user_role, count(*) as member_count
@@ -813,6 +815,7 @@ func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targe
 func (s *TeamService) GetUserTeamIDs(ctx context.Context, userID string) ([]string, error) {
 	query := `
 		MATCH (u:User {id: $user_id})-[:MEMBER_OF]->(t:Team)
+		WHERE t.archived_at IS NULL
 		RETURN t.id as team_id
 		ORDER BY t.name
 	`
