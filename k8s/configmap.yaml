@@ -37,6 +37,8 @@ data:
 
   # Kafka Configuration
   KAFKA_BROKERS: "kafka-shared.tas-shared:9092"
+  # Plan #22 A.4: publish the org-change outbox to aether.org.changes.v1.
+  AETHER_ORG_EVENTS_ENABLED: "true"
   KAFKA_TOPIC_PREFIX: "aether"
 
   # External Services
