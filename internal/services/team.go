@@ -83,6 +83,14 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 		if !org.Next(ctx) {
 			return nil, errors.ValidationWithDetails("Organization not found", map[string]interface{}{"organization_id": team.OrganizationID})
 		}
+		// The creator must belong to the organization (any org role). Before
+		// this, anyone could create a team inside any organization.
+		if role, err := s.orgRoleOf(ctx, tx, team.OrganizationID, createdBy); err != nil {
+			return nil, err
+		} else if role == "" {
+			return nil, errors.ForbiddenWithDetails("Only members of the organization can create teams in it",
+				map[string]interface{}{"code": "not_org_member", "organization_id": team.OrganizationID})
+		}
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err
