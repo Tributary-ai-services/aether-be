@@ -35,6 +35,7 @@ type APIServer struct {
 	SpaceHandler            *SpaceHandler
 	AgentHandler            *AgentHandler
 	HealthHandler           *HealthHandler
+	InternalOrgHandler      *InternalOrgHandler // Plan #22 2.1/2.2: /internal/v1/orgs*
 	StreamHandler           *StreamHandler
 	RouterHandler           *RouterHandler
 	LoggingHandler          *LoggingHandler
@@ -283,6 +284,7 @@ func NewAPIServer(
 	router.Use(metrics.HTTPMetricsMiddleware(metricsInstance, log))
 
 	server := &APIServer{
+		InternalOrgHandler:      &InternalOrgHandler{Snapshots: services.NewOrgSnapshotService(neo4j, log), Logger: log},
 		Router:                  router,
 		UserHandler:             userHandler,
 		NotebookHandler:         notebookHandler,
@@ -344,6 +346,18 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 	publicAuth := s.Router.Group("/api/v1/auth")
 	{
 		publicAuth.POST("/register", s.RegistrationHandler.Register)
+	}
+
+	// Service-to-service org reads (Plan #22 2.1/2.2): no Keycloak user, a
+	// shared Internal-Auth secret instead. Not mounted without a token.
+	if tok := os.Getenv("INTERNAL_AUTH_TOKEN"); tok != "" {
+		internalV1 := s.Router.Group("/internal/v1")
+		internalV1.Use(middleware.InternalAuthRequired(tok))
+		internalV1.GET("/orgs", s.InternalOrgHandler.ListOrgs)
+		internalV1.GET("/orgs/:id/snapshot", s.InternalOrgHandler.Snapshot)
+		s.logger.Info("internal org read API mounted at /internal/v1")
+	} else {
+		s.logger.Info("INTERNAL_AUTH_TOKEN unset; /internal/v1 not mounted")
 	}
 
 	// API routes with authentication
