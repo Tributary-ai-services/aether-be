@@ -15,6 +15,12 @@ type Team struct {
 	Visibility     string `json:"visibility" validate:"required,oneof=private organization public"`
 	Icon           string `json:"icon,omitempty" validate:"omitempty,url,max=500"`
 
+	// Structure (Plan #22 A.2). Slug is unique per org; ParentTeamID mirrors the
+	// CHILD_OF edge ("" = top level); ArchivedAt is set instead of deleting.
+	Slug         string     `json:"slug,omitempty"`
+	ParentTeamID string     `json:"parent_team_id,omitempty"`
+	ArchivedAt   *time.Time `json:"archived_at,omitempty"`
+
 	// Settings
 	Settings map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
 
@@ -38,6 +44,9 @@ type TeamCreateRequest struct {
 	Visibility     string                 `json:"visibility" validate:"required,oneof=private organization public"`
 	Icon           string                 `json:"icon,omitempty" validate:"omitempty,url,max=500"`
 	Settings       map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
+	// Plan #22 A.2: optional parent (same org) and slug (default: from name).
+	ParentTeamID string `json:"parent_team_id,omitempty" validate:"omitempty,uuid"`
+	Slug         string `json:"slug,omitempty" validate:"omitempty,max=60"`
 }
 
 // TeamUpdateRequest represents a request to update a team
@@ -47,6 +56,15 @@ type TeamUpdateRequest struct {
 	Visibility  *string                `json:"visibility,omitempty" validate:"omitempty,oneof=private organization public"`
 	Icon        *string                `json:"icon,omitempty" validate:"omitempty,url,max=500"`
 	Settings    map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
+	// Plan #22 A.2. Slug: a new slug. ParentTeamID: move the team ("" = top
+	// level); same permission rules as POST /teams/:id/move.
+	Slug         *string `json:"slug,omitempty" validate:"omitempty,max=60"`
+	ParentTeamID *string `json:"parent_team_id,omitempty"`
+}
+
+// TeamMoveRequest moves a team under another team of its org ("" = top level).
+type TeamMoveRequest struct {
+	ParentTeamID string `json:"parent_team_id"`
 }
 
 // TeamResponse represents a team response
@@ -57,6 +75,9 @@ type TeamResponse struct {
 	OrganizationID string                 `json:"organizationId"` // camelCase for frontend compatibility
 	Visibility     string                 `json:"visibility"`
 	Icon           string                 `json:"icon,omitempty"`
+	Slug           string                 `json:"slug,omitempty"`
+	ParentTeamID   string                 `json:"parentTeamId,omitempty"`
+	ArchivedAt     *time.Time             `json:"archivedAt,omitempty"`
 	Settings       map[string]interface{} `json:"settings,omitempty"`
 	CreatedBy      string                 `json:"createdBy"` // camelCase for frontend compatibility
 	CreatedAt      time.Time              `json:"createdAt"`
@@ -129,6 +150,9 @@ func (t *Team) ToResponse() *TeamResponse {
 		OrganizationID: t.OrganizationID,
 		Visibility:     t.Visibility,
 		Icon:           t.Icon,
+		Slug:           t.Slug,
+		ParentTeamID:   t.ParentTeamID,
+		ArchivedAt:     t.ArchivedAt,
 		Settings:       t.Settings,
 		CreatedBy:      t.CreatedBy,
 		CreatedAt:      t.CreatedAt,

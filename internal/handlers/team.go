@@ -124,9 +124,9 @@ func (h *TeamHandler) GetTeams(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id} [get]
 func (h *TeamHandler) GetTeam(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -165,9 +165,9 @@ func (h *TeamHandler) GetTeam(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id} [put]
 func (h *TeamHandler) UpdateTeam(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -214,9 +214,9 @@ func (h *TeamHandler) UpdateTeam(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id} [delete]
 func (h *TeamHandler) DeleteTeam(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *TeamHandler) DeleteTeam(c *gin.Context) {
 		return
 	}
 
-	err := h.teamService.DeleteTeam(c.Request.Context(), teamID, userID)
+	err = h.teamService.DeleteTeam(c.Request.Context(), teamID, userID)
 	if err != nil {
 		h.logger.Error("Failed to delete team", zap.Error(err), zap.String("team_id", teamID), zap.String("user_id", userID))
 		handleServiceError(c, err)
@@ -254,9 +254,9 @@ func (h *TeamHandler) DeleteTeam(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id}/members [get]
 func (h *TeamHandler) GetTeamMembers(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -302,9 +302,9 @@ func (h *TeamHandler) GetTeamMembers(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id}/members [post]
 func (h *TeamHandler) InviteTeamMember(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -356,9 +356,9 @@ func (h *TeamHandler) InviteTeamMember(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id}/members/{user_id} [put]
 func (h *TeamHandler) UpdateTeamMemberRole(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -381,7 +381,7 @@ func (h *TeamHandler) UpdateTeamMemberRole(c *gin.Context) {
 		return
 	}
 
-	err := h.teamService.UpdateTeamMemberRole(c.Request.Context(), teamID, targetUserID, req, userID)
+	err = h.teamService.UpdateTeamMemberRole(c.Request.Context(), teamID, targetUserID, req, userID)
 	if err != nil {
 		h.logger.Error("Failed to update team member role", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("user_id", userID))
@@ -410,9 +410,9 @@ func (h *TeamHandler) UpdateTeamMemberRole(c *gin.Context) {
 // @Failure 500 {object} errors.APIError
 // @Router /api/v1/teams/{id}/members/{user_id} [delete]
 func (h *TeamHandler) RemoveTeamMember(c *gin.Context) {
-	userID := getUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
 		return
 	}
 
@@ -426,7 +426,7 @@ func (h *TeamHandler) RemoveTeamMember(c *gin.Context) {
 		return
 	}
 
-	err := h.teamService.RemoveTeamMember(c.Request.Context(), teamID, targetUserID, userID)
+	err = h.teamService.RemoveTeamMember(c.Request.Context(), teamID, targetUserID, userID)
 	if err != nil {
 		h.logger.Error("Failed to remove team member", zap.Error(err),
 			zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("user_id", userID))
@@ -437,4 +437,31 @@ func (h *TeamHandler) RemoveTeamMember(c *gin.Context) {
 	h.logger.Info("Team member removed successfully",
 		zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("removed_by", userID))
 	c.Status(http.StatusNoContent)
+}
+
+// MoveTeam moves a team under another team of the same organization, or to
+// the top level when parent_team_id is "" (Plan #22 A.2).
+// @Router /api/v1/teams/{id}/move [post]
+func (h *TeamHandler) MoveTeam(c *gin.Context) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	teamID := c.Param("id")
+	var req models.TeamMoveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Invalid request data", map[string]interface{}{"error": err.Error()}))
+		return
+	}
+	if err := h.teamService.MoveTeam(c.Request.Context(), teamID, req.ParentTeamID, userID); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	team, err := h.teamService.GetTeam(c.Request.Context(), teamID, userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, team.ToResponse())
 }

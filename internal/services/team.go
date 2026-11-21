@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -38,10 +40,8 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 		team.Settings = models.DefaultTeamSettings()
 	}
 
-	// Validate organization exists (if we have organization service)
-	// TODO: Add organization validation once OrganizationService is implemented
-
-	// Create team in database
+	// Create team in database. The org edge, slug and parent are written in the
+	// same transaction (Plan #22 A.2), so a team never exists half-placed.
 	query := `
 		CREATE (t:Team {
 			id: $id,
@@ -64,7 +64,7 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 		"organization_id": team.OrganizationID,
 		"visibility":      team.Visibility,
 		"icon":            team.Icon,
-		"settings":        team.Settings,
+		"settings":        settingsJSON(team.Settings),
 		"created_by":      team.CreatedBy,
 		"created_at":      team.CreatedAt.Format(time.RFC3339),
 		"updated_at":      team.UpdatedAt.Format(time.RFC3339),
@@ -76,14 +76,42 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		org, err := tx.Run(ctx, `MATCH (o:Organization {id: $org}) RETURN o.id`, map[string]interface{}{"org": team.OrganizationID})
+		if err != nil {
+			return nil, err
+		}
+		if !org.Next(ctx) {
+			return nil, errors.ValidationWithDetails("Organization not found", map[string]interface{}{"organization_id": team.OrganizationID})
+		}
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err
 		}
-		return result.Collect(ctx)
+		if _, err := result.Collect(ctx); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Run(ctx, `MATCH (t:Team {id: $id}), (o:Organization {id: $org}) MERGE (t)-[:BELONGS_TO]->(o)`,
+			map[string]interface{}{"id": team.ID, "org": team.OrganizationID}); err != nil {
+			return nil, err
+		}
+		slug, err := s.assignSlugTx(ctx, tx, team.ID, team.OrganizationID, req.Slug, team.Name)
+		if err != nil {
+			return nil, err
+		}
+		team.Slug = slug
+		if req.ParentTeamID != "" {
+			if err := s.setParentTx(ctx, tx, team.ID, team.OrganizationID, req.ParentTeamID); err != nil {
+				return nil, err
+			}
+			team.ParentTeamID = req.ParentTeamID
+		}
+		return nil, nil
 	})
 
 	if err != nil {
+		if _, ok := errors.AsAPIError(err); ok {
+			return nil, err
+		}
 		s.logger.Error("Failed to create team", zap.Error(err), zap.String("team_id", team.ID))
 		return nil, errors.DatabaseWithDetails("Failed to create team", err, map[string]interface{}{
 			"team_id": team.ID,
@@ -241,6 +269,13 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 		})
 	}
 
+	// Plan #22 A.2: an archived team refuses writes; slug and parent changes
+	// go through the structure helpers (validation, per-org uniqueness, cycle
+	// check, and MoveTeam's own permission rule).
+	if err := s.structuralUpdate(ctx, teamID, req, userID); err != nil {
+		return nil, err
+	}
+
 	// Build update query dynamically
 	setParts := []string{}
 	params := map[string]interface{}{
@@ -266,7 +301,7 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 	}
 	if req.Settings != nil {
 		setParts = append(setParts, "t.settings = $settings")
-		params["settings"] = req.Settings
+		params["settings"] = settingsJSON(req.Settings)
 	}
 
 	if len(setParts) == 0 {
@@ -276,6 +311,9 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 
 	setParts = append(setParts, "t.updated_at = datetime($updated_at)")
 
+	// Every SET clause in one statement. This used to rebuild the query in a
+	// loop that kept only the first and the last clause, so a name + description
+	// update silently dropped the description.
 	query := fmt.Sprintf(`
 		MATCH (t:Team {id: $team_id})
 		SET %s
@@ -285,22 +323,7 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 		WITH t, r.role as user_role, count(*) as member_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
 		WITH t, user_role, member_count, count(n) as notebook_count
-		RETURN t, user_role, member_count, notebook_count`,
-		fmt.Sprintf("%s", setParts[0]))
-
-	for i := 1; i < len(setParts); i++ {
-		query = fmt.Sprintf(`
-		MATCH (t:Team {id: $team_id})
-		SET %s
-		WITH t
-		OPTIONAL MATCH (t)<-[r:MEMBER_OF]-(u:User {id: $user_id})
-		OPTIONAL MATCH (t)<-[:MEMBER_OF]-()
-		WITH t, r.role as user_role, count(*) as member_count
-		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
-		WITH t, user_role, member_count, count(n) as notebook_count
-		RETURN t, user_role, member_count, notebook_count`,
-			fmt.Sprintf("%s, %s", setParts[0], setParts[i]))
-	}
+		RETURN t, user_role, member_count, notebook_count`, strings.Join(setParts, ", "))
 
 	params["user_id"] = userID
 
@@ -342,20 +365,22 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 
 // DeleteTeam deletes a team
 func (s *TeamService) DeleteTeam(ctx context.Context, teamID string, userID string) error {
-	// Check if user has permission to delete
-	userRole, err := s.getUserRoleInTeam(ctx, teamID, userID)
+	// DELETE /teams/:id archives (Plan #22 A.2): it used to DETACH DELETE the
+	// team and its notebooks, and history and billing refer to teams by id.
+	// ArchiveTeam allows the team owner or an org owner/admin.
+	return s.ArchiveTeam(ctx, teamID, userID)
+}
+
+// settingsJSON serializes team settings for storage ("" for none).
+func settingsJSON(m map[string]interface{}) string {
+	if len(m) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return ""
 	}
-
-	if userRole != "owner" {
-		return errors.ForbiddenWithDetails("Only team owners can delete teams", map[string]interface{}{
-			"user_role": userRole,
-			"team_id":   teamID,
-		})
-	}
-
-	return s.deleteTeamInternal(ctx, teamID)
+	return string(b)
 }
 
 // Internal helper methods
@@ -397,7 +422,8 @@ func (s *TeamService) deleteTeamInternal(ctx context.Context, teamID string) err
 
 func (s *TeamService) getUserRoleInTeam(ctx context.Context, teamID string, userID string) (string, error) {
 	query := `
-		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.id = $user_id OR u.keycloak_id = $user_id
 		RETURN r.role as role`
 
 	params := map[string]interface{}{
@@ -564,6 +590,9 @@ func (s *TeamService) GetTeamMembers(ctx context.Context, teamID string, userID 
 
 // InviteTeamMember invites a new member to the team
 func (s *TeamService) InviteTeamMember(ctx context.Context, teamID string, req models.TeamInviteRequest, invitedBy string) (*models.TeamMember, error) {
+	if err := s.ensureWritable(ctx, teamID); err != nil {
+		return nil, err
+	}
 	// Check if user has permission to invite
 	userRole, err := s.getUserRoleInTeam(ctx, teamID, invitedBy)
 	if err != nil {
@@ -655,6 +684,9 @@ func (s *TeamService) InviteTeamMember(ctx context.Context, teamID string, req m
 
 // UpdateTeamMemberRole updates a team member's role
 func (s *TeamService) UpdateTeamMemberRole(ctx context.Context, teamID string, targetUserID string, req models.TeamMemberRoleUpdateRequest, updatedBy string) error {
+	if err := s.ensureWritable(ctx, teamID); err != nil {
+		return err
+	}
 	// Check if user has permission to update roles
 	userRole, err := s.getUserRoleInTeam(ctx, teamID, updatedBy)
 	if err != nil {
@@ -736,6 +768,9 @@ func (s *TeamService) UpdateTeamMemberRole(ctx context.Context, teamID string, t
 
 // RemoveTeamMember removes a member from the team
 func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targetUserID string, removedBy string) error {
+	if err := s.ensureWritable(ctx, teamID); err != nil {
+		return err
+	}
 	// Check if user has permission to remove members
 	userRole, err := s.getUserRoleInTeam(ctx, teamID, removedBy)
 	if err != nil {
@@ -910,9 +945,29 @@ func (s *TeamService) recordToTeam(record *neo4j.Record) (*models.Team, error) {
 	if icon, ok := props["icon"]; ok && icon != nil {
 		team.Icon = icon.(string)
 	}
+	if v, ok := props["slug"].(string); ok {
+		team.Slug = v
+	}
+	if v, ok := props["parent_team_id"].(string); ok {
+		team.ParentTeamID = v
+	}
+	if v, ok := props["archived_at"].(time.Time); ok {
+		team.ArchivedAt = &v
+	}
 
-	if settings, ok := props["settings"]; ok && settings != nil {
-		team.Settings = settings.(map[string]interface{})
+	// Settings are stored as a JSON string, like Organization and Space:
+	// Neo4j properties cannot be maps, so storing the map made every team
+	// create fail with Neo.ClientError.Statement.TypeError.
+	switch v := props["settings"].(type) {
+	case string:
+		if v != "" {
+			var m map[string]interface{}
+			if err := json.Unmarshal([]byte(v), &m); err == nil {
+				team.Settings = m
+			}
+		}
+	case map[string]interface{}:
+		team.Settings = v
 	}
 
 	if createdAt, ok := props["created_at"]; ok {

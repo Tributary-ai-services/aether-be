@@ -287,6 +287,12 @@ func (c *Neo4jClient) CreateConstraints(ctx context.Context) error {
 
 		// Processing job constraints
 		"CREATE CONSTRAINT job_id_unique IF NOT EXISTS FOR (j:ProcessingJob) REQUIRE j.id IS UNIQUE",
+
+		// Team constraints (Plan #22 A.2): ids are unique, and a slug is unique
+		// within its organization (a composite uniqueness constraint, which
+		// Community edition supports; null slugs are not compared).
+		"CREATE CONSTRAINT team_id_unique IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
+		"CREATE CONSTRAINT team_org_slug_unique IF NOT EXISTS FOR (t:Team) REQUIRE (t.organization_id, t.slug) IS UNIQUE",
 	}
 
 	for _, constraint := range constraints {
@@ -310,6 +316,10 @@ func (c *Neo4jClient) CreateIndexes(ctx context.Context) error {
 		"CREATE INDEX user_email_idx IF NOT EXISTS FOR (u:User) ON (u.email)",
 		"CREATE INDEX user_status_idx IF NOT EXISTS FOR (u:User) ON (u.status)",
 		"CREATE INDEX user_created_at_idx IF NOT EXISTS FOR (u:User) ON (u.created_at)",
+
+		// Team indexes (Plan #22 A.2)
+		"CREATE INDEX team_org_idx IF NOT EXISTS FOR (t:Team) ON (t.organization_id)",
+		"CREATE INDEX team_archived_at_idx IF NOT EXISTS FOR (t:Team) ON (t.archived_at)",
 
 		// Notebook indexes
 		"CREATE INDEX notebook_name_idx IF NOT EXISTS FOR (n:Notebook) ON (n.name)",
