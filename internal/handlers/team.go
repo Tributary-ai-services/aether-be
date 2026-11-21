@@ -145,7 +145,14 @@ func (h *TeamHandler) GetTeam(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, team.ToResponse())
+	resp := team.ToResponse()
+	if team.UserRole == "" {
+		// Not a member: say whether a join request is pending (Plan #22 A.3).
+		if st, err := h.teamService.MyJoinRequestStatus(c.Request.Context(), team.ID, userID); err == nil {
+			resp.JoinRequest = st
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // UpdateTeam updates a team
@@ -464,4 +471,81 @@ func (h *TeamHandler) MoveTeam(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, team.ToResponse())
+}
+
+// JoinTeam joins an organization- or public-visible team, or files a request
+// for a private one (Plan #22 A.3). 200 {status: joined} or 202 {status: requested}.
+// @Router /api/v1/teams/{id}/join [post]
+func (h *TeamHandler) JoinTeam(c *gin.Context) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	status, err := h.teamService.JoinTeam(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	code := http.StatusOK
+	if status == services.JoinStatusRequested {
+		code = http.StatusAccepted
+	}
+	c.JSON(code, gin.H{"status": status})
+}
+
+// ListJoinRequests lists a team's pending join requests (managers only).
+// @Router /api/v1/teams/{id}/join-requests [get]
+func (h *TeamHandler) ListJoinRequests(c *gin.Context) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	reqs, err := h.teamService.ListJoinRequests(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": reqs})
+}
+
+// DecideJoinRequest approves or denies a pending request (managers only).
+// @Router /api/v1/teams/{id}/join-requests/{request_id} [post]
+func (h *TeamHandler) DecideJoinRequest(c *gin.Context) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	var req models.TeamJoinDecisionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Invalid request data", map[string]interface{}{"error": err.Error()}))
+		return
+	}
+	if err := h.teamService.DecideJoinRequest(c.Request.Context(), c.Param("id"), c.Param("request_id"), req.Approve, req.JoinedAt, userID); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetMemberJoinedAt back-dates or corrects when a member joined (managers only).
+// @Router /api/v1/teams/{id}/members/{user_id}/joined-at [put]
+func (h *TeamHandler) SetMemberJoinedAt(c *gin.Context) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	var req models.TeamMemberJoinedAtRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.JoinedAt.IsZero() {
+		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("joined_at (RFC 3339) is required", nil))
+		return
+	}
+	if err := h.teamService.SetMemberJoinedAt(c.Request.Context(), c.Param("id"), c.Param("user_id"), req.JoinedAt, userID); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
