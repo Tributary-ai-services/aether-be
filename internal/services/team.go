@@ -422,7 +422,8 @@ func (s *TeamService) deleteTeamInternal(ctx context.Context, teamID string) err
 
 func (s *TeamService) getUserRoleInTeam(ctx context.Context, teamID string, userID string) (string, error) {
 	query := `
-		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.id = $user_id OR u.keycloak_id = $user_id
 		RETURN r.role as role`
 
 	params := map[string]interface{}{
