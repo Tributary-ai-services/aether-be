@@ -21,6 +21,11 @@ type Team struct {
 	ParentTeamID string     `json:"parent_team_id,omitempty"`
 	ArchivedAt   *time.Time `json:"archived_at,omitempty"`
 
+	// Owned non-human members (AE-36): GitHub repos as lowercase "owner/name"
+	// and AIQG source_app values, each sorted and unique.
+	Repos      []string `json:"repos"`
+	SourceApps []string `json:"source_apps"`
+
 	// Settings
 	Settings map[string]interface{} `json:"settings,omitempty" validate:"omitempty,neo4j_compatible"`
 
@@ -78,6 +83,8 @@ type TeamResponse struct {
 	Slug           string                 `json:"slug,omitempty"`
 	ParentTeamID   string                 `json:"parentTeamId,omitempty"`
 	ArchivedAt     *time.Time             `json:"archivedAt,omitempty"`
+	Repos          []string               `json:"repos"`
+	SourceApps     []string               `json:"sourceApps"`
 	Settings       map[string]interface{} `json:"settings,omitempty"`
 	CreatedBy      string                 `json:"createdBy"` // camelCase for frontend compatibility
 	CreatedAt      time.Time              `json:"createdAt"`
@@ -158,6 +165,8 @@ func (t *Team) ToResponse() *TeamResponse {
 		Slug:           t.Slug,
 		ParentTeamID:   t.ParentTeamID,
 		ArchivedAt:     t.ArchivedAt,
+		Repos:          nonNil(t.Repos),
+		SourceApps:     nonNil(t.SourceApps),
 		Settings:       t.Settings,
 		CreatedBy:      t.CreatedBy,
 		CreatedAt:      t.CreatedAt,
@@ -166,6 +175,36 @@ func (t *Team) ToResponse() *TeamResponse {
 		UserRole:       t.UserRole,
 		NotebookCount:  t.NotebookCount,
 	}
+}
+
+// nonNil returns s, or an empty slice for nil, so JSON carries [] not null.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// TeamReposRequest replaces a team's repos (PUT /teams/:id/repos).
+// Repos is required ([] clears), so a body without the key cannot wipe the list.
+type TeamReposRequest struct {
+	Repos *[]string `json:"repos"`
+}
+
+// TeamRepoRequest adds one repo (POST /teams/:id/repos).
+type TeamRepoRequest struct {
+	Repo string `json:"repo" binding:"required"`
+}
+
+// TeamSourceAppsRequest replaces a team's source apps (PUT /teams/:id/source-apps).
+// SourceApps is required ([] clears).
+type TeamSourceAppsRequest struct {
+	SourceApps *[]string `json:"source_apps"`
+}
+
+// TeamSourceAppRequest adds one source app (POST /teams/:id/source-apps).
+type TeamSourceAppRequest struct {
+	SourceApp string `json:"source_app" binding:"required"`
 }
 
 // ToMemberResponse converts a TeamMember to TeamMemberResponse with camelCase fields

@@ -961,6 +961,8 @@ func (s *TeamService) recordToTeam(record *neo4j.Record) (*models.Team, error) {
 	if v, ok := props["archived_at"].(time.Time); ok {
 		team.ArchivedAt = &v
 	}
+	team.Repos = stringList(props["repos"])
+	team.SourceApps = stringList(props["source_apps"])
 
 	// Settings are stored as a JSON string, like Organization and Space:
 	// Neo4j properties cannot be maps, so storing the map made every team

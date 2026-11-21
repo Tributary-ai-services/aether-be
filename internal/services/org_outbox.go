@@ -47,6 +47,12 @@ const (
 	EvOrgMemberRemoved  = "org.member.removed"
 	EvOrgMemberRole     = "org.member.role_changed"
 	EvOrgDeleted        = "org.deleted"
+
+	// AE-36: a team's owned repos and source apps, one event per item.
+	EvTeamRepoAdded        = "team.repo.added"
+	EvTeamRepoRemoved      = "team.repo.removed"
+	EvTeamSourceAppAdded   = "team.source_app.added"
+	EvTeamSourceAppRemoved = "team.source_app.removed"
 )
 
 const orgEventSource = "urn:tas:service:aether-be:org"
@@ -59,6 +65,18 @@ type OrgChangeTeam struct {
 	Slug         string `json:"slug"`
 	Visibility   string `json:"visibility,omitempty"`
 	Archived     bool   `json:"archived"`
+	// Repos and SourceApps are what the team owns after the change (AE-36).
+	// Always present (never omitted), so [] means "owns none" while an absent
+	// field means an event written before AE-36.
+	Repos      []string `json:"repos"`
+	SourceApps []string `json:"source_apps"`
+}
+
+// OrgChangeOwned is the repo or source app a team.repo.* / team.source_app.*
+// event is about. Kind matches AIQG's team_member_history.member_kind.
+type OrgChangeOwned struct {
+	Kind string `json:"kind"` // repo | source_app
+	Key  string `json:"key"`  // "owner/name" (lowercase) | the source_app
 }
 
 // OrgChangeMember is the member the change is about. Sub is the Keycloak sub,
@@ -78,6 +96,7 @@ type OrgChangeEvent struct {
 	ActorSub   string           `json:"actor_sub,omitempty"`
 	Team       *OrgChangeTeam   `json:"team,omitempty"`
 	Member     *OrgChangeMember `json:"member,omitempty"`
+	Owned      *OrgChangeOwned  `json:"owned,omitempty"`
 }
 
 // outboxSeq orders events written in one transaction (they share its clock).
@@ -107,7 +126,8 @@ func subOf(ctx context.Context, tx neo4j.ManagedTransaction, userID string) (str
 func teamSnapshotTx(ctx context.Context, tx neo4j.ManagedTransaction, teamID string) (*OrgChangeTeam, string, error) {
 	res, err := tx.Run(ctx, `MATCH (t:Team {id: $id})
 		RETURN t.organization_id AS org, t.name AS name, t.slug AS slug, t.parent_team_id AS parent,
-		       t.visibility AS vis, t.archived_at IS NOT NULL AS archived`, map[string]interface{}{"id": teamID})
+		       t.visibility AS vis, t.archived_at IS NOT NULL AS archived,
+		       coalesce(t.repos, []) AS repos, coalesce(t.source_apps, []) AS apps`, map[string]interface{}{"id": teamID})
 	if err != nil {
 		return nil, "", err
 	}
@@ -117,8 +137,10 @@ func teamSnapshotTx(ctx context.Context, tx neo4j.ManagedTransaction, teamID str
 	r := res.Record()
 	str := func(k string) string { v, _ := r.Get(k); s, _ := v.(string); return s }
 	arch, _ := r.Get("archived")
+	repos, _ := r.Get("repos")
+	apps, _ := r.Get("apps")
 	return &OrgChangeTeam{ID: teamID, ParentTeamID: str("parent"), Name: str("name"), Slug: str("slug"),
-		Visibility: str("vis"), Archived: arch == true}, str("org"), nil
+		Visibility: str("vis"), Archived: arch == true, Repos: stringList(repos), SourceApps: stringList(apps)}, str("org"), nil
 }
 
 // writeOutboxTx appends one event to the outbox inside tx.
@@ -155,6 +177,21 @@ func teamEventTx(ctx context.Context, tx neo4j.ManagedTransaction, seq *outboxSe
 		return err
 	}
 	return writeOutboxTx(ctx, tx, seq, OrgChangeEvent{Type: typ, OrgID: org, ActorSub: actor, Team: team})
+}
+
+// ownedEventTx writes a team.repo.* / team.source_app.* event: the item, and
+// the team's state after the change.
+func ownedEventTx(ctx context.Context, tx neo4j.ManagedTransaction, seq *outboxSeq, typ, teamID, kind, key, actorID string) error {
+	team, org, err := teamSnapshotTx(ctx, tx, teamID)
+	if err != nil {
+		return err
+	}
+	actor, err := subOf(ctx, tx, actorID)
+	if err != nil {
+		return err
+	}
+	return writeOutboxTx(ctx, tx, seq, OrgChangeEvent{Type: typ, OrgID: org, ActorSub: actor, Team: team,
+		Owned: &OrgChangeOwned{Kind: kind, Key: key}})
 }
 
 // memberEventTx writes a membership event (team-level when teamID != "",
