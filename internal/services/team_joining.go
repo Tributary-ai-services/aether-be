@@ -53,8 +53,20 @@ func resolveUserTx(ctx context.Context, tx neo4j.ManagedTransaction, userID stri
 
 // addMemberTx adds a team membership and, when needed, the implied org
 // `member` edge. joinedAt is the (possibly back-dated) membership start.
-func (s *TeamService) addMemberTx(ctx context.Context, tx neo4j.ManagedTransaction, teamID, orgID, userID, role, invitedBy string, joinedAt time.Time) error {
-	_, err := tx.Run(ctx, `
+func (s *TeamService) addMemberTx(ctx context.Context, tx neo4j.ManagedTransaction, seq *outboxSeq, teamID, orgID, userID, role, invitedBy string, joinedAt time.Time) error {
+	res, err := tx.Run(ctx, `
+		MATCH (u:User {id: $user})
+		OPTIONAL MATCH (u)-[existing:MEMBER_OF]->(:Organization {id: $org})
+		RETURN existing IS NOT NULL AS in_org`, map[string]interface{}{"user": userID, "org": orgID})
+	if err != nil {
+		return err
+	}
+	inOrg := true
+	if res.Next(ctx) {
+		v, _ := res.Record().Get("in_org")
+		inOrg = v == true
+	}
+	_, err = tx.Run(ctx, `
 		MATCH (t:Team {id: $team}), (u:User {id: $user})
 		CREATE (u)-[:MEMBER_OF {role: $role, joined_at: datetime($joined), invited_by: $by}]->(t)
 		WITH u
@@ -63,7 +75,16 @@ func (s *TeamService) addMemberTx(ctx context.Context, tx neo4j.ManagedTransacti
 		ON CREATE SET m.role = 'member', m.joined_at = datetime($joined), m.implied_by_team = $team`,
 		map[string]interface{}{"team": teamID, "user": userID, "role": role, "by": invitedBy,
 			"joined": joinedAt.UTC().Format(time.RFC3339), "org": orgID})
-	return err
+	if err != nil {
+		return err
+	}
+	// Plan #22 A.4: events commit with the membership.
+	if !inOrg {
+		if err := memberEventTx(ctx, tx, seq, EvOrgMemberAdded, orgID, "", userID, "member", invitedBy, joinedAt); err != nil {
+			return err
+		}
+	}
+	return memberEventTx(ctx, tx, seq, EvMemberAdded, orgID, teamID, userID, role, invitedBy, joinedAt)
 }
 
 // JoinTeam joins (or asks to join) a team. Returns JoinStatusJoined or
@@ -104,7 +125,7 @@ func (s *TeamService) JoinTeam(ctx context.Context, teamID, userID string) (stri
 		}
 		switch {
 		case vis == "public", vis == "organization" && orgRole != "":
-			if err := s.addMemberTx(ctx, tx, teamID, st.OrgID, uid, "member", uid, time.Now()); err != nil {
+			if err := s.addMemberTx(ctx, tx, &outboxSeq{}, teamID, st.OrgID, uid, "member", uid, time.Now()); err != nil {
 				return nil, err
 			}
 			return JoinStatusJoined, nil
@@ -252,7 +273,7 @@ func (s *TeamService) DecideJoinRequest(ctx context.Context, teamID, requestID s
 		if joinedAt != nil {
 			at = *joinedAt
 		}
-		return nil, s.addMemberTx(ctx, tx, teamID, st.OrgID, uid, "member", decider, at)
+		return nil, s.addMemberTx(ctx, tx, &outboxSeq{}, teamID, st.OrgID, uid, "member", decider, at)
 	})
 	return err
 }
@@ -280,17 +301,20 @@ func (s *TeamService) SetMemberJoinedAt(ctx context.Context, teamID, targetUserI
 			MATCH (u:User)-[r:MEMBER_OF]->(t:Team {id: $team})
 			WHERE u.id = $target OR u.keycloak_id = $target
 			SET r.joined_at = datetime($at)
-			RETURN count(r) AS n`,
+			RETURN count(r) AS n, collect(r.role)[0] AS role`,
 			map[string]interface{}{"team": teamID, "target": targetUserID, "at": joinedAt.UTC().Format(time.RFC3339)})
 		if err != nil {
 			return nil, err
 		}
+		role := ""
 		if res.Next(ctx) {
 			if n, _ := res.Record().Get("n"); n.(int64) == 0 {
 				return nil, errors.NotFoundWithDetails("Not a member of this team", map[string]interface{}{"user_id": targetUserID})
 			}
+			r, _ := res.Record().Get("role")
+			role, _ = r.(string)
 		}
-		return nil, nil
+		return nil, memberEventTx(ctx, tx, &outboxSeq{}, EvMemberJoinedAt, st.OrgID, teamID, targetUserID, role, userID, joinedAt)
 	})
 	return err
 }

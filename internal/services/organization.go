@@ -526,7 +526,7 @@ func (s *OrganizationService) deleteOrganizationInternal(ctx context.Context, or
 		MATCH (t:Team {organization_id: $org_id})
 		WHERE t.archived_at IS NULL
 		SET t.archived_at = datetime(), t.archived_reason = 'organization_deleted'
-		RETURN count(t) AS archived`
+		RETURN collect(t.id) AS archived`
 	// Cascade-delete the org and the spaces linked via HAS_SPACE.
 	query := `
 		MATCH (o:Organization {id: $org_id})
@@ -546,7 +546,21 @@ func (s *OrganizationService) deleteOrganizationInternal(ctx context.Context, or
 
 	// One transaction: a team is never left unarchived under a deleted org.
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		if _, err := tx.Run(ctx, archiveTeams, params); err != nil {
+		arch, err := tx.Run(ctx, archiveTeams, params)
+		if err != nil {
+			return nil, err
+		}
+		// Plan #22 A.4: a team.archived event per team, then org.deleted.
+		seq := &outboxSeq{}
+		if arch.Next(ctx) {
+			ids, _ := arch.Record().Get("archived")
+			for _, id := range ids.([]interface{}) {
+				if err := teamEventTx(ctx, tx, seq, EvTeamArchived, id.(string), ""); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := writeOutboxTx(ctx, tx, seq, OrgChangeEvent{Type: EvOrgDeleted, OrgID: orgID}); err != nil {
 			return nil, err
 		}
 		result, err := tx.Run(ctx, query, params)
@@ -848,7 +862,12 @@ func (s *OrganizationService) addOrganizationMember(ctx context.Context, orgID s
 		if err != nil {
 			return nil, err
 		}
-		return result.Collect(ctx)
+		recs, err := result.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			return recs, err
+		}
+		// Plan #22 A.4: the event commits with the membership.
+		return recs, memberEventTx(ctx, tx, &outboxSeq{}, EvOrgMemberAdded, orgID, "", userID, role, invitedBy, time.Now())
 	})
 
 	if err != nil {
@@ -1209,7 +1228,11 @@ func (s *OrganizationService) UpdateOrganizationMemberRole(ctx context.Context, 
 		if err != nil {
 			return nil, err
 		}
-		return result.Collect(ctx)
+		recs, err := result.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			return recs, err
+		}
+		return recs, memberEventTx(ctx, tx, &outboxSeq{}, EvOrgMemberRole, orgID, "", targetUserID, req.Role, updatedBy, time.Now())
 	})
 
 	if err != nil {
@@ -1286,6 +1309,40 @@ func (s *OrganizationService) RemoveOrganizationMember(ctx context.Context, orgI
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		// The member's sub and their team memberships are read before the
+		// edges go, so each removal gets its event (Plan #22 A.4).
+		seq := &outboxSeq{}
+		pre, err := tx.Run(ctx, `
+			MATCH (o:Organization {id: $org_id})<-[r:MEMBER_OF]-(u:User)
+			WHERE u.keycloak_id = $user_id OR u.id = $user_id
+			OPTIONAL MATCH (t:Team {organization_id: $org_id})<-[tr:MEMBER_OF]-(u)
+			RETURN r.role AS org_role, collect(t.id) AS teams, collect(tr.role) AS roles`, params)
+		if err != nil {
+			return nil, err
+		}
+		preRecs, err := pre.Collect(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(preRecs) == 0 {
+			return []*neo4j.Record{}, nil // not a member: nothing deleted, no event
+		}
+		for _, rec := range preRecs {
+			teams, _ := rec.Get("teams")
+			roles, _ := rec.Get("roles")
+			rl := roles.([]interface{})
+			for k, tid := range teams.([]interface{}) {
+				role, _ := rl[k].(string)
+				if err := memberEventTx(ctx, tx, seq, EvMemberRemoved, orgID, tid.(string), targetUserID, role, removedBy, time.Now()); err != nil {
+					return nil, err
+				}
+			}
+			orgRole, _ := rec.Get("org_role")
+			orgRoleStr, _ := orgRole.(string)
+			if err := memberEventTx(ctx, tx, seq, EvOrgMemberRemoved, orgID, "", targetUserID, orgRoleStr, removedBy, time.Now()); err != nil {
+				return nil, err
+			}
+		}
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err

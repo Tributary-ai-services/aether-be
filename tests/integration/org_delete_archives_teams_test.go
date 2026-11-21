@@ -99,6 +99,22 @@ func TestOrgDeleteArchivesTeams(t *testing.T) {
 		t.Errorf("organization was not deleted")
 	}
 
+	// Plan #22 A.4: the delete wrote team.archived per team and org.deleted.
+	ev, err := client.ExecuteQuery(ctx, `MATCH (e:OrgChangeOutbox {org_id: $org}) RETURN e.type AS type ORDER BY e.ord`,
+		map[string]interface{}{"org": org})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evTypes []string
+	for _, r := range ev.Records {
+		v, _ := r.Get("type")
+		evTypes = append(evTypes, v.(string))
+	}
+	if fmt.Sprint(evTypes) != "[team.archived team.archived org.deleted]" {
+		t.Errorf("org delete events = %v", evTypes)
+	}
+	_, _ = client.ExecuteQuery(ctx, `MATCH (e:OrgChangeOutbox {org_id: $org}) DELETE e`, map[string]interface{}{"org": org})
+
 	after, err := teams.GetUserTeamIDs(ctx, member)
 	if err != nil || len(after) != 1 || after[0] != other {
 		t.Errorf("after delete: member teams = %v, %v; want only %s (archived teams hidden)", after, err, other)

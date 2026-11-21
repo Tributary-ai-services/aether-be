@@ -213,9 +213,11 @@ func (s *TeamService) MoveTeam(ctx context.Context, teamID, parentID, userID str
 		if err := s.setParentTx(ctx, tx, teamID, st.OrgID, parentID); err != nil {
 			return nil, err
 		}
-		_, err = tx.Run(ctx, `MATCH (t:Team {id: $id}) SET t.updated_at = datetime($now)`,
-			map[string]interface{}{"id": teamID, "now": time.Now().Format(time.RFC3339)})
-		return nil, err
+		if _, err = tx.Run(ctx, `MATCH (t:Team {id: $id}) SET t.updated_at = datetime($now)`,
+			map[string]interface{}{"id": teamID, "now": time.Now().Format(time.RFC3339)}); err != nil {
+			return nil, err
+		}
+		return nil, teamEventTx(ctx, tx, &outboxSeq{}, EvTeamMoved, teamID, userID)
 	})
 	if err != nil {
 		return err
@@ -253,9 +255,11 @@ func (s *TeamService) ArchiveTeam(ctx context.Context, teamID, userID string) er
 					map[string]interface{}{"user_role": tr, "team_id": teamID})
 			}
 		}
-		_, err = tx.Run(ctx, `MATCH (t:Team {id: $id}) SET t.archived_at = datetime(), t.archived_reason = 'archived', t.updated_at = datetime()`,
-			map[string]interface{}{"id": teamID})
-		return nil, err
+		if _, err = tx.Run(ctx, `MATCH (t:Team {id: $id}) SET t.archived_at = datetime(), t.archived_reason = 'archived', t.updated_at = datetime()`,
+			map[string]interface{}{"id": teamID}); err != nil {
+			return nil, err
+		}
+		return nil, teamEventTx(ctx, tx, &outboxSeq{}, EvTeamArchived, teamID, userID)
 	})
 	if err != nil {
 		return err
@@ -325,6 +329,11 @@ func (s *TeamService) structuralUpdate(ctx context.Context, teamID string, req m
 			}
 			if _, err := s.assignSlugTx(ctx, tx, teamID, st.OrgID, *req.Slug, ""); err != nil {
 				return nil, err
+			}
+			if req.Name == nil { // a name change emits team.renamed in UpdateTeam's own transaction
+				if err := teamEventTx(ctx, tx, &outboxSeq{}, EvTeamRenamed, teamID, userID); err != nil {
+					return nil, err
+				}
 			}
 		}
 		return nil, nil

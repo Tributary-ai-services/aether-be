@@ -293,6 +293,8 @@ func (c *Neo4jClient) CreateConstraints(ctx context.Context) error {
 		// Community edition supports; null slugs are not compared).
 		"CREATE CONSTRAINT team_id_unique IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
 		"CREATE CONSTRAINT team_org_slug_unique IF NOT EXISTS FOR (t:Team) REQUIRE (t.organization_id, t.slug) IS UNIQUE",
+		// Org change outbox (Plan #22 A.4): one node per event.
+		"CREATE CONSTRAINT org_change_event_id_unique IF NOT EXISTS FOR (e:OrgChangeOutbox) REQUIRE e.event_id IS UNIQUE",
 	}
 
 	for _, constraint := range constraints {
@@ -320,6 +322,7 @@ func (c *Neo4jClient) CreateIndexes(ctx context.Context) error {
 		// Team indexes (Plan #22 A.2)
 		"CREATE INDEX team_org_idx IF NOT EXISTS FOR (t:Team) ON (t.organization_id)",
 		"CREATE INDEX team_archived_at_idx IF NOT EXISTS FOR (t:Team) ON (t.archived_at)",
+		"CREATE INDEX org_change_outbox_pending_idx IF NOT EXISTS FOR (e:OrgChangeOutbox) ON (e.published_at, e.occurred_at)",
 
 		// Notebook indexes
 		"CREATE INDEX notebook_name_idx IF NOT EXISTS FOR (n:Notebook) ON (n.name)",
