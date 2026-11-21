@@ -438,3 +438,30 @@ func (h *TeamHandler) RemoveTeamMember(c *gin.Context) {
 		zap.String("team_id", teamID), zap.String("target_user_id", targetUserID), zap.String("removed_by", userID))
 	c.Status(http.StatusNoContent)
 }
+
+// MoveTeam moves a team under another team of the same organization, or to
+// the top level when parent_team_id is "" (Plan #22 A.2).
+// @Router /api/v1/teams/{id}/move [post]
+func (h *TeamHandler) MoveTeam(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errors.Unauthorized("User not authenticated"))
+		return
+	}
+	teamID := c.Param("id")
+	var req models.TeamMoveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Invalid request data", map[string]interface{}{"error": err.Error()}))
+		return
+	}
+	if err := h.teamService.MoveTeam(c.Request.Context(), teamID, req.ParentTeamID, userID); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	team, err := h.teamService.GetTeam(c.Request.Context(), teamID, userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, team.ToResponse())
+}
