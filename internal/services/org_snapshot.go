@@ -30,6 +30,9 @@ type SnapshotTeam struct {
 	Visibility   string     `json:"visibility,omitempty"`
 	CreatedAt    *time.Time `json:"created_at,omitempty"`
 	ArchivedAt   *time.Time `json:"archived_at,omitempty"`
+	// AE-36: what the team owns. Always present ([] when none).
+	Repos      []string `json:"repos"`
+	SourceApps []string `json:"source_apps"`
 }
 
 // SnapshotMember is one membership. TeamID is empty for an org membership.
@@ -105,7 +108,8 @@ func (s *OrgSnapshotService) Snapshot(ctx context.Context, orgID string) (*OrgSn
 	teams, err := s.neo4j.ExecuteQuery(ctx, `
 		MATCH (t:Team {organization_id: $org})
 		RETURN t.id AS id, t.name AS name, t.slug AS slug, t.parent_team_id AS parent, t.visibility AS vis,
-		       t.created_at AS created, t.archived_at AS archived
+		       t.created_at AS created, t.archived_at AS archived,
+		       coalesce(t.repos, []) AS repos, coalesce(t.source_apps, []) AS apps
 		ORDER BY t.created_at`, p)
 	if err != nil {
 		return nil, err
@@ -113,7 +117,8 @@ func (s *OrgSnapshotService) Snapshot(ctx context.Context, orgID string) (*OrgSn
 	for _, r := range teams.Records {
 		g := func(k string) interface{} { v, _ := r.Get(k); return v }
 		snap.Teams = append(snap.Teams, SnapshotTeam{ID: strProp(g("id")), Name: strProp(g("name")), Slug: strProp(g("slug")),
-			ParentTeamID: strProp(g("parent")), Visibility: strProp(g("vis")), CreatedAt: timeProp(g("created")), ArchivedAt: timeProp(g("archived"))})
+			ParentTeamID: strProp(g("parent")), Visibility: strProp(g("vis")), CreatedAt: timeProp(g("created")), ArchivedAt: timeProp(g("archived")),
+			Repos: stringList(g("repos")), SourceApps: stringList(g("apps"))})
 	}
 	tm, err := s.neo4j.ExecuteQuery(ctx, `
 		MATCH (u:User)-[r:MEMBER_OF]->(t:Team {organization_id: $org})

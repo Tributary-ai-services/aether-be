@@ -536,6 +536,13 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		teams.GET("/:id/join-requests", s.TeamHandler.ListJoinRequests)
 		teams.POST("/:id/join-requests/:request_id", s.TeamHandler.DecideJoinRequest)
 		teams.PUT("/:id/members/:user_id/joined-at", s.TeamHandler.SetMemberJoinedAt)
+		// AE-36: team-owned repos and source apps
+		teams.PUT("/:id/repos", s.TeamHandler.SetTeamRepos)
+		teams.POST("/:id/repos", s.TeamHandler.AddTeamRepo)
+		teams.DELETE("/:id/repos/:owner/:name", s.TeamHandler.RemoveTeamRepo)
+		teams.PUT("/:id/source-apps", s.TeamHandler.SetTeamSourceApps)
+		teams.POST("/:id/source-apps", s.TeamHandler.AddTeamSourceApp)
+		teams.DELETE("/:id/source-apps/:source_app", s.TeamHandler.RemoveTeamSourceApp)
 
 		// Team member routes
 		teams.GET("/:id/members", s.TeamHandler.GetTeamMembers)

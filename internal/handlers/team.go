@@ -549,3 +549,86 @@ func (h *TeamHandler) SetMemberJoinedAt(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// Team-owned repos and source apps (AE-36). Each write needs a team
+// owner/admin or an org owner/admin, refuses an archived team (409), and
+// returns the team. Repos are "owner/name", stored lowercase.
+
+func (h *TeamHandler) changeOwned(c *gin.Context, ch services.OwnedChange) {
+	userID, err := ensureUserExists(c, h.userService, h.logger)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	team, err := h.teamService.ChangeTeamOwned(c.Request.Context(), c.Param("id"), ch, userID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, team.ToResponse())
+}
+
+func badOwnedBody(c *gin.Context, err error, field string) {
+	details := map[string]interface{}{"field": field}
+	if err != nil {
+		details["error"] = err.Error()
+	}
+	c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Invalid request data", details))
+}
+
+// SetTeamRepos replaces a team's repos. Body {"repos": ["owner/name", ...]}; [] clears.
+// @Router /api/v1/teams/{id}/repos [put]
+func (h *TeamHandler) SetTeamRepos(c *gin.Context) {
+	var req models.TeamReposRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Repos == nil {
+		badOwnedBody(c, err, "repos")
+		return
+	}
+	h.changeOwned(c, services.OwnedChange{Kind: services.OwnedKindRepo, Set: req.Repos})
+}
+
+// AddTeamRepo adds one repo. Body {"repo": "owner/name"}; adding an owned repo is a no-op.
+// @Router /api/v1/teams/{id}/repos [post]
+func (h *TeamHandler) AddTeamRepo(c *gin.Context) {
+	var req models.TeamRepoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badOwnedBody(c, err, "repo")
+		return
+	}
+	h.changeOwned(c, services.OwnedChange{Kind: services.OwnedKindRepo, Add: []string{req.Repo}})
+}
+
+// RemoveTeamRepo removes one repo; 404 when the team does not own it.
+// @Router /api/v1/teams/{id}/repos/{owner}/{name} [delete]
+func (h *TeamHandler) RemoveTeamRepo(c *gin.Context) {
+	h.changeOwned(c, services.OwnedChange{Kind: services.OwnedKindRepo,
+		Remove: []string{c.Param("owner") + "/" + c.Param("name")}})
+}
+
+// SetTeamSourceApps replaces a team's source apps. Body {"source_apps": [...]}; [] clears.
+// @Router /api/v1/teams/{id}/source-apps [put]
+func (h *TeamHandler) SetTeamSourceApps(c *gin.Context) {
+	var req models.TeamSourceAppsRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.SourceApps == nil {
+		badOwnedBody(c, err, "source_apps")
+		return
+	}
+	h.changeOwned(c, services.OwnedChange{Kind: services.OwnedKindSourceApp, Set: req.SourceApps})
+}
+
+// AddTeamSourceApp adds one source app. Body {"source_app": "..."}.
+// @Router /api/v1/teams/{id}/source-apps [post]
+func (h *TeamHandler) AddTeamSourceApp(c *gin.Context) {
+	var req models.TeamSourceAppRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badOwnedBody(c, err, "source_app")
+		return
+	}
+	h.changeOwned(c, services.OwnedChange{Kind: services.OwnedKindSourceApp, Add: []string{req.SourceApp}})
+}
+
+// RemoveTeamSourceApp removes one source app; 404 when the team does not own it.
+// @Router /api/v1/teams/{id}/source-apps/{source_app} [delete]
+func (h *TeamHandler) RemoveTeamSourceApp(c *gin.Context) {
+	h.changeOwned(c, services.OwnedChange{Kind: services.OwnedKindSourceApp, Remove: []string{c.Param("source_app")}})
+}
