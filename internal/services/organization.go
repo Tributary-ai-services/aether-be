@@ -518,15 +518,22 @@ func (s *OrganizationService) DeleteOrganization(ctx context.Context, orgID stri
 // Internal helper methods
 
 func (s *OrganizationService) deleteOrganizationInternal(ctx context.Context, orgID string) error {
-	// Updated to cascade delete spaces linked via HAS_SPACE relationship
+	// Teams are ARCHIVED, never deleted (Plan #22 A.1): AIQG's team history and
+	// billing reports refer to them by id, and a deleted team orphans both.
+	// Team nodes and their MEMBER_OF edges stay; archived_at hides the team from
+	// every listing. The org, its notebooks and its spaces are deleted as before.
+	archiveTeams := `
+		MATCH (t:Team {organization_id: $org_id})
+		WHERE t.archived_at IS NULL
+		SET t.archived_at = datetime(), t.archived_reason = 'organization_deleted'
+		RETURN count(t) AS archived`
+	// Cascade-delete the org and the spaces linked via HAS_SPACE.
 	query := `
 		MATCH (o:Organization {id: $org_id})
-		OPTIONAL MATCH (o)<-[r:MEMBER_OF]-()
-		OPTIONAL MATCH (t:Team {organization_id: $org_id})
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(o)
 		OPTIONAL MATCH (o)-[:HAS_SPACE]->(sp:Space)
 		OPTIONAL MATCH (spn:Notebook)-[:BELONGS_TO]->(sp)
-		DETACH DELETE o, t, n, sp, spn`
+		DETACH DELETE o, n, sp, spn`
 
 	params := map[string]interface{}{
 		"org_id": orgID,
@@ -537,7 +544,11 @@ func (s *OrganizationService) deleteOrganizationInternal(ctx context.Context, or
 	})
 	defer session.Close(ctx)
 
+	// One transaction: a team is never left unarchived under a deleted org.
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		if _, err := tx.Run(ctx, archiveTeams, params); err != nil {
+			return nil, err
+		}
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err

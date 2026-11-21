@@ -82,6 +82,11 @@ func main() {
 		log.Fatalf("Failed to create demo teams: %v", err)
 	}
 
+	// Tag everything created above, so clearDemoData can remove exactly it.
+	if err := tagDemo(ctx, neo4jClient, orgs, teams); err != nil {
+		log.Fatalf("Failed to tag demo data: %v", err)
+	}
+
 	// Setup team memberships
 	fmt.Println("Setting up team memberships...")
 	if err := setupTeamMemberships(ctx, teamService, users, teams); err != nil {
@@ -102,11 +107,13 @@ func clearDemoData(ctx context.Context, neo4jClient *database.Neo4jClient) error
 	session := neo4jClient.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
+	// Only what this script created: nodes it tagged demo = true, and the
+	// @demo.aether users. It used to delete EVERY MEMBER_OF edge, Team and
+	// Organization in the database (Plan #22 A.1).
 	queries := []string{
-		"MATCH ()-[r:MEMBER_OF]->() DELETE r",
-		"MATCH (t:Team) DELETE t",
-		"MATCH (o:Organization) DELETE o",
-		"MATCH (u:User) WHERE u.email ENDS WITH '@demo.aether' DELETE u",
+		"MATCH (t:Team) WHERE t.demo = true DETACH DELETE t",
+		"MATCH (o:Organization) WHERE o.demo = true OPTIONAL MATCH (o)-[:HAS_SPACE]->(sp:Space) DETACH DELETE o, sp",
+		"MATCH (u:User) WHERE u.email ENDS WITH '@demo.aether' DETACH DELETE u",
 	}
 
 	for _, query := range queries {
@@ -503,6 +510,27 @@ func setupTeamMemberships(ctx context.Context, teamService *services.TeamService
 }
 
 // Helper functions
+// tagDemo marks the demo orgs and teams (by id) with demo = true.
+func tagDemo(ctx context.Context, neo4jClient *database.Neo4jClient, orgs []*models.Organization, teams []*models.Team) error {
+	ids := make([]string, 0, len(orgs)+len(teams))
+	for _, o := range orgs {
+		ids = append(ids, o.ID)
+	}
+	for _, t := range teams {
+		ids = append(ids, t.ID)
+	}
+	session := neo4jClient.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, "MATCH (n) WHERE (n:Organization OR n:Team) AND n.id IN $ids SET n.demo = true", map[string]interface{}{"ids": ids})
+		if err != nil {
+			return nil, err
+		}
+		return r.Consume(ctx)
+	})
+	return err
+}
+
 func findUserByEmail(users []*models.User, email string) *models.User {
 	for _, user := range users {
 		if user.Email == email {
