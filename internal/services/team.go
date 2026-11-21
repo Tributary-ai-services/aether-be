@@ -135,7 +135,15 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 func (s *TeamService) GetTeam(ctx context.Context, teamID string, userID string) (*models.Team, error) {
 	query := `
 		MATCH (t:Team {id: $team_id})
-		OPTIONAL MATCH (t)<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		OPTIONAL MATCH (t)<-[r:MEMBER_OF]-(u:User)
+		WHERE u.id = $user_id OR u.keycloak_id = $user_id
+		WITH t, r
+		// Who may read a team by id (Plan #22 A.3): its members; anyone for a
+		// public team; members of its org for an organization or private team
+		// (so a shared link lets them request to join). Anyone else gets 404.
+		WHERE r IS NOT NULL OR t.visibility = 'public'
+		   OR EXISTS { MATCH (:Organization {id: t.organization_id})<-[:MEMBER_OF]-(x:User)
+		               WHERE x.id = $user_id OR x.keycloak_id = $user_id }
 		OPTIONAL MATCH (t)<-[:MEMBER_OF]-()
 		WITH t, r.role as user_role, count(*) as member_count
 		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
@@ -194,8 +202,17 @@ func (s *TeamService) GetTeams(ctx context.Context, userID string, organizationI
 		query = `
 			MATCH (t:Team {organization_id: $organization_id})
 			WHERE t.archived_at IS NULL
-			OPTIONAL MATCH (t)<-[r:MEMBER_OF]-(u:User {id: $user_id})
-			WHERE t.visibility = 'public' OR t.visibility = 'organization' OR r IS NOT NULL
+			OPTIONAL MATCH (t)<-[r:MEMBER_OF]-(u:User)
+			WHERE u.id = $user_id OR u.keycloak_id = $user_id
+			// Visibility filters the TEAMS (Plan #22 A.3). It used to sit on the
+			// OPTIONAL MATCH, where it filtered only the membership edge, so
+			// private teams were listed to anyone. Now: public to everyone,
+			// organization to org members, private to the team's members.
+			WITH t, r
+			WHERE t.visibility = 'public' OR r IS NOT NULL
+			   OR (t.visibility = 'organization' AND EXISTS {
+			        MATCH (:Organization {id: $organization_id})<-[:MEMBER_OF]-(x:User)
+			        WHERE x.id = $user_id OR x.keycloak_id = $user_id })
 			WITH t, r.role as user_role
 			OPTIONAL MATCH (t)<-[:MEMBER_OF]-()
 			WITH t, user_role, count(*) as member_count
@@ -650,10 +667,33 @@ func (s *TeamService) InviteTeamMember(ctx context.Context, teamID string, req m
 		})
 	}
 
-	// Add member
-	err = s.addTeamMember(ctx, teamID, targetUserID.(string), req.Role, invitedBy)
+	// Add member, with the implied org membership and an optional back-dated
+	// joined_at (Plan #22 A.3).
+	joinedAt := time.Now()
+	if req.JoinedAt != nil {
+		if err := ValidateJoinedAt(*req.JoinedAt, joinedAt); err != nil {
+			return nil, err
+		}
+		joinedAt = *req.JoinedAt
+	}
+	wsess := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) { c.AccessMode = neo4j.AccessModeWrite })
+	defer wsess.Close(ctx)
+	_, err = wsess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		st, err := s.readTeamState(ctx, tx, teamID)
+		if err != nil {
+			return nil, err
+		}
+		inviter, err := resolveUserTx(ctx, tx, invitedBy)
+		if err != nil {
+			return nil, err
+		}
+		return nil, s.addMemberTx(ctx, tx, teamID, st.OrgID, targetUserID.(string), req.Role, inviter, joinedAt)
+	})
 	if err != nil {
-		return nil, err
+		if _, ok := errors.AsAPIError(err); ok {
+			return nil, err
+		}
+		return nil, errors.DatabaseWithDetails("Failed to add team member", err, map[string]interface{}{"team_id": teamID})
 	}
 
 	// Return the new member
@@ -661,7 +701,7 @@ func (s *TeamService) InviteTeamMember(ctx context.Context, teamID string, req m
 		UserID:    targetUserID.(string),
 		TeamID:    teamID,
 		Role:      req.Role,
-		JoinedAt:  time.Now(),
+		JoinedAt:  joinedAt,
 		InvitedBy: invitedBy,
 	}
 

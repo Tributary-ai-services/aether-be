@@ -518,6 +518,10 @@ func (s *APIServer) setupRoutes(keycloakClient *auth.KeycloakClient) {
 		teams.PUT("/:id", s.TeamHandler.UpdateTeam)
 		teams.DELETE("/:id", s.TeamHandler.DeleteTeam)
 		teams.POST("/:id/move", s.TeamHandler.MoveTeam)
+		teams.POST("/:id/join", s.TeamHandler.JoinTeam)
+		teams.GET("/:id/join-requests", s.TeamHandler.ListJoinRequests)
+		teams.POST("/:id/join-requests/:request_id", s.TeamHandler.DecideJoinRequest)
+		teams.PUT("/:id/members/:user_id/joined-at", s.TeamHandler.SetMemberJoinedAt)
 
 		// Team member routes
 		teams.GET("/:id/members", s.TeamHandler.GetTeamMembers)
