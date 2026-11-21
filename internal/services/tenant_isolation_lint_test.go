@@ -137,7 +137,7 @@ var wantExemptions = map[string]string{
 // settled. Listed so the count cannot grow unnoticed. Note that production
 // holds zero Team nodes, so team.go is wholly unexercised against real data.
 var knownUnconstrained = map[string]int{
-	"team.go":         5, // 6 → 5 2026-11-21: UpdateTeam builds one query (Plan #22 A.2)
+	"team.go":         4, // 6 → 5 → 4 2026-11-21: UpdateTeam builds one query (A.2); dead addTeamMember/deleteTeamInternal removed (A.4)
 	"organization.go": 4,
 }
 

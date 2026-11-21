@@ -242,6 +242,31 @@ func main() {
 		appLogger.Info("Streaming consumer started — reading from Kafka activity + compliance topics")
 	}
 
+	// Org change events (Plan #22 A.4): the outbox is always written; the relay
+	// publishes it to aether.org.changes.v1 only when AETHER_ORG_EVENTS_ENABLED
+	// is true (off by default) and Kafka is configured.
+	if os.Getenv("AETHER_ORG_EVENTS_ENABLED") == "true" && cfg.Kafka.Enabled && len(cfg.Kafka.Brokers) > 0 {
+		relay := services.NewOrgChangeRelay(neo4jClient, cfg.Kafka.Brokers, appLogger)
+		go relay.Run(ctx)
+		go func() {
+			t := time.NewTicker(time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if err := relay.PruneOutbox(ctx, 7*24*time.Hour); err != nil {
+						appLogger.Warn("org change outbox prune failed", zap.Error(err))
+					}
+				}
+			}
+		}()
+		appLogger.Info("Org change relay started", zap.String("topic", services.OrgChangesTopic))
+	} else {
+		appLogger.Info("Org change relay off (AETHER_ORG_EVENTS_ENABLED != true or Kafka disabled); outbox still written")
+	}
+
 	// Start stale production cleanup worker
 	go apiServer.ProductionCleanupWorker.Start(ctx)
 	appLogger.Info("Production cleanup worker started")

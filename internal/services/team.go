@@ -105,7 +105,14 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 			}
 			team.ParentTeamID = req.ParentTeamID
 		}
-		return nil, nil
+		// The creator owns the team; membership, events and the team commit
+		// together (Plan #22 A.4), so a team never exists without its owner or
+		// its team.created event.
+		seq := &outboxSeq{}
+		if err := teamEventTx(ctx, tx, seq, EvTeamCreated, team.ID, createdBy); err != nil {
+			return nil, err
+		}
+		return nil, s.addMemberTx(ctx, tx, seq, team.ID, team.OrganizationID, createdBy, "owner", createdBy, team.CreatedAt)
 	})
 
 	if err != nil {
@@ -116,15 +123,6 @@ func (s *TeamService) CreateTeam(ctx context.Context, req models.TeamCreateReque
 		return nil, errors.DatabaseWithDetails("Failed to create team", err, map[string]interface{}{
 			"team_id": team.ID,
 		})
-	}
-
-	// Add creator as owner
-	err = s.addTeamMember(ctx, team.ID, createdBy, "owner", createdBy)
-	if err != nil {
-		s.logger.Error("Failed to add creator as team owner", zap.Error(err), zap.String("team_id", team.ID))
-		// Try to clean up the team if member addition fails
-		_ = s.deleteTeamInternal(ctx, team.ID)
-		return nil, err
 	}
 
 	s.logger.Info("Team created successfully", zap.String("team_id", team.ID), zap.String("created_by", createdBy))
@@ -354,7 +352,16 @@ func (s *TeamService) UpdateTeam(ctx context.Context, teamID string, req models.
 		if err != nil {
 			return nil, err
 		}
-		return result.Collect(ctx)
+		recs, err := result.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			return recs, err
+		}
+		if req.Name != nil {
+			if err := teamEventTx(ctx, tx, &outboxSeq{}, EvTeamRenamed, teamID, userID); err != nil {
+				return nil, err
+			}
+		}
+		return recs, nil
 	})
 
 	if err != nil {
@@ -402,41 +409,6 @@ func settingsJSON(m map[string]interface{}) string {
 
 // Internal helper methods
 
-func (s *TeamService) deleteTeamInternal(ctx context.Context, teamID string) error {
-	query := `
-		MATCH (t:Team {id: $team_id})
-		OPTIONAL MATCH (t)<-[r:MEMBER_OF]-()
-		OPTIONAL MATCH (n:Notebook)-[:OWNED_BY]->(t)
-		DETACH DELETE t, r, n`
-
-	params := map[string]interface{}{
-		"team_id": teamID,
-	}
-
-	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
-		c.AccessMode = neo4j.AccessModeWrite
-	})
-	defer session.Close(ctx)
-
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		result, err := tx.Run(ctx, query, params)
-		if err != nil {
-			return nil, err
-		}
-		return result.Collect(ctx)
-	})
-
-	if err != nil {
-		s.logger.Error("Failed to delete team", zap.Error(err), zap.String("team_id", teamID))
-		return errors.DatabaseWithDetails("Failed to delete team", err, map[string]interface{}{
-			"team_id": teamID,
-		})
-	}
-
-	s.logger.Info("Team deleted successfully", zap.String("team_id", teamID))
-	return nil
-}
-
 func (s *TeamService) getUserRoleInTeam(ctx context.Context, teamID string, userID string) (string, error) {
 	query := `
 		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User)
@@ -478,47 +450,6 @@ func (s *TeamService) getUserRoleInTeam(ctx context.Context, teamID string, user
 
 	role, _ := records[0].Get("role")
 	return role.(string), nil
-}
-
-func (s *TeamService) addTeamMember(ctx context.Context, teamID string, userID string, role string, invitedBy string) error {
-	query := `
-		MATCH (t:Team {id: $team_id}), (u:User {id: $user_id})
-		CREATE (u)-[r:MEMBER_OF {
-			role: $role,
-			joined_at: datetime($joined_at),
-			invited_by: $invited_by
-		}]->(t)
-		RETURN r`
-
-	params := map[string]interface{}{
-		"team_id":    teamID,
-		"user_id":    userID,
-		"role":       role,
-		"joined_at":  time.Now().Format(time.RFC3339),
-		"invited_by": invitedBy,
-	}
-
-	session := s.neo4j.Session(ctx, func(c *neo4j.SessionConfig) {
-		c.AccessMode = neo4j.AccessModeWrite
-	})
-	defer session.Close(ctx)
-
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		result, err := tx.Run(ctx, query, params)
-		if err != nil {
-			return nil, err
-		}
-		return result.Collect(ctx)
-	})
-
-	if err != nil {
-		return errors.DatabaseWithDetails("Failed to add team member", err, map[string]interface{}{
-			"team_id": teamID,
-			"user_id": userID,
-		})
-	}
-
-	return nil
 }
 
 // GetTeamMembers retrieves all members of a team
@@ -687,7 +618,7 @@ func (s *TeamService) InviteTeamMember(ctx context.Context, teamID string, req m
 		if err != nil {
 			return nil, err
 		}
-		return nil, s.addMemberTx(ctx, tx, teamID, st.OrgID, targetUserID.(string), req.Role, inviter, joinedAt)
+		return nil, s.addMemberTx(ctx, tx, &outboxSeq{}, teamID, st.OrgID, targetUserID.(string), req.Role, inviter, joinedAt)
 	})
 	if err != nil {
 		if _, ok := errors.AsAPIError(err); ok {
@@ -757,9 +688,10 @@ func (s *TeamService) UpdateTeamMemberRole(ctx context.Context, teamID string, t
 
 	// Update role
 	query := `
-		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.id = $user_id OR u.keycloak_id = $user_id
 		SET r.role = $role
-		RETURN r`
+		RETURN r, t.organization_id AS org`
 
 	params := map[string]interface{}{
 		"team_id": teamID,
@@ -777,7 +709,17 @@ func (s *TeamService) UpdateTeamMemberRole(ctx context.Context, teamID string, t
 		if err != nil {
 			return nil, err
 		}
-		return result.Collect(ctx)
+		recs, err := result.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			return recs, err
+		}
+		org, _ := recs[0].Get("org")
+		orgID, _ := org.(string)
+		// Plan #22 A.4: the event commits with the change.
+		if err := memberEventTx(ctx, tx, &outboxSeq{}, EvMemberRoleChanged, orgID, teamID, targetUserID, req.Role, updatedBy, time.Now()); err != nil {
+			return nil, err
+		}
+		return recs, nil
 	})
 
 	if err != nil {
@@ -839,9 +781,11 @@ func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targe
 
 	// Remove member
 	query := `
-		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User {id: $user_id})
+		MATCH (t:Team {id: $team_id})<-[r:MEMBER_OF]-(u:User)
+		WHERE u.id = $user_id OR u.keycloak_id = $user_id
+		WITH t, r, r.role AS role
 		DELETE r
-		RETURN count(*) as deleted`
+		RETURN t.organization_id AS org, role`
 
 	params := map[string]interface{}{
 		"team_id": teamID,
@@ -854,11 +798,26 @@ func (s *TeamService) RemoveTeamMember(ctx context.Context, teamID string, targe
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		// Read the member's sub before the edge goes (memberEventTx reads the
+		// user, which survives; the edge does not need to).
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err
 		}
-		return result.Collect(ctx)
+		recs, err := result.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			// No row: not a member. (count(*) used to return a row either way,
+			// so a missing member was never reported as 404.)
+			return recs, err
+		}
+		org, _ := recs[0].Get("org")
+		orgID, _ := org.(string)
+		role, _ := recs[0].Get("role")
+		roleStr, _ := role.(string)
+		if err := memberEventTx(ctx, tx, &outboxSeq{}, EvMemberRemoved, orgID, teamID, targetUserID, roleStr, removedBy, time.Now()); err != nil {
+			return nil, err
+		}
+		return recs, nil
 	})
 
 	if err != nil {
