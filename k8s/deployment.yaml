@@ -40,7 +40,7 @@ spec:
       serviceAccountName: aether-backend
       containers:
       - name: aether-backend
-        image: ghcr.io/tributary-ai-services/aether-be:main-6d73aaf@sha256:1d8f65dc7ffed9882710764eb810bd26bc8de0798435b524f544c5ef67ceed06
+        image: ghcr.io/tributary-ai-services/aether-be:main-e7d3e5a@sha256:aaa04717b0a4e73388acf474e066805df8ee721d7e2e7fa163da4f84fb68ffca
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -51,6 +51,12 @@ spec:
             name: aether-backend-config
         - secretRef:
             name: aether-backend-secret
+        # /internal/v1 shared secret (Plan #22 2.1/2.2: aiqg-dashboard-be's
+        # org link check and team-history sync). Optional: without it the
+        # internal API is simply not mounted.
+        - secretRef:
+            name: aether-internal-auth
+            optional: true
         resources:
           requests:
             memory: "512Mi"
