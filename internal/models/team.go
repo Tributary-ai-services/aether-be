@@ -85,6 +85,9 @@ type TeamResponse struct {
 	MemberCount    int                    `json:"memberCount"`
 	UserRole       string                 `json:"userRole,omitempty"`
 	NotebookCount  int                    `json:"notebookCount,omitempty"`
+	// JoinRequest is the caller's own pending request ("pending" or empty),
+	// set by GET /teams/:id (Plan #22 A.3).
+	JoinRequest string `json:"joinRequest,omitempty"`
 }
 
 // TeamMember represents a team member relationship
@@ -116,6 +119,8 @@ type TeamMemberResponse struct {
 type TeamInviteRequest struct {
 	Email string `json:"email" validate:"required,email,max=254"`
 	Role  string `json:"role" validate:"required,oneof=admin member viewer"`
+	// JoinedAt back-dates the membership (Plan #22 A.3); never in the future.
+	JoinedAt *time.Time `json:"joined_at,omitempty"`
 }
 
 // TeamMemberRoleUpdateRequest represents a request to update a team member's role
@@ -255,4 +260,27 @@ type TeamStatsResponse struct {
 	PublicTeams       int `json:"publicTeams"`
 	OrganizationTeams int `json:"organizationTeams"`
 	PrivateTeams      int `json:"privateTeams"`
+}
+
+// TeamJoinRequest is a pending request to join a private team (Plan #22 A.3).
+type TeamJoinRequest struct {
+	ID          string    `json:"id"`
+	TeamID      string    `json:"teamId"`
+	UserID      string    `json:"userId"`
+	Email       string    `json:"email,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	Status      string    `json:"status"`
+	RequestedAt time.Time `json:"requestedAt"`
+}
+
+// TeamJoinDecisionRequest approves or denies a join request. JoinedAt, when
+// set on an approval, back-dates the membership.
+type TeamJoinDecisionRequest struct {
+	Approve  bool       `json:"approve"`
+	JoinedAt *time.Time `json:"joined_at,omitempty"`
+}
+
+// TeamMemberJoinedAtRequest back-dates (or corrects) a member's joined_at.
+type TeamMemberJoinedAtRequest struct {
+	JoinedAt time.Time `json:"joined_at" validate:"required"`
 }
