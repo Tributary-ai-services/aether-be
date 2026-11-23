@@ -168,6 +168,25 @@ func NewAPIServer(
 	databaseService := services.NewDatabaseService(neo4j, dbhubService, neo4jQueryService, log)
 	databaseHandler := NewDatabaseHandler(databaseService, userService, log)
 
+	// Plan #22 C.6: MCP calls and the SQL console through the tas-mcp proxy,
+	// with aether-be's delegate credential and the caller's org and sub
+	// (AIQG-88). Off (AETHER_MCP_VIA_PROXY unset) keeps every direct path
+	// exactly as before.
+	var mcpProxy *services.MCPProxyClient
+	if cfg.MCPProxy.Enabled {
+		mcpProxy = services.NewMCPProxyClient(&cfg.MCPProxy, log)
+		databaseService.SetSQLProxy(services.NewProxySQLService(mcpProxy, cfg.MCPProxy.PostgresServerID, log.Logger))
+		log.Info("MCP via proxy ON: SQL console and federated MCP servers go through tas-mcp; dbhub is not used for SQL",
+			zap.String("proxy_url", cfg.MCPProxy.BaseURL),
+			zap.String("sql_server_id", cfg.MCPProxy.PostgresServerID),
+			zap.Bool("delegate_token_file_set", cfg.MCPProxy.DelegateTokenFile != ""),
+			zap.Bool("delegate_token_env_set", cfg.MCPProxy.DelegateToken != ""),
+			zap.Int("proxied_servers", len(cfg.MCPProxy.ServerIDs)),
+		)
+	} else {
+		log.Info("MCP via proxy off (AETHER_MCP_VIA_PROXY=false): direct MCP and dbhub paths")
+	}
+
 	// Initialize SavedQuery service and handler
 	savedQueryService := services.NewSavedQueryService(neo4j, databaseService, log)
 	savedQueryHandler := NewSavedQueryHandler(savedQueryService, userService, teamService, log)
@@ -260,6 +279,9 @@ func NewAPIServer(
 	// Initialize Napkin MCP service and MCP handler
 	napkinService := services.NewNapkinService(&cfg.Napkin, log)
 	mcpHandler := NewMCPHandler(napkinService, databaseService, neo4jQueryService, cfg, log)
+	if mcpProxy != nil {
+		mcpHandler.SetProxy(mcpProxy, cfg.MCPProxy.ServerIDs)
+	}
 
 	// Initialize router handler (may be nil if disabled)
 	routerHandler, err := NewRouterHandler(&cfg.Router, log)

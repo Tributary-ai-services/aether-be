@@ -29,6 +29,11 @@ type MCPHandler struct {
 	logger          *zap.Logger
 	mcpPublisher    *events.MCPPublisher
 
+	// Plan #22 C.6: the tas-mcp proxy path, nil when AETHER_MCP_VIA_PROXY is
+	// off. See mcp_proxy_handler.go.
+	proxy    *services.MCPProxyClient
+	proxyIDs map[string]string
+
 	// Health cache with TTL
 	healthMu    sync.RWMutex
 	healthCache map[string]healthCacheEntry
@@ -279,6 +284,12 @@ func (h *MCPHandler) ListTools(c *gin.Context) {
 		return
 	}
 
+	// Plan #22 C.6: federated servers through the proxy.
+	if target, ok := h.usesProxy(serverID, ""); ok {
+		h.proxyListTools(c, serverID, target)
+		return
+	}
+
 	// Dynamic servers — tool discovery through MCPClientService.ListTools()
 	if client, ok := h.mcpClients[serverID]; ok {
 		tools, err := client.ListTools(c.Request.Context())
@@ -331,8 +342,20 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 	requestID := c.GetHeader("X-Request-ID")
 	start := time.Now()
 
-	// If a connectionId was provided and this is an infrastructure server, resolve credentials
+	// Plan #22 C.6: through the proxy, which injects the tenant's stored
+	// connection; no credential is resolved or sent from here.
+	if target, ok := h.usesProxy(req.ServerID, req.ConnectionID); ok {
+		h.proxyInvoke(c, req, target)
+		return
+	}
+
+	// If a connectionId was provided and this is an infrastructure server, resolve credentials.
+	// LOW-1: that reads a stored login, so it needs a space with write access
+	// (before, a missing space fell back to the "default" tenant).
 	if req.ConnectionID != "" {
+		if !requirePermission(c, "write") {
+			return
+		}
 		if _, isInfra := infrastructureServerTypes[req.ServerID]; isInfra {
 			if err := h.injectConnectionParams(c, &req); err != nil {
 				return // error response already sent
@@ -421,6 +444,16 @@ func (h *MCPHandler) TestConnection(c *gin.Context) {
 		return
 	}
 
+	// Plan #22 C.6: through the proxy with the tenant's stored connection.
+	if target, ok := h.usesProxy(serverID, req.ConnectionID); ok {
+		params := make(map[string]interface{}, len(testDef.params))
+		for k, v := range testDef.params {
+			params[k] = v
+		}
+		h.proxyTestConnection(c, serverID, target, req.ConnectionID, testDef.tool, params)
+		return
+	}
+
 	// Get the MCP client
 	client, ok := h.mcpClients[serverID]
 	if !ok {
@@ -441,8 +474,11 @@ func (h *MCPHandler) TestConnection(c *gin.Context) {
 		invokeReq.Params[k] = v
 	}
 
-	// Inject connection credentials if provided
+	// Inject connection credentials if provided (LOW-1: needs read in a space)
 	if req.ConnectionID != "" {
+		if !requirePermission(c, "read") {
+			return
+		}
 		if err := h.injectConnectionParams(c, &invokeReq); err != nil {
 			return // error response already sent
 		}

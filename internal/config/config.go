@@ -28,6 +28,7 @@ type Config struct {
 	Router                RouterConfig
 	Crawl4AI              Crawl4AIConfig
 	DBHub                 DBHubConfig
+	MCPProxy              MCPProxyConfig
 	Napkin                NapkinConfig
 	PostgresMCP           MCPServerConfig
 	FilesystemMCP         MCPServerConfig
@@ -285,6 +286,72 @@ type DBHubConfig struct {
 	DefaultSource string `json:"default_source"`
 }
 
+// MCPProxyConfig moves aether-be's MCP traffic onto the tas-mcp proxy (Plan
+// #22 C.6). Off by default: with AETHER_MCP_VIA_PROXY unset, every MCP call
+// and the SQL console keep their direct paths exactly as before.
+//
+// With it on, aether-be invokes federated servers through the proxy's
+// POST /api/v1/federation/servers/{id}/invoke with its delegate credential
+// and the caller's org and Keycloak sub (AIQG-88). The proxy verifies the
+// org's link and the user's membership with AIQG and injects the tenant's
+// stored connection (C.4), so aether-be never sends a database credential on
+// this path.
+type MCPProxyConfig struct {
+	Enabled        bool   `json:"enabled"`
+	BaseURL        string `json:"base_url"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	// DelegateTokenFile is the delegate credential (AIQG-88) as a mounted
+	// Secret file, re-read when it changes, so rotation needs no restart.
+	// DelegateToken is the same value from the environment, used only when
+	// no file is set. The proxy accepts it only for tool invoke. Never logged.
+	DelegateTokenFile string `json:"-"`
+	DelegateToken     string `json:"-"`
+	// PostgresServerID is the proxy's id for the SQL console's server: the
+	// TAS bridge that takes C.4 connection injection.
+	PostgresServerID string `json:"postgres_server_id"`
+	// ServerIDs maps Aether's MCP server ids (mcp-postgres, ...) to proxy
+	// server ids, as "aether-id=proxy-id,...". An Aether server with no entry
+	// keeps its direct path. Empty uses DefaultProxyServerIDs.
+	ServerIDs map[string]string `json:"server_ids"`
+}
+
+// DefaultProxyServerIDs maps the Aether MCP servers that the tas-mcp proxy
+// federates to their FederatedMCPServer ids (tas-mcp-servers, 2026-11-23).
+// Brave Search, Firecrawl, Atlassian, Perplexity and Slack are not federated
+// and stay on their direct paths.
+var DefaultProxyServerIDs = map[string]string{
+	"mcp-postgres":            "postgres-mcp",
+	"mcp-neo4j":               "neo4j-mcp",
+	"mcp-minio":               "minio-mcp",
+	"mcp-kafka":               "kafka-mcp",
+	"mcp-grafana":             "grafana-mcp",
+	"mcp-context7":            "context7-mcp",
+	"mcp-sequential-thinking": "sequential-thinking-mcp",
+	"mcp-paper-search":        "paper-search-mcp",
+	"mcp-assembler":           "assembler-mcp",
+	"mcp-podcast":             "podcast-mcp",
+}
+
+// parseServerIDMap reads "a=b,c=d". Malformed entries are skipped.
+func parseServerIDMap(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		out := make(map[string]string, len(DefaultProxyServerIDs))
+		for k, v := range DefaultProxyServerIDs {
+			out[k] = v
+		}
+		return out
+	}
+	out := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if ok && k != "" && v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // NapkinConfig holds Napkin AI MCP server configuration
 type NapkinConfig struct {
 	BaseURL        string `json:"base_url"`
@@ -464,6 +531,15 @@ func Load() (*Config, error) {
 			Enabled:        getEnvBool("DBHUB_ENABLED", true),
 			TimeoutSeconds: getEnvInt("DBHUB_TIMEOUT_SECONDS", 30),
 			DefaultSource:  getEnv("DBHUB_DEFAULT_SOURCE", ""),
+		},
+		MCPProxy: MCPProxyConfig{
+			Enabled:           getEnvBool("AETHER_MCP_VIA_PROXY", false),
+			BaseURL:           getEnv("AETHER_MCP_PROXY_URL", "http://prod-tas-mcp-delegated.tas-mcp-prod.svc.cluster.local:8086"),
+			TimeoutSeconds:    getEnvInt("AETHER_MCP_PROXY_TIMEOUT_SECONDS", 30),
+			DelegateTokenFile: getEnv("AETHER_MCP_DELEGATE_TOKEN_FILE", ""),
+			DelegateToken:     os.Getenv("AETHER_MCP_DELEGATE_TOKEN"),
+			PostgresServerID:  getEnv("AETHER_MCP_PROXY_POSTGRES_SERVER_ID", "postgres-mcp"),
+			ServerIDs:         parseServerIDMap(os.Getenv("AETHER_MCP_PROXY_SERVER_IDS")),
 		},
 		Napkin: NapkinConfig{
 			BaseURL:        getEnv("NAPKIN_MCP_BASE_URL", "http://napkin-mcp.tas-mcp-servers.svc.cluster.local:8087"),

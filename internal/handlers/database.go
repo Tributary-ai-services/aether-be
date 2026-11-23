@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -272,12 +273,16 @@ func (h *DatabaseHandler) TestConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
 	h.logger.Info("Testing database connection",
 		zap.String("database_id", databaseID),
 	)
 
-	if err := h.databaseService.TestConnection(c.Request.Context(), databaseID, spaceContext.TenantID); err != nil {
+	if err := h.databaseService.TestConnection(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID); err != nil {
 		h.logger.Error("Database connection test failed",
 			zap.String("database_id", databaseID),
 			zap.Error(err),
@@ -315,6 +320,10 @@ func (h *DatabaseHandler) ExecuteQuery(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
 	var req struct {
 		Query      string `json:"query" binding:"required"`
@@ -331,7 +340,7 @@ func (h *DatabaseHandler) ExecuteQuery(c *gin.Context) {
 		zap.String("query_preview", truncateForLog(req.Query, 50)),
 	)
 
-	result, err := h.databaseService.ExecuteQuery(c.Request.Context(), databaseID, spaceContext.TenantID, req.Query, req.Parameters)
+	result, err := h.databaseService.ExecuteQuery(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, req.Query, req.Parameters)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -363,8 +372,12 @@ func (h *DatabaseHandler) GetSchema(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
-	result, err := h.databaseService.GetSchema(c.Request.Context(), databaseID, spaceContext.TenantID, schemaType)
+	result, err := h.databaseService.GetSchema(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, schemaType)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -394,8 +407,12 @@ func (h *DatabaseHandler) GetTables(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
-	tables, err := h.databaseService.GetTables(c.Request.Context(), databaseID, spaceContext.TenantID)
+	tables, err := h.databaseService.GetTables(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -431,6 +448,10 @@ func (h *DatabaseHandler) GetTableColumns(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
 	// If schema is provided, prepend it to table name for the service
 	fullTableName := tableName
@@ -438,7 +459,7 @@ func (h *DatabaseHandler) GetTableColumns(c *gin.Context) {
 		fullTableName = schemaName + "." + tableName
 	}
 
-	columns, err := h.databaseService.GetTableColumns(c.Request.Context(), databaseID, spaceContext.TenantID, fullTableName)
+	columns, err := h.databaseService.GetTableColumns(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, fullTableName)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -457,4 +478,15 @@ func truncateForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// sqlContext is the request context carrying the caller's space, which the
+// MCP proxy path (Plan #22 C.6) needs to name the org and user. The space was
+// resolved and authorized by SpaceContextMiddleware.
+func sqlContext(c *gin.Context, sc *models.SpaceContext) context.Context {
+	ctx := services.WithSpaceContext(c.Request.Context(), sc)
+	if rid := c.GetHeader("X-Request-ID"); rid != "" {
+		ctx = services.WithRequestID(ctx, rid)
+	}
+	return ctx
 }
