@@ -20,15 +20,19 @@ import (
 	"github.com/Tributary-ai-services/aether-be/pkg/errors"
 )
 
-// fakeProxy emulates the parts of tas-mcp the console depends on: the tenant
-// comes from TAS-Auth only, the stored connection is keyed by (tenant,
-// server), and a server that requires a connection refuses a tenant with
-// none (SEC-38). It records every call so tests can assert what aether-be sent.
+// fakeProxy emulates the parts of tas-mcp the console depends on (AIQG-88):
+// it accepts only its delegate credential, asks "AIQG" (orgTenant +
+// members) which tenant the named org is linked to and whether the user is a
+// member, refuses otherwise, keys the stored connection by that tenant, and a
+// server that requires a connection refuses a tenant with none (SEC-38). It
+// records every call so tests can assert what aether-be sent.
 type fakeProxy struct {
 	t *testing.T
 
-	tokenTenant map[string]string // bearer -> tenant
-	connRows    map[string]string // tenant -> the rows its stored database returns (JSON)
+	credential string
+	orgTenant  map[string]string          // Aether org -> AIQG tenant (the link)
+	members    map[string]map[string]bool // tenant -> Keycloak sub -> member
+	connRows   map[string]string          // tenant -> the rows its stored database returns (JSON)
 
 	mu    sync.Mutex
 	calls []fakeCall
@@ -36,7 +40,8 @@ type fakeProxy struct {
 
 type fakeCall struct {
 	Server  string
-	Bearer  string
+	Org     string
+	User    string
 	Tenant  string
 	Method  string
 	Args    map[string]interface{}
@@ -56,20 +61,33 @@ func (f *fakeProxy) handler() http.Handler {
 			Params map[string]interface{} `json:"params"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		bearer := r.Header.Get("TAS-Auth")
-		tenant := f.tokenTenant[bearer]
+		org, user := r.Header.Get("TAS-MCP-On-Behalf-Of-Org"), r.Header.Get("TAS-MCP-On-Behalf-Of-User")
+		tenant := f.orgTenant[org]
 		args, _ := req.Params["arguments"].(map[string]interface{})
 		f.mu.Lock()
-		f.calls = append(f.calls, fakeCall{Server: parts[0], Bearer: bearer, Tenant: tenant, Method: req.Method, Args: args, Headers: r.Header.Clone()})
+		f.calls = append(f.calls, fakeCall{Server: parts[0], Org: org, User: user, Tenant: tenant, Method: req.Method, Args: args, Headers: r.Header.Clone()})
 		f.mu.Unlock()
 
+		switch {
+		case r.Header.Get("TAS-MCP-Delegate-Token") != f.credential:
+			http.Error(w, "invalid TAS-MCP-Delegate-Token", http.StatusForbidden)
+			return
+		case r.Header.Get("TAS-Auth") != "":
+			http.Error(w, "send the delegate credential alone", http.StatusBadRequest)
+			return
+		case tenant == "":
+			http.Error(w, "delegated call refused: org_not_linked", http.StatusForbidden)
+			return
+		case !f.members[tenant][user]:
+			http.Error(w, "delegated call refused: not_a_member", http.StatusForbidden)
+			return
+		}
 		if req.Method != "tools/call" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": req.ID, "result": map[string]any{"tools": []any{}}})
 			return
 		}
 		rows, ok := f.connRows[tenant]
-		if tenant == "" || !ok {
-			// SEC-38: postgres-mcp refuses a call without a stored connection.
+		if !ok {
 			http.Error(w, "forbidden: this server requires a stored connection", http.StatusForbidden)
 			return
 		}
@@ -85,12 +103,18 @@ func (f *fakeProxy) callCount() int {
 	return len(f.calls)
 }
 
+func (f *fakeProxy) last() fakeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[len(f.calls)-1]
+}
+
 const (
 	orgA, orgB         = "org-a", "org-b"
 	tenantA, tenantB   = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
 	aetherTA, aetherTB = "tenant_a", "tenant_b"
-	tokenA             = "tas_qg_live_AAAAsecretAAAA"
-	tokenB             = "tas_qg_live_BBBBsecretBBBB"
+	userA, userB       = "kc-sub-alice", "kc-sub-bob"
+	delegateCred       = "dlg-test-credential-0123456789abcdef-SECRETVALUE"
 )
 
 type proxyFixture struct {
@@ -100,10 +124,12 @@ type proxyFixture struct {
 	close func()
 }
 
-func newProxyFixture(t *testing.T, tokens OrgTokenSource) *proxyFixture {
+func newProxyFixture(t *testing.T, cred DelegateCredential) *proxyFixture {
 	t.Helper()
 	fake := &fakeProxy{t: t,
-		tokenTenant: map[string]string{tokenA: tenantA, tokenB: tenantB},
+		credential: delegateCred,
+		orgTenant:  map[string]string{orgA: tenantA, orgB: tenantB},
+		members:    map[string]map[string]bool{tenantA: {userA: true}, tenantB: {userB: true}},
 		connRows: map[string]string{
 			tenantA: `[{"who":"tenant-a-db"}]`,
 			tenantB: `[{"who":"tenant-b-db"}]`,
@@ -112,18 +138,15 @@ func newProxyFixture(t *testing.T, tokens OrgTokenSource) *proxyFixture {
 	srv := httptest.NewServer(fake.handler())
 	core, logs := observer.New(zap.DebugLevel)
 	log := zap.New(core)
-	if tokens == nil {
-		tokens = StaticOrgTokenSource{
-			orgA: NewOrgToken(orgA, tenantA, tokenA),
-			orgB: NewOrgToken(orgB, tenantB, tokenB),
-		}
+	if cred == nil {
+		cred = StaticDelegateCredential(delegateCred)
 	}
-	svc := NewProxySQLService(NewMCPProxyClientWithHTTP(srv.URL, srv.Client(), log), tokens, "postgres-mcp", log)
+	svc := NewProxySQLService(NewMCPProxyClientWithHTTP(srv.URL, srv.Client(), cred, log), "postgres-mcp", log)
 	return &proxyFixture{fake: fake, svc: svc, logs: logs, close: srv.Close}
 }
 
-func orgSpace(org, aetherTenant string) *models.SpaceContext {
-	return &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: org, OrganizationID: org, TenantID: aetherTenant, UserID: "u1"}
+func orgSpace(org, aetherTenant, user string) *models.SpaceContext {
+	return &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: org, OrganizationID: org, TenantID: aetherTenant, UserID: user}
 }
 
 func sharedDB(aetherTenant string) *models.Database {
@@ -138,19 +161,19 @@ func statusOf(err error) int {
 	return 0
 }
 
-// Each org's query runs on its own tenant's stored connection, chosen by the
-// proxy from the token, and aether-be sends no connection of its own.
+// Each org's query names that org and the caller; the proxy runs it on that
+// org's tenant's stored connection, and aether-be sends no connection itself.
 func TestProxySQL_EachOrgGetsItsOwnTenantConnection(t *testing.T) {
 	f := newProxyFixture(t, nil)
 	defer f.close()
 
 	for _, tc := range []struct {
-		org, aetherTenant, wantWho, wantBearer, wantTenant string
+		org, aetherTenant, user, wantWho, wantTenant string
 	}{
-		{orgA, aetherTA, "tenant-a-db", tokenA, tenantA},
-		{orgB, aetherTB, "tenant-b-db", tokenB, tenantB},
+		{orgA, aetherTA, userA, "tenant-a-db", tenantA},
+		{orgB, aetherTB, userB, "tenant-b-db", tenantB},
 	} {
-		ctx := WithSpaceContext(context.Background(), orgSpace(tc.org, tc.aetherTenant))
+		ctx := WithSpaceContext(context.Background(), orgSpace(tc.org, tc.aetherTenant, tc.user))
 		res, err := f.svc.ExecuteQuery(ctx, sharedDB(tc.aetherTenant), "SELECT current_database()", nil)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.org, err)
@@ -158,9 +181,12 @@ func TestProxySQL_EachOrgGetsItsOwnTenantConnection(t *testing.T) {
 		if got := res.Rows[0]["who"]; got != tc.wantWho {
 			t.Fatalf("%s: query ran on %v, want %s", tc.org, got, tc.wantWho)
 		}
-		last := f.fake.calls[len(f.fake.calls)-1]
-		if last.Bearer != tc.wantBearer || last.Tenant != tc.wantTenant || last.Server != "postgres-mcp" {
-			t.Fatalf("%s: sent bearer/tenant/server %q/%q/%q", tc.org, last.Bearer, last.Tenant, last.Server)
+		last := f.fake.last()
+		if last.Org != tc.org || last.User != tc.user || last.Tenant != tc.wantTenant || last.Server != "postgres-mcp" {
+			t.Fatalf("%s: sent org/user/tenant/server %q/%q/%q/%q", tc.org, last.Org, last.User, last.Tenant, last.Server)
+		}
+		if last.Headers.Get("TAS-Auth") != "" || last.Headers.Get("TAS-MCP-On-Behalf-Of-Tenant") != "" {
+			t.Fatalf("%s: aether-be sent a TAS-Auth token or chose a tenant itself", tc.org)
 		}
 		if _, ok := last.Args["_connection"]; ok {
 			t.Fatalf("%s: aether-be sent a _connection; the proxy alone injects it", tc.org)
@@ -171,9 +197,9 @@ func TestProxySQL_EachOrgGetsItsOwnTenantConnection(t *testing.T) {
 	}
 }
 
-// Cross-tenant refusals: none of these reaches the proxy.
-func TestProxySQL_CrossTenantRefusals(t *testing.T) {
-	f := newProxyFixture(t, StaticOrgTokenSource{orgB: NewOrgToken(orgB, tenantB, tokenB)})
+// Refusals decided here never reach the proxy.
+func TestProxySQL_LocalRefusals(t *testing.T) {
+	f := newProxyFixture(t, nil)
 	defer f.close()
 
 	cases := []struct {
@@ -182,10 +208,10 @@ func TestProxySQL_CrossTenantRefusals(t *testing.T) {
 		db     *models.Database
 		status int
 	}{
-		{"another tenant's row in my space", orgSpace(orgA, aetherTA), sharedDB(aetherTB), http.StatusForbidden},
-		{"my org has no token, only B does", orgSpace(orgA, aetherTA), sharedDB(aetherTA), http.StatusForbidden},
-		{"personal space never borrows an org token", &models.SpaceContext{SpaceType: models.SpaceTypePersonal, SpaceID: "u1", TenantID: aetherTA}, sharedDB(aetherTA), http.StatusForbidden},
-		{"org-type space with no owning Organization", &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "s1", TenantID: aetherTA}, sharedDB(aetherTA), http.StatusForbidden},
+		{"another tenant's row in my space", orgSpace(orgA, aetherTA, userA), sharedDB(aetherTB), http.StatusForbidden},
+		{"personal space never borrows an org", &models.SpaceContext{SpaceType: models.SpaceTypePersonal, SpaceID: "u1", TenantID: aetherTA, UserID: userA}, sharedDB(aetherTA), http.StatusForbidden},
+		{"org-type space with no owning Organization", &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "s1", TenantID: aetherTA, UserID: userA}, sharedDB(aetherTA), http.StatusForbidden},
+		{"no signed-in user", orgSpace(orgA, aetherTA, ""), sharedDB(aetherTA), http.StatusForbidden},
 		{"no space context at all", nil, sharedDB(aetherTA), http.StatusForbidden},
 	}
 	for _, tc := range cases {
@@ -205,25 +231,50 @@ func TestProxySQL_CrossTenantRefusals(t *testing.T) {
 	}
 }
 
+// Cross-tenant refusals the proxy decides (AIQG-88) come back as refusals,
+// and no query runs: a user acting in an org they are not a member of, an
+// unlinked org, and a wrong credential.
+func TestProxySQL_ProxyRefusalsAreRefusals(t *testing.T) {
+	f := newProxyFixture(t, nil)
+	defer f.close()
+
+	// Bob is a member of B, not A.
+	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userB))
+	if _, err := f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusForbidden {
+		t.Fatalf("non-member: %v", err)
+	}
+	// An org AIQG has no link for.
+	ctx = WithSpaceContext(context.Background(), orgSpace("org-unlinked", aetherTA, userA))
+	if _, err := f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusForbidden {
+		t.Fatalf("unlinked org: %v", err)
+	}
+	// A wrong credential is our misconfiguration: 503, never a fallback.
+	bad := newProxyFixture(t, StaticDelegateCredential(delegateCred+"-wrong"))
+	defer bad.close()
+	bad.fake.credential = delegateCred
+	ctx = WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userA))
+	if _, err := bad.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusForbidden {
+		t.Fatalf("wrong credential: %v", err)
+	}
+}
+
 // Fail closed: a connection never copied to the shared store, or one the
 // proxy cannot serve, is refused, and nothing falls back to a default source.
 func TestProxySQL_FailsClosed(t *testing.T) {
 	f := newProxyFixture(t, nil)
 	defer f.close()
-	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA))
+	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userA))
 
 	notShared := sharedDB(aetherTA)
 	notShared.MCPConnectionID = ""
 	if _, err := f.svc.ExecuteQuery(ctx, notShared, "SELECT 1", nil); statusOf(err) != http.StatusConflict {
 		t.Fatalf("unmigrated connection: got %v, want 409", err)
 	}
-
 	otherServer := sharedDB(aetherTA)
 	otherServer.MCPServerID = "dbhub"
 	if _, err := f.svc.ExecuteQuery(ctx, otherServer, "SELECT 1", nil); statusOf(err) != http.StatusConflict {
 		t.Fatalf("connection stored for another server: got %v, want 409", err)
 	}
-
 	mysql := sharedDB(aetherTA)
 	mysql.Type = models.DatabaseTypeMySQL
 	if _, err := f.svc.ExecuteQuery(ctx, mysql, "SELECT 1", nil); statusOf(err) != http.StatusBadRequest {
@@ -241,6 +292,13 @@ func TestProxySQL_FailsClosed(t *testing.T) {
 	delete(f.fake.connRows, tenantA)
 	if _, err := f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusForbidden {
 		t.Fatalf("no stored connection: got %v, want 403", err)
+	}
+
+	// No credential configured: refused before any call.
+	none := newProxyFixture(t, StaticDelegateCredential(""))
+	defer none.close()
+	if _, err := none.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusServiceUnavailable || none.fake.callCount() != 0 {
+		t.Fatalf("no credential: %v, calls %d", err, none.fake.callCount())
 	}
 }
 
@@ -263,7 +321,7 @@ func TestProxySQL_SchemaPathsUseQueryTool(t *testing.T) {
 	f := newProxyFixture(t, nil)
 	defer f.close()
 	f.fake.connRows[tenantA] = `[{"schema":"public","name":"orders","row_count":"42"}]`
-	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA))
+	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userA))
 
 	tables, err := f.svc.GetTables(ctx, sharedDB(aetherTA))
 	if err != nil || len(tables) != 1 || tables[0].Name != "orders" || tables[0].RowCount != 42 {
@@ -284,75 +342,55 @@ func TestProxySQL_SchemaPathsUseQueryTool(t *testing.T) {
 	}
 }
 
-// The org token is never written to a log line, even on a refusal.
-func TestProxySQL_TokenNeverLogged(t *testing.T) {
+// The delegate credential is never written to a log line, even on refusals.
+func TestProxySQL_CredentialNeverLogged(t *testing.T) {
 	f := newProxyFixture(t, nil)
 	defer f.close()
-	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA))
+	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userA))
 	_, _ = f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil)
 	delete(f.fake.connRows, tenantA)
 	_, _ = f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil)
+	_, _ = f.svc.ExecuteQuery(WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userB)), sharedDB(aetherTA), "SELECT 1", nil)
 
 	for _, e := range f.logs.All() {
 		line := e.Message + fmt.Sprint(e.ContextMap())
-		if strings.Contains(line, tokenA) || strings.Contains(line, "secret") {
-			t.Fatalf("log line leaks the token: %s", line)
-		}
-	}
-	tok := NewOrgToken(orgA, tenantA, tokenA)
-	for _, s := range []string{fmt.Sprint(tok), fmt.Sprintf("%v %+v %#v %s", tok, tok, tok, tok)} {
-		if strings.Contains(s, tokenA) {
-			t.Fatalf("OrgToken formats its secret: %s", s)
+		if strings.Contains(line, "SECRETVALUE") {
+			t.Fatalf("log line leaks the credential: %s", line)
 		}
 	}
 }
 
-func writeTokens(t *testing.T, path string, orgs map[string][2]string) {
-	t.Helper()
-	m := map[string]map[string]string{}
-	for org, v := range orgs {
-		m[org] = map[string]string{"aiqg_tenant_id": v[0], "token": v[1]}
-	}
-	b, _ := json.Marshal(map[string]any{"orgs": m})
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// The file source reloads a rotated Secret and fails closed on a bad one.
-func TestFileOrgTokenSource(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tokens.json")
-	src := NewFileOrgTokenSource(path)
-	sc := orgSpace(orgA, aetherTA)
-
-	if _, err := src.TokenFor(sc); statusOf(err) != http.StatusServiceUnavailable {
+// The file credential reloads a rotated Secret and fails closed on a bad one.
+func TestFileDelegateCredential(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	cred := NewFileDelegateCredential(path)
+	if _, err := cred.Token(); statusOf(err) != http.StatusServiceUnavailable {
 		t.Fatalf("missing file: %v", err)
 	}
-
-	writeTokens(t, path, map[string][2]string{orgA: {tenantA, tokenA}})
-	tok, err := src.TokenFor(sc)
-	if err != nil || tok.Bearer() != tokenA || tok.AIQGTenantID != tenantA {
-		t.Fatalf("first load: %v %v", tok, err)
+	if err := os.WriteFile(path, []byte(delegateCred+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := src.TokenFor(orgSpace(orgB, aetherTB)); statusOf(err) != http.StatusForbidden {
-		t.Fatalf("unmapped org: %v", err)
+	if tok, err := cred.Token(); err != nil || tok != delegateCred {
+		t.Fatalf("first read: %q %v", tok, err)
 	}
-
-	// Rotation: a new value is picked up without a restart.
-	rotated := "tas_qg_live_rotated_value_000"
-	writeTokens(t, path, map[string][2]string{orgA: {tenantA, rotated}})
+	rotated := "dlg-rotated-credential-abcdef0123456789-NEWVALUE"
+	_ = os.WriteFile(path, []byte(rotated), 0o600)
 	future := time.Now().Add(2 * time.Second)
 	_ = os.Chtimes(path, future, future)
-	if tok, err := src.TokenFor(sc); err != nil || tok.Bearer() != rotated {
-		t.Fatalf("after rotation: %v %v", tok, err)
+	if tok, err := cred.Token(); err != nil || tok != rotated {
+		t.Fatalf("after rotation: %q %v", tok, err)
 	}
-
-	// A bad entry refuses every org, and the error never quotes a token.
-	writeTokens(t, path, map[string][2]string{orgA: {tenantA, "not-a-gateway-token-secretvalue"}})
+	_ = os.WriteFile(path, []byte("short"), 0o600)
 	future = future.Add(2 * time.Second)
 	_ = os.Chtimes(path, future, future)
-	_, err = src.TokenFor(sc)
-	if statusOf(err) != http.StatusServiceUnavailable || strings.Contains(err.Error(), "secretvalue") {
-		t.Fatalf("bad entry: %v", err)
+	if _, err := cred.Token(); statusOf(err) != http.StatusServiceUnavailable || strings.Contains(err.Error(), "short") {
+		t.Fatalf("bad file: %v", err)
+	}
+	// Still refused on the next read of the same bad file: nothing stale.
+	if _, err := cred.Token(); err == nil {
+		t.Fatal("a bad file must keep failing")
+	}
+	if NewDelegateCredential("", delegateCred).(StaticDelegateCredential) != StaticDelegateCredential(delegateCred) {
+		t.Fatal("env fallback")
 	}
 }

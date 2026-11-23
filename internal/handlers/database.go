@@ -461,7 +461,7 @@ func truncateForLog(s string, maxLen int) string {
 }
 
 // sqlContext is the request context carrying the caller's space, which the
-// MCP proxy path (Plan #22 C.6) needs to choose the org token. The space was
+// MCP proxy path (Plan #22 C.6) needs to name the org and user. The space was
 // resolved and authorized by SpaceContextMiddleware.
 func sqlContext(c *gin.Context, sc *models.SpaceContext) context.Context {
 	ctx := services.WithSpaceContext(c.Request.Context(), sc)

@@ -5,7 +5,8 @@ package handlers
 //
 // What goes through the proxy: tools/list and tools/call for every Aether
 // server that the proxy federates (config.DefaultProxyServerIDs), sent with
-// the caller org's AIQG gateway token as TAS-Auth.
+// aether-be's delegate credential and the caller's org and Keycloak sub
+// (AIQG-88); the proxy verifies both with AIQG.
 //
 // What does not, and why:
 //   - Napkin keeps its own service client (it uploads to MinIO itself).
@@ -35,16 +36,15 @@ import (
 )
 
 // SetProxy turns on the proxy path. ids maps Aether server ids to proxy ids.
-func (h *MCPHandler) SetProxy(p *services.MCPProxyClient, tokens services.OrgTokenSource, ids map[string]string) {
+func (h *MCPHandler) SetProxy(p *services.MCPProxyClient, ids map[string]string) {
 	h.proxy = p
-	h.orgTokens = tokens
 	h.proxyIDs = ids
 }
 
 // proxyTarget returns the proxy id for an Aether server id, when the call
 // should go through the proxy.
 func (h *MCPHandler) proxyTarget(serverID string) (string, bool) {
-	if h.proxy == nil || h.orgTokens == nil {
+	if h.proxy == nil {
 		return "", false
 	}
 	id, ok := h.proxyIDs[serverID]
@@ -75,14 +75,15 @@ func spaceFrom(c *gin.Context) *models.SpaceContext {
 	return nil
 }
 
-// proxyToken returns the org token for this request, or writes the refusal.
-func (h *MCPHandler) proxyToken(c *gin.Context) (services.OrgToken, bool) {
-	tok, err := h.orgTokens.TokenFor(spaceFrom(c))
+// proxyCaller returns who this request's proxied call acts for, or writes
+// the refusal.
+func (h *MCPHandler) proxyCaller(c *gin.Context) (services.ProxyCaller, bool) {
+	caller, err := services.CallerFor(spaceFrom(c))
 	if err != nil {
 		handleServiceError(c, err)
-		return services.OrgToken{}, false
+		return services.ProxyCaller{}, false
 	}
-	return tok, true
+	return caller, true
 }
 
 // checkSharedConnection confirms that a postgres call's saved connection is
@@ -114,11 +115,11 @@ func (h *MCPHandler) checkSharedConnection(c *gin.Context, connectionID string) 
 
 // proxyListTools serves GET /mcp/servers/:id/tools through the proxy.
 func (h *MCPHandler) proxyListTools(c *gin.Context, serverID, target string) {
-	tok, ok := h.proxyToken(c)
+	tok, ok := h.proxyCaller(c)
 	if !ok {
 		return
 	}
-	tools, err := h.proxy.ListTools(c.Request.Context(), tok.Bearer(), target)
+	tools, err := h.proxy.ListTools(c.Request.Context(), tok, target)
 	if err != nil {
 		h.logger.Warn("Proxy tools/list failed", zap.String("server", serverID), zap.String("proxy_server", target), zap.Error(err))
 		handleServiceError(c, err)
@@ -152,7 +153,7 @@ func (h *MCPHandler) proxyInvoke(c *gin.Context, req MCPInvokeRequest, target st
 	if !h.checkSharedConnection(c, req.ConnectionID) {
 		return
 	}
-	tok, ok := h.proxyToken(c)
+	tok, ok := h.proxyCaller(c)
 	if !ok {
 		return
 	}
@@ -160,7 +161,7 @@ func (h *MCPHandler) proxyInvoke(c *gin.Context, req MCPInvokeRequest, target st
 	if requestID != "" {
 		ctx = services.WithRequestID(ctx, requestID)
 	}
-	result, err := h.proxy.CallTool(ctx, tok.Bearer(), target, req.Tool, withoutConnection(req.Params))
+	result, err := h.proxy.CallTool(ctx, tok, target, req.Tool, withoutConnection(req.Params))
 	h.publishToolInvoked(ctx, tenantID, userID, requestID, req, start, err)
 	if err != nil {
 		h.logger.Warn("Proxy tool invocation failed", zap.String("server", req.ServerID), zap.String("proxy_server", target), zap.String("tool", req.Tool), zap.Error(err))
@@ -176,12 +177,12 @@ func (h *MCPHandler) proxyTestConnection(c *gin.Context, serverID, target, conne
 	if !h.checkSharedConnection(c, connectionID) {
 		return
 	}
-	tok, ok := h.proxyToken(c)
+	tok, ok := h.proxyCaller(c)
 	if !ok {
 		return
 	}
 	start := time.Now()
-	res, err := h.proxy.CallTool(c.Request.Context(), tok.Bearer(), target, tool, params)
+	res, err := h.proxy.CallTool(c.Request.Context(), tok, target, tool, params)
 	latency := time.Since(start).Milliseconds()
 	if err == nil && res.IsError {
 		err = errors.ValidationWithDetails("Connection test failed", nil)

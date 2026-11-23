@@ -31,9 +31,8 @@ type MCPHandler struct {
 
 	// Plan #22 C.6: the tas-mcp proxy path, nil when AETHER_MCP_VIA_PROXY is
 	// off. See mcp_proxy_handler.go.
-	proxy     *services.MCPProxyClient
-	orgTokens services.OrgTokenSource
-	proxyIDs  map[string]string
+	proxy    *services.MCPProxyClient
+	proxyIDs map[string]string
 
 	// Health cache with TTL
 	healthMu    sync.RWMutex

@@ -291,19 +291,21 @@ type DBHubConfig struct {
 // and the SQL console keep their direct paths exactly as before.
 //
 // With it on, aether-be invokes federated servers through the proxy's
-// POST /api/v1/federation/servers/{id}/invoke and sends the caller org's AIQG
-// gateway token as TAS-Auth. The proxy resolves the tenant from that token and
-// injects the tenant's stored connection (C.4), so aether-be never sends a
-// database credential on this path.
+// POST /api/v1/federation/servers/{id}/invoke with its delegate credential
+// and the caller's org and Keycloak sub (AIQG-88). The proxy verifies the
+// org's link and the user's membership with AIQG and injects the tenant's
+// stored connection (C.4), so aether-be never sends a database credential on
+// this path.
 type MCPProxyConfig struct {
 	Enabled        bool   `json:"enabled"`
 	BaseURL        string `json:"base_url"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
-	// OrgTokensFile is a JSON file (a mounted Secret) mapping each linked
-	// Aether organization to the AIQG gateway token aether-be calls the proxy
-	// with. See services.FileOrgTokenSource for the format. It is re-read when
-	// it changes, so a rotated Secret needs no restart. Never logged.
-	OrgTokensFile string `json:"-"`
+	// DelegateTokenFile is the delegate credential (AIQG-88) as a mounted
+	// Secret file, re-read when it changes, so rotation needs no restart.
+	// DelegateToken is the same value from the environment, used only when
+	// no file is set. The proxy accepts it only for tool invoke. Never logged.
+	DelegateTokenFile string `json:"-"`
+	DelegateToken     string `json:"-"`
 	// PostgresServerID is the proxy's id for the SQL console's server: the
 	// TAS bridge that takes C.4 connection injection.
 	PostgresServerID string `json:"postgres_server_id"`
@@ -531,12 +533,13 @@ func Load() (*Config, error) {
 			DefaultSource:  getEnv("DBHUB_DEFAULT_SOURCE", ""),
 		},
 		MCPProxy: MCPProxyConfig{
-			Enabled:          getEnvBool("AETHER_MCP_VIA_PROXY", false),
-			BaseURL:          getEnv("AETHER_MCP_PROXY_URL", "http://prod-tas-mcp-http.tas-mcp-prod.svc.cluster.local:8082"),
-			TimeoutSeconds:   getEnvInt("AETHER_MCP_PROXY_TIMEOUT_SECONDS", 30),
-			OrgTokensFile:    getEnv("AETHER_MCP_ORG_TOKENS_FILE", ""),
-			PostgresServerID: getEnv("AETHER_MCP_PROXY_POSTGRES_SERVER_ID", "postgres-mcp"),
-			ServerIDs:        parseServerIDMap(os.Getenv("AETHER_MCP_PROXY_SERVER_IDS")),
+			Enabled:           getEnvBool("AETHER_MCP_VIA_PROXY", false),
+			BaseURL:           getEnv("AETHER_MCP_PROXY_URL", "http://prod-tas-mcp-http.tas-mcp-prod.svc.cluster.local:8082"),
+			TimeoutSeconds:    getEnvInt("AETHER_MCP_PROXY_TIMEOUT_SECONDS", 30),
+			DelegateTokenFile: getEnv("AETHER_MCP_DELEGATE_TOKEN_FILE", ""),
+			DelegateToken:     os.Getenv("AETHER_MCP_DELEGATE_TOKEN"),
+			PostgresServerID:  getEnv("AETHER_MCP_PROXY_POSTGRES_SERVER_ID", "postgres-mcp"),
+			ServerIDs:         parseServerIDMap(os.Getenv("AETHER_MCP_PROXY_SERVER_IDS")),
 		},
 		Napkin: NapkinConfig{
 			BaseURL:        getEnv("NAPKIN_MCP_BASE_URL", "http://napkin-mcp.tas-mcp-servers.svc.cluster.local:8087"),

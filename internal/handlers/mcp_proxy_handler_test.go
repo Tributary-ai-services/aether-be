@@ -20,6 +20,8 @@ import (
 type recordedInvoke struct {
 	path   string
 	bearer string
+	org    string
+	user   string
 	args   map[string]interface{}
 }
 
@@ -35,7 +37,7 @@ func newRecordingProxy(t *testing.T) (*httptest.Server, *[]recordedInvoke, *sync
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		args, _ := req.Params["arguments"].(map[string]interface{})
 		mu.Lock()
-		calls = append(calls, recordedInvoke{path: r.URL.Path, bearer: r.Header.Get("TAS-Auth"), args: args})
+		calls = append(calls, recordedInvoke{path: r.URL.Path, bearer: r.Header.Get("TAS-MCP-Delegate-Token"), org: r.Header.Get("TAS-MCP-On-Behalf-Of-Org"), user: r.Header.Get("TAS-MCP-On-Behalf-Of-User"), args: args})
 		mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": req.ID, "result": map[string]any{
 			"content": []map[string]any{{"type": "text", "text": "ok"}},
@@ -46,8 +48,8 @@ func newRecordingProxy(t *testing.T) (*httptest.Server, *[]recordedInvoke, *sync
 
 func proxiedHandler(srv *httptest.Server) *MCPHandler {
 	h := &MCPHandler{mcpClients: map[string]*services.MCPClientService{}, logger: zap.NewNop(), healthCache: map[string]healthCacheEntry{}}
-	h.SetProxy(services.NewMCPProxyClientWithHTTP(srv.URL, srv.Client(), zap.NewNop()),
-		services.StaticOrgTokenSource{"org-a": services.NewOrgToken("org-a", "11111111-1111-1111-1111-111111111111", "tas_qg_live_handler_test_a")},
+	h.SetProxy(services.NewMCPProxyClientWithHTTP(srv.URL, srv.Client(),
+		services.StaticDelegateCredential("dlg-handler-test-credential-0123456789abcdef"), zap.NewNop()),
 		config.DefaultProxyServerIDs)
 	return h
 }
@@ -66,14 +68,15 @@ func invoke(h *MCPHandler, sc *models.SpaceContext, body map[string]any) *httpte
 	return w
 }
 
-// A proxied call carries the org token, names the proxy's server id, and
-// never forwards a caller-supplied _connection.
-func TestMCPInvokeViaProxy_SendsOrgTokenAndStripsConnection(t *testing.T) {
+// A proxied call carries the delegate credential, the space's org and the
+// caller's sub, names the proxy's server id, and never forwards a
+// caller-supplied _connection.
+func TestMCPInvokeViaProxy_SendsDelegationAndStripsConnection(t *testing.T) {
 	srv, calls, mu := newRecordingProxy(t)
 	defer srv.Close()
 	h := proxiedHandler(srv)
 
-	sc := &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "org-a", OrganizationID: "org-a", TenantID: "tenant_a"}
+	sc := &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "org-a", OrganizationID: "org-a", TenantID: "tenant_a", UserID: "kc-sub-alice"}
 	w := invoke(h, sc, map[string]any{"server_id": "mcp-postgres", "tool": "query",
 		"params": map[string]any{"sql": "SELECT 1", "_connection": map[string]any{"host": "attacker.example", "password": "x"}}})
 	if w.Code != http.StatusOK {
@@ -85,23 +88,24 @@ func TestMCPInvokeViaProxy_SendsOrgTokenAndStripsConnection(t *testing.T) {
 		t.Fatalf("proxy calls = %d", len(*calls))
 	}
 	got := (*calls)[0]
-	if got.path != "/api/v1/federation/servers/postgres-mcp/invoke" || got.bearer != "tas_qg_live_handler_test_a" {
-		t.Fatalf("sent %s with bearer %q", got.path, got.bearer)
+	if got.path != "/api/v1/federation/servers/postgres-mcp/invoke" || got.bearer != "dlg-handler-test-credential-0123456789abcdef" ||
+		got.org != "org-a" || got.user != "kc-sub-alice" {
+		t.Fatalf("sent %s with credential set=%v org=%q user=%q", got.path, got.bearer != "", got.org, got.user)
 	}
 	if _, ok := got.args["_connection"]; ok {
 		t.Fatal("caller-supplied _connection was forwarded through the proxy")
 	}
 }
 
-// No token for the space: refused, and the proxy is never called.
-func TestMCPInvokeViaProxy_RefusesWithoutOrgToken(t *testing.T) {
+// No org or no user for the space: refused here, and the proxy is never called.
+func TestMCPInvokeViaProxy_RefusesWithoutOrgAndUser(t *testing.T) {
 	srv, calls, mu := newRecordingProxy(t)
 	defer srv.Close()
 	h := proxiedHandler(srv)
 
 	for name, sc := range map[string]*models.SpaceContext{
-		"other org":      {SpaceType: models.SpaceTypeOrganization, SpaceID: "org-b", OrganizationID: "org-b", TenantID: "tenant_b"},
-		"personal space": {SpaceType: models.SpaceTypePersonal, SpaceID: "u1", TenantID: "tenant_u1"},
+		"no user":        {SpaceType: models.SpaceTypeOrganization, SpaceID: "org-b", OrganizationID: "org-b", TenantID: "tenant_b"},
+		"personal space": {SpaceType: models.SpaceTypePersonal, SpaceID: "u1", TenantID: "tenant_u1", UserID: "kc-sub-alice"},
 		"no space":       nil,
 	} {
 		w := invoke(h, sc, map[string]any{"server_id": "mcp-context7", "tool": "resolve-library-id", "params": map[string]any{}})

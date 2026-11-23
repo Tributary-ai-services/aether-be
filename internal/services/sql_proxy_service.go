@@ -10,15 +10,17 @@ package services
 // any call without one (SEC-38).
 //
 // It fails closed at every step and never falls back to dbhub:
-//   - no space context, a personal space, or an org with no proxy token: 403;
+//   - no space context, a personal space, or no signed-in user: 403;
+//   - the proxy refuses the org or user (unlinked org, not a member): 403;
 //   - a connection that was never copied to the shared store
 //     (no mcp_connection_id): 409, with the reason;
 //   - a database type postgres-mcp cannot serve: 400;
 //   - every proxy refusal is passed on as a refusal.
 //
-// Tenant isolation is the proxy's: the connection it injects is keyed by the
-// tenant the token resolves to, and aether-be only chooses which org's token
-// to send, from the space the caller is already authorized for.
+// Tenant isolation is the proxy's: it verifies with AIQG that the org is
+// linked to a tenant and that the user is a member of it (AIQG-88), and the
+// connection it injects is keyed by that tenant. aether-be only names the org
+// of the space the caller is already authorized for, and the caller's sub.
 
 import (
 	"context"
@@ -55,17 +57,16 @@ func spaceContextFrom(ctx context.Context) *models.SpaceContext {
 // ProxySQLService runs console queries through the proxy.
 type ProxySQLService struct {
 	proxy    *MCPProxyClient
-	tokens   OrgTokenSource
 	serverID string
 	logger   *zap.Logger
 }
 
 // NewProxySQLService builds the proxy SQL path.
-func NewProxySQLService(proxy *MCPProxyClient, tokens OrgTokenSource, serverID string, log *zap.Logger) *ProxySQLService {
+func NewProxySQLService(proxy *MCPProxyClient, serverID string, log *zap.Logger) *ProxySQLService {
 	if serverID == "" {
 		serverID = "postgres-mcp"
 	}
-	return &ProxySQLService{proxy: proxy, tokens: tokens, serverID: serverID, logger: log}
+	return &ProxySQLService{proxy: proxy, serverID: serverID, logger: log}
 }
 
 // ServerID is the proxy id of the console's server.
@@ -74,45 +75,41 @@ func (s *ProxySQLService) ServerID() string { return s.serverID }
 // ErrConnectionNotShared codes the 409 for a connection never migrated.
 const codeConnectionNotShared = "connection_not_shared"
 
-// guard checks everything that does not need the network and returns the
-// org token to call with.
-func (s *ProxySQLService) guard(ctx context.Context, db *models.Database) (OrgToken, error) {
+// guard checks everything that does not need the network and returns who
+// the call acts for.
+func (s *ProxySQLService) guard(ctx context.Context, db *models.Database) (ProxyCaller, error) {
 	if db == nil {
-		return OrgToken{}, errors.Internal("no database")
+		return ProxyCaller{}, errors.Internal("no database")
 	}
 	sc := spaceContextFrom(ctx)
 	if sc == nil {
-		return OrgToken{}, errors.ForbiddenWithDetails("Space context required", map[string]any{"code": "mcp_space_required"})
+		return ProxyCaller{}, errors.ForbiddenWithDetails("Space context required", map[string]any{"code": "mcp_space_required"})
 	}
 	// The database was already fetched under sc.TenantID; this is a second,
 	// local check so that a future caller cannot pair one space's token with
 	// another tenant's row.
 	if db.TenantID != sc.TenantID {
-		return OrgToken{}, errors.ForbiddenWithDetails("This connection belongs to another space", map[string]any{"code": "mcp_cross_tenant"})
+		return ProxyCaller{}, errors.ForbiddenWithDetails("This connection belongs to another space", map[string]any{"code": "mcp_cross_tenant"})
 	}
 	if db.Type != models.DatabaseTypePostgres {
-		return OrgToken{}, errors.ValidationWithDetails("Only PostgreSQL connections run through the shared MCP connection store", map[string]any{
+		return ProxyCaller{}, errors.ValidationWithDetails("Only PostgreSQL connections run through the shared MCP connection store", map[string]any{
 			"database_id": db.ID,
 			"type":        string(db.Type),
 			"supported":   []string{"postgres"},
 		})
 	}
 	if db.MCPConnectionID == "" || (db.MCPServerID != "" && db.MCPServerID != s.serverID) {
-		return OrgToken{}, errors.ConflictWithDetails("This connection has not been moved to the shared connection store yet; add it in AIQG Settings > Tools (MCP) or run the migration", map[string]any{
+		return ProxyCaller{}, errors.ConflictWithDetails("This connection has not been moved to the shared connection store yet; add it in AIQG Settings > Tools (MCP) or run the migration", map[string]any{
 			"code":        codeConnectionNotShared,
 			"database_id": db.ID,
 		})
 	}
-	tok, err := s.tokens.TokenFor(sc)
-	if err != nil {
-		return OrgToken{}, err
-	}
-	return tok, nil
+	return CallerFor(sc)
 }
 
 // runSQL sends one statement and returns its rows.
-func (s *ProxySQLService) runSQL(ctx context.Context, tok OrgToken, sql string) ([]map[string]any, error) {
-	res, err := s.proxy.CallTool(ctx, tok.Bearer(), s.serverID, postgresMCPQueryTool, map[string]interface{}{"sql": sql})
+func (s *ProxySQLService) runSQL(ctx context.Context, tok ProxyCaller, sql string) ([]map[string]any, error) {
+	res, err := s.proxy.CallTool(ctx, tok, s.serverID, postgresMCPQueryTool, map[string]interface{}{"sql": sql})
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +224,7 @@ func (s *ProxySQLService) GetTables(ctx context.Context, db *models.Database) ([
 	return s.tables(ctx, tok)
 }
 
-func (s *ProxySQLService) tables(ctx context.Context, tok OrgToken) ([]models.TableInfo, error) {
+func (s *ProxySQLService) tables(ctx context.Context, tok ProxyCaller) ([]models.TableInfo, error) {
 	rows, err := s.runSQL(ctx, tok, tablesSQL)
 	if err != nil {
 		return nil, err
