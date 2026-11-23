@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +43,7 @@ import (
 
 // gatewayTokenPrefix is the shape of an AIQG gateway token. The proxy treats
 // anything else as malformed and unattributed.
-const gatewayTokenPrefix = "tas_qg_live_"
+const gatewayTokenPrefix = "tas_qg_live_" // #nosec G101 -- the public prefix of a token, not a credential
 
 // OrgToken is the proxy credential for one Aether organization.
 type OrgToken struct {
@@ -160,7 +161,9 @@ func (s *FileOrgTokenSource) load() (map[string]OrgToken, error) {
 
 // parseOrgTokens reads and validates the file. Errors never quote a token.
 func parseOrgTokens(path string) (map[string]OrgToken, error) {
-	raw, err := os.ReadFile(path)
+	// The path is AETHER_MCP_ORG_TOKENS_FILE, set by the operator in the
+	// Deployment; no request can choose it.
+	raw, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- operator-configured path
 	if err != nil {
 		return nil, errors.ServiceUnavailable("MCP proxy tokens are unavailable")
 	}
