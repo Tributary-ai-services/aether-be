@@ -273,6 +273,10 @@ func (h *DatabaseHandler) TestConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
 	h.logger.Info("Testing database connection",
 		zap.String("database_id", databaseID),
@@ -314,6 +318,10 @@ func (h *DatabaseHandler) ExecuteQuery(c *gin.Context) {
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
+		return
+	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
 		return
 	}
 
@@ -364,6 +372,10 @@ func (h *DatabaseHandler) GetSchema(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
 		return
 	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
 
 	result, err := h.databaseService.GetSchema(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, schemaType)
 	if err != nil {
@@ -393,6 +405,10 @@ func (h *DatabaseHandler) GetTables(c *gin.Context) {
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
+		return
+	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
 		return
 	}
 
@@ -430,6 +446,10 @@ func (h *DatabaseHandler) GetTableColumns(c *gin.Context) {
 	spaceContext, err := middleware.GetSpaceContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errors.ValidationWithDetails("Space context required", nil))
+		return
+	}
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
 		return
 	}
 

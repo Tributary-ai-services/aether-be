@@ -37,9 +37,13 @@ type DelegateCredential interface {
 }
 
 // ProxyCaller is who a proxied call acts for. It holds no secret.
+// ExpectedConnectionID, when set, is the stored connection the caller's
+// Database row is bound to; the proxy refuses (409) if the tenant's
+// connection is another one (AIQG-88 LOW-2).
 type ProxyCaller struct {
-	AetherOrgID string
-	UserSub     string
+	AetherOrgID          string
+	UserSub              string
+	ExpectedConnectionID string
 }
 
 // CallerFor returns the org and user a space's call acts for, or a refusal.

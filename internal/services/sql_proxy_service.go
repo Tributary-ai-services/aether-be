@@ -98,13 +98,23 @@ func (s *ProxySQLService) guard(ctx context.Context, db *models.Database) (Proxy
 			"supported":   []string{"postgres"},
 		})
 	}
-	if db.MCPConnectionID == "" || (db.MCPServerID != "" && db.MCPServerID != s.serverID) {
+	if db.MCPConnectionID == "" || db.MCPServerID != s.serverID {
 		return ProxyCaller{}, errors.ConflictWithDetails("This connection has not been moved to the shared connection store yet; add it in AIQG Settings > Tools (MCP) or run the migration", map[string]any{
 			"code":        codeConnectionNotShared,
 			"database_id": db.ID,
 		})
 	}
-	return CallerFor(sc)
+	// The console is a read path (postgres-mcp runs every statement in a
+	// READ ONLY transaction); the caller must hold read in this space.
+	if !sc.CanRead() {
+		return ProxyCaller{}, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"})
+	}
+	caller, err := CallerFor(sc)
+	if err != nil {
+		return ProxyCaller{}, err
+	}
+	caller.ExpectedConnectionID = db.MCPConnectionID
+	return caller, nil
 }
 
 // runSQL sends one statement and returns its rows.

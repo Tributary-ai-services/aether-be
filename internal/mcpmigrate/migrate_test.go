@@ -298,3 +298,39 @@ func TestLabelKeepsMarker(t *testing.T) {
 		t.Fatalf("label %q (%d)", l, len(l))
 	}
 }
+
+// INFO: a connection that logs in with a SEC-44 superuser Secret, or points
+// at shared TAS infrastructure, is refused before its login is even read.
+func TestRefusesSuperuserSecretsAndSharedHosts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*Candidate)
+		allowed []string
+		want    string
+	}{
+		{"SEC-44 secret", func(c *Candidate) { c.SecretName = "db-credentials-0d462710" }, nil, ActRefused},
+		{"dbhub-secrets", func(c *Candidate) { c.SecretName = "dbhub-secrets" }, nil, ActRefused},
+		{"tas-shared host", func(c *Candidate) { c.Host = "postgres-shared.tas-shared.svc.cluster.local" }, nil, ActRefused},
+		{"bare shared name", func(c *Candidate) { c.Host = "postgres-shared" }, nil, ActRefused},
+		{"tas-shared host cleared", func(c *Candidate) { c.Host = "orders.tas-shared.svc" }, []string{"orders.tas-shared.svc"}, ActCreate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, creds, api := fixture(tenantA)
+			tc.mutate(g.nodes["db-a1"])
+			if g.nodes["db-a1"].SecretName != "db-credentials-a1" {
+				creds[g.nodes["db-a1"].SecretName] = [2]string{"tasuser", "superuser-pw"}
+			}
+			rep, err := Run(context.Background(), g, creds, api, Options{TenantID: tenantA, Apply: true, SharedHostsAllowed: tc.allowed})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := only(t, rep, "db-a1")
+			if s.Action != tc.want {
+				t.Fatalf("action = %s (%s), want %s", s.Action, s.Reason, tc.want)
+			}
+			if tc.want == ActRefused && (api.creates != 0 || !rep.Failed()) {
+				t.Fatalf("refused connection was copied (%d) or the run reported success", api.creates)
+			}
+		})
+	}
+}

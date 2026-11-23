@@ -534,7 +534,7 @@ func Load() (*Config, error) {
 		},
 		MCPProxy: MCPProxyConfig{
 			Enabled:           getEnvBool("AETHER_MCP_VIA_PROXY", false),
-			BaseURL:           getEnv("AETHER_MCP_PROXY_URL", "http://prod-tas-mcp-http.tas-mcp-prod.svc.cluster.local:8082"),
+			BaseURL:           getEnv("AETHER_MCP_PROXY_URL", "http://prod-tas-mcp-delegated.tas-mcp-prod.svc.cluster.local:8086"),
 			TimeoutSeconds:    getEnvInt("AETHER_MCP_PROXY_TIMEOUT_SECONDS", 30),
 			DelegateTokenFile: getEnv("AETHER_MCP_DELEGATE_TOKEN_FILE", ""),
 			DelegateToken:     os.Getenv("AETHER_MCP_DELEGATE_TOKEN"),

@@ -87,34 +87,61 @@ func (h *MCPHandler) proxyCaller(c *gin.Context) (services.ProxyCaller, bool) {
 }
 
 // checkSharedConnection confirms that a postgres call's saved connection is
-// in the caller's tenant and has been moved to the shared store. The proxy
-// injects the tenant's stored connection; nothing from the row is sent.
-func (h *MCPHandler) checkSharedConnection(c *gin.Context, connectionID string) bool {
+// in the caller's tenant and bound to the proxy's postgres server, and
+// returns its bound connection id, which the proxy checks against what it
+// injects (LOW-2). Nothing else from the row is sent. A call to the postgres
+// server without a connection_id is refused (LOW-1): it would otherwise run
+// SQL on the tenant's stored DSN with no Database row behind it. Other
+// servers take no connection here and return "".
+func (h *MCPHandler) checkSharedConnection(c *gin.Context, serverID, target, connectionID string) (string, bool) {
+	if serverID != "mcp-postgres" {
+		return "", true
+	}
 	if connectionID == "" {
-		return true
+		handleServiceError(c, errors.ValidationWithDetails("Choose a database connection: connection_id is required for PostgreSQL", map[string]any{
+			"code": "connection_id_required",
+		}))
+		return "", false
 	}
 	sc := spaceFrom(c)
 	if sc == nil || h.databaseService == nil {
 		handleServiceError(c, errors.ForbiddenWithDetails("Space context required", map[string]any{"code": "mcp_space_required"}))
-		return false
+		return "", false
 	}
 	db, err := h.databaseService.GetDatabase(c.Request.Context(), connectionID, sc.TenantID)
 	if err != nil {
 		handleServiceError(c, err)
-		return false
+		return "", false
 	}
-	if db.MCPConnectionID == "" {
+	if db.Type != models.DatabaseTypePostgres || db.MCPConnectionID == "" || db.MCPServerID != target {
 		handleServiceError(c, errors.ConflictWithDetails("This connection has not been moved to the shared connection store yet", map[string]any{
 			"code":        "connection_not_shared",
 			"database_id": db.ID,
 		}))
-		return false
+		return "", false
 	}
-	return true
+	return db.MCPConnectionID, true
+}
+
+// requirePermission refuses a request whose space lacks perm (LOW-1). Tool
+// calls can have side effects, so they need write; listing and testing need
+// read.
+func requirePermission(c *gin.Context, perm string) bool {
+	sc := spaceFrom(c)
+	ok := sc != nil && (sc.HasPermission(perm) || (perm == "read" && sc.CanRead()) || (perm == "write" && sc.CanUpdate()))
+	if !ok {
+		handleServiceError(c, errors.ForbiddenWithDetails("You do not have "+perm+" access in this space", map[string]any{
+			"code": "space_permission_required", "permission": perm,
+		}))
+	}
+	return ok
 }
 
 // proxyListTools serves GET /mcp/servers/:id/tools through the proxy.
 func (h *MCPHandler) proxyListTools(c *gin.Context, serverID, target string) {
+	if !requirePermission(c, "read") {
+		return
+	}
 	tok, ok := h.proxyCaller(c)
 	if !ok {
 		return
@@ -150,13 +177,18 @@ func (h *MCPHandler) proxyInvoke(c *gin.Context, req MCPInvokeRequest, target st
 	requestID := c.GetHeader("X-Request-ID")
 	start := time.Now()
 
-	if !h.checkSharedConnection(c, req.ConnectionID) {
+	if !requirePermission(c, "write") {
+		return
+	}
+	expected, ok := h.checkSharedConnection(c, req.ServerID, target, req.ConnectionID)
+	if !ok {
 		return
 	}
 	tok, ok := h.proxyCaller(c)
 	if !ok {
 		return
 	}
+	tok.ExpectedConnectionID = expected
 	ctx := c.Request.Context()
 	if requestID != "" {
 		ctx = services.WithRequestID(ctx, requestID)
@@ -174,13 +206,18 @@ func (h *MCPHandler) proxyInvoke(c *gin.Context, req MCPInvokeRequest, target st
 // proxyTestConnection serves POST /mcp/servers/:id/test-connection for a
 // proxied server.
 func (h *MCPHandler) proxyTestConnection(c *gin.Context, serverID, target, connectionID, tool string, params map[string]interface{}) {
-	if !h.checkSharedConnection(c, connectionID) {
+	if !requirePermission(c, "read") {
+		return
+	}
+	expected, ok := h.checkSharedConnection(c, serverID, target, connectionID)
+	if !ok {
 		return
 	}
 	tok, ok := h.proxyCaller(c)
 	if !ok {
 		return
 	}
+	tok.ExpectedConnectionID = expected
 	start := time.Now()
 	res, err := h.proxy.CallTool(c.Request.Context(), tok, target, tool, params)
 	latency := time.Since(start).Milliseconds()

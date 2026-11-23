@@ -48,7 +48,9 @@ data:
   # AETHER_MCP_DELEGATE_TOKEN_FILE (see aether-shared
   # data-models/aether-be/mcp-via-proxy.md for the rollout order).
   AETHER_MCP_VIA_PROXY: "false"
-  AETHER_MCP_PROXY_URL: "http://prod-tas-mcp-http.tas-mcp-prod.svc.cluster.local:8082"
+  # The proxy's delegated listener (AIQG-88): its NetworkPolicy admits
+  # aether-backend pods only; the main port 8082 refuses the credential.
+  AETHER_MCP_PROXY_URL: "http://prod-tas-mcp-delegated.tas-mcp-prod.svc.cluster.local:8086"
 
   # External Services
   ROUTER_ENABLED: "true"

@@ -76,8 +76,9 @@ func TestMCPInvokeViaProxy_SendsDelegationAndStripsConnection(t *testing.T) {
 	defer srv.Close()
 	h := proxiedHandler(srv)
 
-	sc := &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "org-a", OrganizationID: "org-a", TenantID: "tenant_a", UserID: "kc-sub-alice"}
-	w := invoke(h, sc, map[string]any{"server_id": "mcp-postgres", "tool": "query",
+	sc := &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "org-a", OrganizationID: "org-a", TenantID: "tenant_a", UserID: "kc-sub-alice",
+		UserRole: "member", Permissions: []string{"read", "write"}}
+	w := invoke(h, sc, map[string]any{"server_id": "mcp-context7", "tool": "resolve-library-id",
 		"params": map[string]any{"sql": "SELECT 1", "_connection": map[string]any{"host": "attacker.example", "password": "x"}}})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
@@ -88,7 +89,7 @@ func TestMCPInvokeViaProxy_SendsDelegationAndStripsConnection(t *testing.T) {
 		t.Fatalf("proxy calls = %d", len(*calls))
 	}
 	got := (*calls)[0]
-	if got.path != "/api/v1/federation/servers/postgres-mcp/invoke" || got.bearer != "dlg-handler-test-credential-0123456789abcdef" ||
+	if got.path != "/api/v1/federation/servers/context7-mcp/invoke" || got.bearer != "dlg-handler-test-credential-0123456789abcdef" ||
 		got.org != "org-a" || got.user != "kc-sub-alice" {
 		t.Fatalf("sent %s with credential set=%v org=%q user=%q", got.path, got.bearer != "", got.org, got.user)
 	}
@@ -104,9 +105,11 @@ func TestMCPInvokeViaProxy_RefusesWithoutOrgAndUser(t *testing.T) {
 	h := proxiedHandler(srv)
 
 	for name, sc := range map[string]*models.SpaceContext{
-		"no user":        {SpaceType: models.SpaceTypeOrganization, SpaceID: "org-b", OrganizationID: "org-b", TenantID: "tenant_b"},
-		"personal space": {SpaceType: models.SpaceTypePersonal, SpaceID: "u1", TenantID: "tenant_u1", UserID: "kc-sub-alice"},
-		"no space":       nil,
+		"no user":        {SpaceType: models.SpaceTypeOrganization, SpaceID: "org-b", OrganizationID: "org-b", TenantID: "tenant_b", Permissions: []string{"read", "write"}},
+		"personal space": {SpaceType: models.SpaceTypePersonal, SpaceID: "u1", TenantID: "tenant_u1", UserID: "kc-sub-alice", Permissions: []string{"read", "write"}},
+		"viewer (read only) may not call tools": {SpaceType: models.SpaceTypeOrganization, SpaceID: "org-a", OrganizationID: "org-a", TenantID: "tenant_a", UserID: "kc-sub-alice",
+			UserRole: "viewer", Permissions: []string{"read"}},
+		"no space": nil,
 	} {
 		w := invoke(h, sc, map[string]any{"server_id": "mcp-context7", "tool": "resolve-library-id", "params": map[string]any{}})
 		if w.Code != http.StatusForbidden {
@@ -148,5 +151,36 @@ func TestMCPUsesProxy(t *testing.T) {
 	off := &MCPHandler{}
 	if _, got := off.usesProxy("mcp-postgres", ""); got {
 		t.Error("flag off must never use the proxy")
+	}
+}
+
+// LOW-1: on the proxy path, mcp-postgres needs a bound connection_id; without
+// one the call is refused before the proxy (it would otherwise run SQL on
+// the tenant's stored DSN with no Database row behind it).
+func TestMCPInvokeViaProxy_PostgresNeedsBoundConnection(t *testing.T) {
+	srv, calls, mu := newRecordingProxy(t)
+	defer srv.Close()
+	h := proxiedHandler(srv)
+	sc := &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "org-a", OrganizationID: "org-a", TenantID: "tenant_a", UserID: "kc-sub-alice",
+		UserRole: "member", Permissions: []string{"read", "write"}}
+	w := invoke(h, sc, map[string]any{"server_id": "mcp-postgres", "tool": "query", "params": map[string]any{"sql": "SELECT * FROM secrets"}})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("mcp-postgres without connection_id = %d %s", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*calls) != 0 {
+		t.Fatalf("proxy called %d times", len(*calls))
+	}
+}
+
+// LOW-1: the direct path reads a stored login for a saved connection; with
+// no space (it used to fall back to the "default" tenant) it is refused
+// before any lookup.
+func TestMCPInvokeDirect_SavedConnectionNeedsSpacePermission(t *testing.T) {
+	h := &MCPHandler{mcpClients: map[string]*services.MCPClientService{}, logger: zap.NewNop(), healthCache: map[string]healthCacheEntry{}}
+	w := invoke(h, nil, map[string]any{"server_id": "mcp-minio", "tool": "list_buckets", "params": map[string]any{}, "connection_id": "db-1"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("saved connection without a space = %d %s", w.Code, w.Body.String())
 	}
 }

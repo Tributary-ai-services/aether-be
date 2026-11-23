@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -42,15 +43,22 @@ func main() {
 	serverID := flag.String("server-id", "postgres-mcp", "proxy server id the connections are for")
 	dbID := flag.String("database-id", "", "the Aether connection to copy when the org has several")
 	apply := flag.Bool("apply", false, "write to AIQG and Neo4j (default: dry run)")
+	sharedOK := flag.String("shared-hosts-allowed", "", "comma-separated tas-shared hosts cleared for copying (must also be on the proxy egress allowlist)")
 	flag.Parse()
 
-	if err := run(*aiqgURL, *serverID, *dbID, *apply); err != nil {
+	var allowed []string
+	for _, h := range strings.Split(*sharedOK, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			allowed = append(allowed, h)
+		}
+	}
+	if err := run(*aiqgURL, *serverID, *dbID, *apply, allowed); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(aiqgURL, serverID, dbID string, apply bool) error {
+func run(aiqgURL, serverID, dbID string, apply bool, sharedOK []string) error {
 	bearer := os.Getenv("AIQG_BEARER")
 	if bearer == "" {
 		return fmt.Errorf("set AIQG_BEARER to an AIQG access token")
@@ -84,7 +92,7 @@ func run(aiqgURL, serverID, dbID string, apply bool) error {
 
 	rep, err := mcpmigrate.Run(ctx, mcpmigrate.Neo4jGraph{DB: neo}, mcpmigrate.SecretCredentials{K8s: k8s},
 		mcpmigrate.HTTPAIQG{BaseURL: aiqgURL, Bearer: bearer},
-		mcpmigrate.Options{TenantID: tenant, ServerID: serverID, DatabaseID: dbID, Apply: apply})
+		mcpmigrate.Options{TenantID: tenant, ServerID: serverID, DatabaseID: dbID, Apply: apply, SharedHostsAllowed: sharedOK})
 	if err != nil {
 		return err
 	}

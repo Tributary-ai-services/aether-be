@@ -37,6 +37,7 @@ const (
 	delegateTokenHeader  = "TAS-MCP-Delegate-Token" // #nosec G101 -- a header name, not a credential
 	onBehalfOfOrgHeader  = "TAS-MCP-On-Behalf-Of-Org"
 	onBehalfOfUserHeader = "TAS-MCP-On-Behalf-Of-User"
+	expectedConnHeader   = "TAS-MCP-Expected-Connection-Id"
 )
 
 // MCPProxyClient is a client for the tas-mcp proxy's invoke route.
@@ -117,6 +118,9 @@ func (c *MCPProxyClient) Invoke(ctx context.Context, caller ProxyCaller, serverI
 	req.Header.Set(delegateTokenHeader, tok)
 	req.Header.Set(onBehalfOfOrgHeader, caller.AetherOrgID)
 	req.Header.Set(onBehalfOfUserHeader, caller.UserSub)
+	if caller.ExpectedConnectionID != "" {
+		req.Header.Set(expectedConnHeader, caller.ExpectedConnectionID)
+	}
 	if rid, ok := ctx.Value(requestIDKey{}).(string); ok && rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
@@ -147,6 +151,13 @@ func (c *MCPProxyClient) Invoke(ctx context.Context, caller ProxyCaller, serverI
 			// requires one (SEC-38). The body is not echoed to the browser.
 			return nil, errors.ForbiddenWithDetails("The MCP proxy refused this call for your organization", map[string]any{
 				"code":      "mcp_proxy_forbidden",
+				"server_id": serverID,
+			})
+		case http.StatusConflict:
+			// LOW-2: the tenant's stored connection is no longer the one this
+			// record is bound to (replaced or deleted in AIQG).
+			return nil, errors.ConflictWithDetails("This connection was replaced or removed in the shared connection store; re-link it", map[string]any{
+				"code":      "connection_changed_in_aiqg",
 				"server_id": serverID,
 			})
 		case http.StatusServiceUnavailable:

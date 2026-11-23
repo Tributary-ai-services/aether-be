@@ -349,8 +349,13 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 		return
 	}
 
-	// If a connectionId was provided and this is an infrastructure server, resolve credentials
+	// If a connectionId was provided and this is an infrastructure server, resolve credentials.
+	// LOW-1: that reads a stored login, so it needs a space with write access
+	// (before, a missing space fell back to the "default" tenant).
 	if req.ConnectionID != "" {
+		if !requirePermission(c, "write") {
+			return
+		}
 		if _, isInfra := infrastructureServerTypes[req.ServerID]; isInfra {
 			if err := h.injectConnectionParams(c, &req); err != nil {
 				return // error response already sent
@@ -469,8 +474,11 @@ func (h *MCPHandler) TestConnection(c *gin.Context) {
 		invokeReq.Params[k] = v
 	}
 
-	// Inject connection credentials if provided
+	// Inject connection credentials if provided (LOW-1: needs read in a space)
 	if req.ConnectionID != "" {
+		if !requirePermission(c, "read") {
+			return
+		}
 		if err := h.injectConnectionParams(c, &invokeReq); err != nil {
 			return // error response already sent
 		}

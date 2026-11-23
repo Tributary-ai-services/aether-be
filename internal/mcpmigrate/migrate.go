@@ -110,6 +110,58 @@ type Options struct {
 	ServerID   string // the proxy server id, normally postgres-mcp
 	DatabaseID string // choose one candidate when there are several
 	Apply      bool
+	// RefusedSecrets are credentials Secrets never copied (default:
+	// SEC44Secrets). A connection that logs in with one is refused.
+	RefusedSecrets []string
+	// SharedHostsAllowed are tas-shared hosts the operator has cleared for
+	// copying (they must also be on the proxy's egress allowlist, MCP-19).
+	// Any other tas-shared host is refused.
+	SharedHostsAllowed []string
+}
+
+// SEC44Secrets are the Secrets in tas-mcp-servers known to hold the tasuser
+// superuser password (BACKLOG SEC-44). Copying one would put a superuser
+// login into a tenant's stored connection.
+var SEC44Secrets = []string{"dbhub-secrets", "db-credentials-0d462710", "db-credentials-335d056c"}
+
+// sharedHostNames are tas-shared services reachable by a bare name.
+var sharedHostNames = map[string]bool{"postgres-shared": true, "tas-postgres-shared": true}
+
+// isSharedHost reports whether host is shared TAS infrastructure (namespace
+// tas-shared): the platform's own databases, never a tenant's.
+func isSharedHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if sharedHostNames[h] {
+		return true
+	}
+	for _, suf := range []string{".tas-shared", ".tas-shared.svc", ".tas-shared.svc.cluster.local"} {
+		if strings.HasSuffix(h, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// refusal returns why a candidate must never be copied, or "".
+func refusal(c Candidate, opt Options) string {
+	refused := opt.RefusedSecrets
+	if refused == nil {
+		refused = SEC44Secrets
+	}
+	for _, s := range refused {
+		if c.SecretName != "" && c.SecretName == s {
+			return "its credentials Secret " + s + " holds a superuser login (SEC-44); re-create the connection with a limited role"
+		}
+	}
+	if isSharedHost(c.Host) {
+		for _, h := range opt.SharedHostsAllowed {
+			if strings.EqualFold(strings.TrimSpace(h), c.Host) {
+				return ""
+			}
+		}
+		return "its host is shared TAS infrastructure (tas-shared) and not on -shared-hosts-allowed / the proxy egress allowlist"
+	}
+	return ""
 }
 
 // Action kinds.
@@ -123,6 +175,7 @@ const (
 	ActNoCreds      = "no_credentials" // no readable login
 	ActUnsupported  = "unsupported"    // values postgres-mcp cannot carry
 	ActStaleBinding = "stale_binding"  // node names a connection AIQG no longer has
+	ActRefused      = "refused"        // a superuser secret (SEC-44) or an uncleared tas-shared host
 	ActError        = "error"
 )
 
@@ -152,7 +205,7 @@ type Report struct {
 func (r *Report) Failed() bool {
 	for _, s := range r.Steps {
 		switch s.Action {
-		case ActConflict, ActAmbiguous, ActError, ActStaleBinding:
+		case ActConflict, ActAmbiguous, ActError, ActStaleBinding, ActRefused:
 			return true
 		case ActCreate, ActBind:
 			if r.Apply && !s.Applied {
@@ -340,6 +393,10 @@ func Run(ctx context.Context, g Graph, creds Credentials, api AIQG, opt Options)
 			}
 		case ActCreate:
 			if !contains(pending, i) {
+				continue
+			}
+			if why := refusal(c, opt); why != "" {
+				s.Action, s.Reason = ActRefused, why
 				continue
 			}
 			if !bridgeSafe.MatchString(c.Host) || !bridgeSafe.MatchString(c.Database) || (c.SSLMode != "" && !bridgeSafe.MatchString(c.SSLMode)) {

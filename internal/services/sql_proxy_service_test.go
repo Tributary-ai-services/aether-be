@@ -33,6 +33,7 @@ type fakeProxy struct {
 	orgTenant  map[string]string          // Aether org -> AIQG tenant (the link)
 	members    map[string]map[string]bool // tenant -> Keycloak sub -> member
 	connRows   map[string]string          // tenant -> the rows its stored database returns (JSON)
+	connIDs    map[string]string          // tenant -> its stored connection's id
 
 	mu    sync.Mutex
 	calls []fakeCall
@@ -87,6 +88,10 @@ func (f *fakeProxy) handler() http.Handler {
 			return
 		}
 		rows, ok := f.connRows[tenant]
+		if exp := r.Header.Get("TAS-MCP-Expected-Connection-Id"); exp != "" && (!ok || f.connIDs[tenant] != exp) {
+			http.Error(w, "connection mismatch", http.StatusConflict)
+			return
+		}
 		if !ok {
 			http.Error(w, "forbidden: this server requires a stored connection", http.StatusForbidden)
 			return
@@ -134,6 +139,7 @@ func newProxyFixture(t *testing.T, cred DelegateCredential) *proxyFixture {
 			tenantA: `[{"who":"tenant-a-db"}]`,
 			tenantB: `[{"who":"tenant-b-db"}]`,
 		},
+		connIDs: map[string]string{tenantA: "conn-" + aetherTA, tenantB: "conn-" + aetherTB},
 	}
 	srv := httptest.NewServer(fake.handler())
 	core, logs := observer.New(zap.DebugLevel)
@@ -146,7 +152,8 @@ func newProxyFixture(t *testing.T, cred DelegateCredential) *proxyFixture {
 }
 
 func orgSpace(org, aetherTenant, user string) *models.SpaceContext {
-	return &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: org, OrganizationID: org, TenantID: aetherTenant, UserID: user}
+	return &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: org, OrganizationID: org, TenantID: aetherTenant, UserID: user,
+		UserRole: "viewer", Permissions: []string{"read"}}
 }
 
 func sharedDB(aetherTenant string) *models.Database {
@@ -191,6 +198,9 @@ func TestProxySQL_EachOrgGetsItsOwnTenantConnection(t *testing.T) {
 		if _, ok := last.Args["_connection"]; ok {
 			t.Fatalf("%s: aether-be sent a _connection; the proxy alone injects it", tc.org)
 		}
+		if got := last.Headers.Get("TAS-MCP-Expected-Connection-Id"); got != "conn-"+tc.aetherTenant {
+			t.Fatalf("%s: expected-connection header = %q, want the row's binding", tc.org, got)
+		}
 		if last.Args["sql"] != "SELECT current_database()" || len(last.Args) != 1 {
 			t.Fatalf("%s: unexpected arguments %v", tc.org, last.Args)
 		}
@@ -213,6 +223,7 @@ func TestProxySQL_LocalRefusals(t *testing.T) {
 		{"org-type space with no owning Organization", &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: "s1", TenantID: aetherTA, UserID: userA}, sharedDB(aetherTA), http.StatusForbidden},
 		{"no signed-in user", orgSpace(orgA, aetherTA, ""), sharedDB(aetherTA), http.StatusForbidden},
 		{"no space context at all", nil, sharedDB(aetherTA), http.StatusForbidden},
+		{"no read permission in the space", &models.SpaceContext{SpaceType: models.SpaceTypeOrganization, SpaceID: orgA, OrganizationID: orgA, TenantID: aetherTA, UserID: userA}, sharedDB(aetherTA), http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -270,6 +281,11 @@ func TestProxySQL_FailsClosed(t *testing.T) {
 	if _, err := f.svc.ExecuteQuery(ctx, notShared, "SELECT 1", nil); statusOf(err) != http.StatusConflict {
 		t.Fatalf("unmigrated connection: got %v, want 409", err)
 	}
+	noServer := sharedDB(aetherTA)
+	noServer.MCPServerID = ""
+	if _, err := f.svc.ExecuteQuery(ctx, noServer, "SELECT 1", nil); statusOf(err) != http.StatusConflict {
+		t.Fatalf("binding without a server: got %v, want 409", err)
+	}
 	otherServer := sharedDB(aetherTA)
 	otherServer.MCPServerID = "dbhub"
 	if _, err := f.svc.ExecuteQuery(ctx, otherServer, "SELECT 1", nil); statusOf(err) != http.StatusConflict {
@@ -287,11 +303,16 @@ func TestProxySQL_FailsClosed(t *testing.T) {
 		t.Fatalf("proxy called %d times for refused requests", n)
 	}
 
-	// The tenant's stored connection was deleted in AIQG: the proxy refuses
-	// (SEC-38) and the console reports it.
+	// LOW-2: the tenant's connection was replaced in AIQG. The row is bound
+	// to the old one, so the proxy refuses (409) and nothing runs.
+	f.fake.connIDs[tenantA] = "conn-replaced"
+	if _, err := f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusConflict {
+		t.Fatalf("replaced connection: got %v, want 409", err)
+	}
+	// ...or deleted: still a refusal, never a fallback.
 	delete(f.fake.connRows, tenantA)
-	if _, err := f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusForbidden {
-		t.Fatalf("no stored connection: got %v, want 403", err)
+	if _, err := f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil); statusOf(err) != http.StatusConflict {
+		t.Fatalf("no stored connection: got %v, want 409", err)
 	}
 
 	// No credential configured: refused before any call.
@@ -349,6 +370,7 @@ func TestProxySQL_CredentialNeverLogged(t *testing.T) {
 	ctx := WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userA))
 	_, _ = f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil)
 	delete(f.fake.connRows, tenantA)
+	delete(f.fake.connIDs, tenantA)
 	_, _ = f.svc.ExecuteQuery(ctx, sharedDB(aetherTA), "SELECT 1", nil)
 	_, _ = f.svc.ExecuteQuery(WithSpaceContext(context.Background(), orgSpace(orgA, aetherTA, userB)), sharedDB(aetherTA), "SELECT 1", nil)
 

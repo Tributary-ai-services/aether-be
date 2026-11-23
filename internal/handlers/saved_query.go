@@ -352,6 +352,11 @@ func (h *SavedQueryHandler) ExecuteSavedQuery(c *gin.Context) {
 		return
 	}
 
+	if !spaceContext.CanRead() { // LOW-1: every SQL path needs read in the space
+		c.JSON(http.StatusForbidden, errors.ForbiddenWithDetails("You do not have read access in this space", map[string]any{"code": "space_permission_required"}))
+		return
+	}
+
 	var execReq models.SavedQueryExecuteRequest
 	// Allow empty body (no parameters)
 	_ = c.ShouldBindJSON(&execReq)
