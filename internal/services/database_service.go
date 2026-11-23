@@ -22,6 +22,38 @@ type DatabaseService struct {
 	logger       *logger.Logger
 	crdEnabled   bool   // Whether Kubernetes CRD management is enabled
 	crdNamespace string // Namespace for Database CRDs and Secrets
+
+	// sqlProxy is the SQL console's path through the tas-mcp proxy (Plan #22
+	// C.6). nil means AETHER_MCP_VIA_PROXY is off and dbhub serves SQL.
+	sqlProxy *ProxySQLService
+}
+
+// SetSQLProxy routes the SQL console through the tas-mcp proxy. With it set,
+// dbhub is never called for a query, a schema or a test, whatever the
+// connection records: a connection the proxy cannot serve is refused.
+func (s *DatabaseService) SetSQLProxy(p *ProxySQLService) {
+	s.sqlProxy = p
+}
+
+// SQLViaProxy reports whether the SQL console runs through the proxy.
+func (s *DatabaseService) SQLViaProxy() bool { return s.sqlProxy != nil }
+
+// sqlBackend is what serves a non-neo4j connection's SQL.
+type sqlBackend interface {
+	ExecuteQuery(ctx context.Context, db *models.Database, query string, params []any) (*models.QueryResponse, error)
+	TestConnection(ctx context.Context, db *models.Database) error
+	GetSchema(ctx context.Context, db *models.Database, schemaType string) (*models.SchemaResponse, error)
+	GetTables(ctx context.Context, db *models.Database) ([]models.TableInfo, error)
+	GetTableColumns(ctx context.Context, db *models.Database, tableName string) ([]models.ColumnInfo, error)
+}
+
+// sql returns the backend for SQL connections: the proxy when it is on,
+// dbhub otherwise. There is no fallback from one to the other.
+func (s *DatabaseService) sql() sqlBackend {
+	if s.sqlProxy != nil {
+		return s.sqlProxy
+	}
+	return s.dbhub
 }
 
 // NewDatabaseService creates a new database service
@@ -212,7 +244,8 @@ func (s *DatabaseService) GetDatabase(ctx context.Context, databaseID, tenantID 
 		       d.secret_name, d.secret_namespace, d.crd_name, d.crd_namespace,
 		       d.readonly, d.max_rows, d.connection_timeout, d.query_timeout,
 		       d.status, d.status_message, d.last_checked,
-		       d.labels, d.description, d.created_at, d.updated_at
+		       d.labels, d.description, d.created_at, d.updated_at,
+		       d.mcp_server_id, d.mcp_connection_id, d.mcp_migrated_at
 	`
 
 	params := map[string]any{
@@ -264,7 +297,8 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, tenantID, spaceID s
 			       d.secret_name, d.secret_namespace, d.crd_name, d.crd_namespace,
 			       d.readonly, d.max_rows, d.connection_timeout, d.query_timeout,
 			       d.status, d.status_message, d.last_checked,
-			       d.labels, d.description, d.created_at, d.updated_at
+			       d.labels, d.description, d.created_at, d.updated_at,
+			       d.mcp_server_id, d.mcp_connection_id, d.mcp_migrated_at
 			ORDER BY d.created_at DESC
 			SKIP $skip LIMIT $limit
 		`
@@ -278,7 +312,8 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, tenantID, spaceID s
 			       d.secret_name, d.secret_namespace, d.crd_name, d.crd_namespace,
 			       d.readonly, d.max_rows, d.connection_timeout, d.query_timeout,
 			       d.status, d.status_message, d.last_checked,
-			       d.labels, d.description, d.created_at, d.updated_at
+			       d.labels, d.description, d.created_at, d.updated_at,
+			       d.mcp_server_id, d.mcp_connection_id, d.mcp_migrated_at
 			ORDER BY d.created_at DESC
 			SKIP $skip LIMIT $limit
 		`
@@ -351,6 +386,17 @@ func (s *DatabaseService) UpdateDatabase(ctx context.Context, databaseID, tenant
 	db, err := s.GetDatabase(ctx, databaseID, tenantID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Once a connection lives in AIQG's shared store, the store is its source
+	// of truth for where it points and how it logs in. Editing those here
+	// would leave Aether showing one database while the proxy serves another.
+	if s.sqlProxy != nil && db.MCPConnectionID != "" && req.ChangesConnection() {
+		return nil, errors.ConflictWithDetails("This connection is managed in the shared connection store; change its host, database or credentials in AIQG Settings > Tools (MCP)", map[string]any{
+			"code":              "connection_managed_in_aiqg",
+			"database_id":       databaseID,
+			"mcp_connection_id": db.MCPConnectionID,
+		})
 	}
 
 	// Apply updates
@@ -504,7 +550,7 @@ func (s *DatabaseService) TestConnection(ctx context.Context, databaseID, tenant
 	if db.Type == models.DatabaseTypeNeo4j && s.neo4jQuery != nil {
 		testErr = s.neo4jQuery.TestConnection(ctx, db)
 	} else {
-		testErr = s.dbhub.TestConnection(ctx, db)
+		testErr = s.sql().TestConnection(ctx, db)
 	}
 
 	if testErr != nil {
@@ -528,8 +574,9 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, databaseID, tenantID
 		return nil, err
 	}
 
-	// Check if database allows queries (not pending)
-	if db.Status == models.DatabaseStatusPending {
+	// Check if database allows queries (not pending). A connection in the
+	// shared store is served by it whatever Aether last recorded.
+	if db.Status == models.DatabaseStatusPending && !(s.sqlProxy != nil && db.MCPConnectionID != "") {
 		return nil, errors.ValidationWithDetails("Database connection not yet established", map[string]any{
 			"database_id": databaseID,
 			"status":      string(db.Status),
@@ -541,7 +588,7 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, databaseID, tenantID
 		return s.neo4jQuery.ExecuteQuery(ctx, db, query, params)
 	}
 
-	return s.dbhub.ExecuteQuery(ctx, db, query, params)
+	return s.sql().ExecuteQuery(ctx, db, query, params)
 }
 
 // GetSchema retrieves schema information for a database
@@ -560,7 +607,7 @@ func (s *DatabaseService) GetSchema(ctx context.Context, databaseID, tenantID, s
 		return s.neo4jQuery.GetSchema(ctx, db)
 	}
 
-	return s.dbhub.GetSchema(ctx, db, schemaType)
+	return s.sql().GetSchema(ctx, db, schemaType)
 }
 
 // GetTables retrieves table list for a database
@@ -574,7 +621,7 @@ func (s *DatabaseService) GetTables(ctx context.Context, databaseID, tenantID st
 		return s.neo4jQuery.GetTables(ctx, db)
 	}
 
-	return s.dbhub.GetTables(ctx, db)
+	return s.sql().GetTables(ctx, db)
 }
 
 // GetTableColumns retrieves column information for a table
@@ -588,7 +635,7 @@ func (s *DatabaseService) GetTableColumns(ctx context.Context, databaseID, tenan
 		return s.neo4jQuery.GetTableColumns(ctx, db, tableName)
 	}
 
-	return s.dbhub.GetTableColumns(ctx, db, tableName)
+	return s.sql().GetTableColumns(ctx, db, tableName)
 }
 
 // enrichResponse populates a DatabaseResponse with credential info from K8s Secrets.
@@ -723,6 +770,12 @@ func (s *DatabaseService) recordToDatabase(record any) (*models.Database, error)
 			db.SetLabelsFromJSON(toString(val))
 		case "d.description":
 			db.Description = toString(val)
+		case "d.mcp_server_id":
+			db.MCPServerID = toString(val)
+		case "d.mcp_connection_id":
+			db.MCPConnectionID = toString(val)
+		case "d.mcp_migrated_at":
+			db.MCPMigratedAt = toTime(val)
 		case "d.created_at":
 			if t := toTime(val); t != nil {
 				db.CreatedAt = *t
@@ -814,6 +867,15 @@ func (s *DatabaseService) recordToDatabase2(r interface{ Get(key string) (any, b
 	}
 	if v, ok := r.Get("d.description"); ok && v != nil {
 		db.Description = toString(v)
+	}
+	if v, ok := r.Get("d.mcp_server_id"); ok && v != nil {
+		db.MCPServerID = toString(v)
+	}
+	if v, ok := r.Get("d.mcp_connection_id"); ok && v != nil {
+		db.MCPConnectionID = toString(v)
+	}
+	if v, ok := r.Get("d.mcp_migrated_at"); ok && v != nil {
+		db.MCPMigratedAt = toTime(v)
 	}
 	if v, ok := r.Get("d.created_at"); ok && v != nil {
 		if t := toTime(v); t != nil {

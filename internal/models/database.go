@@ -63,6 +63,15 @@ type Database struct {
 	ConnectionTimeout int  `json:"connection_timeout"`
 	QueryTimeout      int  `json:"query_timeout"`
 
+	// Shared connection (Plan #22 C.6). Set by cmd/migrate-mcp-connections when
+	// this connection was copied into AIQG's mcp_connection store, which then
+	// becomes its source of truth. With AETHER_MCP_VIA_PROXY on, the SQL
+	// console serves only connections that carry these, through the proxy;
+	// the copy is never deleted from here.
+	MCPServerID     string     `json:"mcp_server_id,omitempty"`
+	MCPConnectionID string     `json:"mcp_connection_id,omitempty"`
+	MCPMigratedAt   *time.Time `json:"mcp_migrated_at,omitempty"`
+
 	// Status (synced from K8s)
 	Status        DatabaseStatus `json:"status"`
 	StatusMessage string         `json:"status_message,omitempty"`
@@ -202,6 +211,14 @@ func (d *Database) ToResponse() *DatabaseResponse {
 	return &DatabaseResponse{
 		Database: *d,
 	}
+}
+
+// ChangesConnection reports whether req edits a field that decides which
+// database the connection reaches or how it logs in. Once a connection lives
+// in AIQG's shared store, those edits belong there, not here.
+func (req DatabaseUpdateRequest) ChangesConnection() bool {
+	return req.Host != nil || req.Port != nil || req.Database != nil ||
+		req.Username != nil || req.Password != nil || req.SSLMode != nil || req.Protocol != nil
 }
 
 // Update applies updates from a DatabaseUpdateRequest

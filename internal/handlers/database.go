@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -277,7 +278,7 @@ func (h *DatabaseHandler) TestConnection(c *gin.Context) {
 		zap.String("database_id", databaseID),
 	)
 
-	if err := h.databaseService.TestConnection(c.Request.Context(), databaseID, spaceContext.TenantID); err != nil {
+	if err := h.databaseService.TestConnection(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID); err != nil {
 		h.logger.Error("Database connection test failed",
 			zap.String("database_id", databaseID),
 			zap.Error(err),
@@ -331,7 +332,7 @@ func (h *DatabaseHandler) ExecuteQuery(c *gin.Context) {
 		zap.String("query_preview", truncateForLog(req.Query, 50)),
 	)
 
-	result, err := h.databaseService.ExecuteQuery(c.Request.Context(), databaseID, spaceContext.TenantID, req.Query, req.Parameters)
+	result, err := h.databaseService.ExecuteQuery(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, req.Query, req.Parameters)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -364,7 +365,7 @@ func (h *DatabaseHandler) GetSchema(c *gin.Context) {
 		return
 	}
 
-	result, err := h.databaseService.GetSchema(c.Request.Context(), databaseID, spaceContext.TenantID, schemaType)
+	result, err := h.databaseService.GetSchema(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, schemaType)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -395,7 +396,7 @@ func (h *DatabaseHandler) GetTables(c *gin.Context) {
 		return
 	}
 
-	tables, err := h.databaseService.GetTables(c.Request.Context(), databaseID, spaceContext.TenantID)
+	tables, err := h.databaseService.GetTables(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -438,7 +439,7 @@ func (h *DatabaseHandler) GetTableColumns(c *gin.Context) {
 		fullTableName = schemaName + "." + tableName
 	}
 
-	columns, err := h.databaseService.GetTableColumns(c.Request.Context(), databaseID, spaceContext.TenantID, fullTableName)
+	columns, err := h.databaseService.GetTableColumns(sqlContext(c, spaceContext), databaseID, spaceContext.TenantID, fullTableName)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -457,4 +458,15 @@ func truncateForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// sqlContext is the request context carrying the caller's space, which the
+// MCP proxy path (Plan #22 C.6) needs to choose the org token. The space was
+// resolved and authorized by SpaceContextMiddleware.
+func sqlContext(c *gin.Context, sc *models.SpaceContext) context.Context {
+	ctx := services.WithSpaceContext(c.Request.Context(), sc)
+	if rid := c.GetHeader("X-Request-ID"); rid != "" {
+		ctx = services.WithRequestID(ctx, rid)
+	}
+	return ctx
 }

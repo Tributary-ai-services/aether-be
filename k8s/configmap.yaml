@@ -41,6 +41,14 @@ data:
   AETHER_ORG_EVENTS_ENABLED: "true"
   KAFKA_TOPIC_PREFIX: "aether"
 
+  # Plan #22 C.6: MCP calls and the SQL console through the tas-mcp proxy with
+  # each org's AIQG gateway token. Off: the direct MCP paths and dbhub are
+  # used exactly as before. Turning it on also needs the org-token Secret
+  # mounted at AETHER_MCP_ORG_TOKENS_FILE (see aether-shared
+  # data-models/aether-be/mcp-via-proxy.md for the rollout order).
+  AETHER_MCP_VIA_PROXY: "false"
+  AETHER_MCP_PROXY_URL: "http://prod-tas-mcp-http.tas-mcp-prod.svc.cluster.local:8082"
+
   # External Services
   ROUTER_ENABLED: "true"
   ROUTER_SERVICE_BASE_URL: "http://llm-router.tas-llm-router:8086"

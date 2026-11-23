@@ -29,6 +29,12 @@ type MCPHandler struct {
 	logger          *zap.Logger
 	mcpPublisher    *events.MCPPublisher
 
+	// Plan #22 C.6: the tas-mcp proxy path, nil when AETHER_MCP_VIA_PROXY is
+	// off. See mcp_proxy_handler.go.
+	proxy     *services.MCPProxyClient
+	orgTokens services.OrgTokenSource
+	proxyIDs  map[string]string
+
 	// Health cache with TTL
 	healthMu    sync.RWMutex
 	healthCache map[string]healthCacheEntry
@@ -279,6 +285,12 @@ func (h *MCPHandler) ListTools(c *gin.Context) {
 		return
 	}
 
+	// Plan #22 C.6: federated servers through the proxy.
+	if target, ok := h.usesProxy(serverID, ""); ok {
+		h.proxyListTools(c, serverID, target)
+		return
+	}
+
 	// Dynamic servers — tool discovery through MCPClientService.ListTools()
 	if client, ok := h.mcpClients[serverID]; ok {
 		tools, err := client.ListTools(c.Request.Context())
@@ -330,6 +342,13 @@ func (h *MCPHandler) InvokeTool(c *gin.Context) {
 	userID := stringFromCtx(c, "user_id")
 	requestID := c.GetHeader("X-Request-ID")
 	start := time.Now()
+
+	// Plan #22 C.6: through the proxy, which injects the tenant's stored
+	// connection; no credential is resolved or sent from here.
+	if target, ok := h.usesProxy(req.ServerID, req.ConnectionID); ok {
+		h.proxyInvoke(c, req, target)
+		return
+	}
 
 	// If a connectionId was provided and this is an infrastructure server, resolve credentials
 	if req.ConnectionID != "" {
@@ -418,6 +437,16 @@ func (h *MCPHandler) TestConnection(c *gin.Context) {
 	testDef, ok := testToolDefs[connType]
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "No test tool defined for type: " + connType})
+		return
+	}
+
+	// Plan #22 C.6: through the proxy with the tenant's stored connection.
+	if target, ok := h.usesProxy(serverID, req.ConnectionID); ok {
+		params := make(map[string]interface{}, len(testDef.params))
+		for k, v := range testDef.params {
+			params[k] = v
+		}
+		h.proxyTestConnection(c, serverID, target, req.ConnectionID, testDef.tool, params)
 		return
 	}
 

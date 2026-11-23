@@ -364,7 +364,7 @@ func (h *SavedQueryHandler) ExecuteSavedQuery(c *gin.Context) {
 	userTeams := h.getUserTeams(c, userID)
 
 	result, err := h.savedQueryService.ExecuteSavedQuery(
-		c.Request.Context(),
+		sqlContext(c, spaceContext),
 		queryID,
 		spaceContext.TenantID,
 		userID,
