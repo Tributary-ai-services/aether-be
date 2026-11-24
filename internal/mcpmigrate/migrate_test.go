@@ -16,11 +16,15 @@ const (
 	orgB    = "org-b"
 	aetherA = "tenant_a"
 	aetherB = "tenant_b"
+	// Live HAS_SPACE spaces each have their own tenant, never the org's
+	// (AE-39): space_1772236887 is in tenant_1772236887.
+	spaceA  = "space_a1"
+	spaceTA = "tenant_space_a1"
 	secretA = "pw-of-a-S3cret"
 )
 
-// fakeGraph holds Database nodes for two orgs. Candidates honours the org and
-// tenant filter, as the Cypher does.
+// fakeGraph holds Database nodes for two orgs. Candidates honours the org
+// filter, as the Cypher does, and reports each node's space tenant as stored.
 type fakeGraph struct {
 	orgTenant map[string]string
 	nodes     map[string]*Candidate // id -> node
@@ -35,7 +39,7 @@ func (g *fakeGraph) OrgTenant(_ context.Context, org string) (string, error) {
 func (g *fakeGraph) Candidates(_ context.Context, org, tenant string) ([]Candidate, error) {
 	var out []Candidate
 	for id, n := range g.nodes {
-		if g.nodeOrg[id] == org && n.TenantID == tenant {
+		if g.nodeOrg[id] == org && g.orgTenant[org] == tenant {
 			out = append(out, *n)
 		}
 	}
@@ -96,8 +100,8 @@ func fixture(tokenTenant string) (*fakeGraph, fakeCreds, *fakeAIQG) {
 	g := &fakeGraph{
 		orgTenant: map[string]string{orgA: aetherA, orgB: aetherB},
 		nodes: map[string]*Candidate{
-			"db-a1": {ID: "db-a1", Name: "Orders", TenantID: aetherA, Host: "orders-db.tas-mcp-servers.svc", Port: 5432, Database: "orders", SSLMode: "disable", SecretName: "db-credentials-a1"},
-			"db-b1": {ID: "db-b1", Name: "B's", TenantID: aetherB, Host: "b-db.tas-mcp-servers.svc", Port: 5432, Database: "b", SecretName: "db-credentials-b1"},
+			"db-a1": {ID: "db-a1", Name: "Orders", TenantID: spaceTA, SpaceID: spaceA, SpaceTenantID: spaceTA, Host: "orders-db.tas-mcp-servers.svc", Port: 5432, Database: "orders", SSLMode: "disable", SecretName: "db-credentials-a1"},
+			"db-b1": {ID: "db-b1", Name: "B's", TenantID: aetherB, SpaceID: orgB, SpaceTenantID: aetherB, Host: "b-db.tas-mcp-servers.svc", Port: 5432, Database: "b", SecretName: "db-credentials-b1"},
 		},
 		nodeOrg: map[string]string{"db-a1": orgA, "db-b1": orgB},
 	}
@@ -200,7 +204,7 @@ func TestResumeAfterPartialFailure(t *testing.T) {
 
 func TestOneConnectionPerServer(t *testing.T) {
 	g, creds, api := fixture(tenantA)
-	g.nodes["db-a2"] = &Candidate{ID: "db-a2", Name: "Analytics", TenantID: aetherA, Host: "an.tas-mcp-servers.svc", Database: "an", SecretName: "db-credentials-a1"}
+	g.nodes["db-a2"] = &Candidate{ID: "db-a2", Name: "Analytics", TenantID: aetherA, SpaceID: orgA, SpaceTenantID: aetherA, Host: "an.tas-mcp-servers.svc", Database: "an", SecretName: "db-credentials-a1"}
 	g.nodeOrg["db-a2"] = orgA
 
 	rep, err := Run(context.Background(), g, creds, api, Options{TenantID: tenantA, Apply: true})
@@ -332,5 +336,31 @@ func TestRefusesSuperuserSecretsAndSharedHosts(t *testing.T) {
 				t.Fatalf("refused connection was copied (%d) or the run reported success", api.creates)
 			}
 		})
+	}
+}
+
+// A node whose tenant is not the tenant of the space it was found through is
+// never copied, even if the graph query let it through (defense in depth).
+func TestRefusesNodeOutsideItsSpaceTenant(t *testing.T) {
+	g, creds, api := fixture(tenantA)
+	g.nodes["db-a1"].TenantID = aetherB
+	rep, err := Run(context.Background(), g, creds, api, Options{TenantID: tenantA, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := only(t, rep, "db-a1"); s.Action != ActError || api.creates != 0 || g.binds != 0 {
+		t.Fatalf("got %+v (creates %d, binds %d)", s, api.creates, g.binds)
+	}
+}
+
+// A login that is the shared superuser is refused whichever Secret holds it.
+func TestRefusesSuperuserLoginInAnySecret(t *testing.T) {
+	for _, user := range []string{"tasuser", "postgres", "TASUSER"} {
+		g, creds, api := fixture(tenantA)
+		creds["db-credentials-a1"] = [2]string{user, "pw"}
+		rep, _ := Run(context.Background(), g, creds, api, Options{TenantID: tenantA, Apply: true})
+		if s := only(t, rep, "db-a1"); s.Action != ActRefused || api.creates != 0 {
+			t.Fatalf("%s: got %+v", user, s)
+		}
 	}
 }
