@@ -7,8 +7,9 @@
 // copy only that tenant's linked Aether organization's connections:
 //
 //  1. read the tenant's org link (GET /api/v1/admin/accounts/aether-links);
-//  2. list the PostgreSQL Database nodes of that org's spaces, constrained to
-//     the org's Aether tenant;
+//  2. list the PostgreSQL Database nodes of that org's spaces (the legacy org
+//     space and every HAS_SPACE space), each constrained to its own space's
+//     Aether tenant;
 //  3. read the tenant's existing connections (GET /api/v1/mcp/connections);
 //  4. plan, and with Apply, create the connection
 //     (POST /api/v1/mcp/connections, kind database_dsn) and record its id on
@@ -40,7 +41,9 @@ import (
 type Candidate struct {
 	ID              string
 	Name            string
-	TenantID        string // Aether tenant
+	TenantID        string // Aether tenant of the node
+	SpaceID         string // the space the node lives in
+	SpaceTenantID   string // tenant of that space, found through the org
 	Host            string
 	Port            int
 	Database        string
@@ -84,8 +87,11 @@ type NewConnection struct {
 type Graph interface {
 	// OrgTenant returns the Aether tenant id of an Organization, "" if none.
 	OrgTenant(ctx context.Context, orgID string) (string, error)
-	// Candidates lists the org's PostgreSQL connections in aetherTenant.
-	Candidates(ctx context.Context, orgID, aetherTenant string) ([]Candidate, error)
+	// Candidates lists the org's PostgreSQL connections: those in the legacy
+	// org space (in orgTenant, the org's own tenant) and those in a space the
+	// org owns through HAS_SPACE (in that space's tenant). Each carries the
+	// tenant of the space it was found through.
+	Candidates(ctx context.Context, orgID, orgTenant string) ([]Candidate, error)
 	// Bind records the shared connection on the node, only when the node is
 	// unbound or already bound to connID. It reports whether a node changed
 	// or already held connID.
@@ -123,6 +129,10 @@ type Options struct {
 // superuser password (BACKLOG SEC-44). Copying one would put a superuser
 // login into a tenant's stored connection.
 var SEC44Secrets = []string{"dbhub-secrets", "db-credentials-0d462710", "db-credentials-335d056c"}
+
+// superuserLogins are shared-platform logins never copied into a tenant's
+// connection, whichever Secret they are stored in (SEC-43/SEC-44).
+var superuserLogins = map[string]bool{"tasuser": true, "postgres": true}
 
 // sharedHostNames are tas-shared services reachable by a bare name.
 var sharedHostNames = map[string]bool{"postgres-shared": true, "tas-postgres-shared": true}
@@ -320,9 +330,9 @@ func Run(ctx context.Context, g Graph, creds Credentials, api AIQG, opt Options)
 	var pending []int
 	for i := range cands {
 		c := cands[i]
-		if c.TenantID != orgTenant {
+		if c.TenantID == "" || c.TenantID != c.SpaceTenantID {
 			// Defense in depth: the graph query already constrains this.
-			rep.Steps = append(rep.Steps, step(c, ActError, "node is in another Aether tenant; not copied"))
+			rep.Steps = append(rep.Steps, step(c, ActError, "node is not in the tenant of an org space; not copied"))
 			continue
 		}
 		if c.MCPConnectionID != "" {
@@ -406,6 +416,10 @@ func Run(ctx context.Context, g Graph, creds Credentials, api AIQG, opt Options)
 			user, pass, err := creds.Credentials(ctx, c)
 			if err != nil || user == "" || pass == "" {
 				s.Action, s.Reason = ActNoCreds, "no readable stored login for this connection; add it in AIQG by hand"
+				continue
+			}
+			if superuserLogins[strings.ToLower(strings.TrimSpace(user))] {
+				s.Action, s.Reason = ActRefused, "its stored login is a shared superuser (SEC-43/SEC-44); re-create the connection with a limited role"
 				continue
 			}
 			if !bridgeSafe.MatchString(user) {

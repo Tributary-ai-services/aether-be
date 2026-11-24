@@ -45,16 +45,39 @@ func (g Neo4jGraph) OrgTenant(ctx context.Context, orgID string) (string, error)
 	return s, nil
 }
 
-// candidatesQuery lists an org's PostgreSQL connections: those created in
-// the legacy org space (space_id = the org id) and those in a Space the org
-// owns through HAS_SPACE, in the org's tenant only.
+// candidatesQuery lists an org's PostgreSQL connections, each keyed by the
+// tenant of the space it lives in, the same tenant the console reads it under
+// (DatabaseService.GetDatabase matches d.tenant_id = SpaceContext.TenantID):
+//
+//   - the legacy org space: d.space_id = the org id, in the org's tenant;
+//   - a Space the org owns through HAS_SPACE: d.space_id = sp.id, in that
+//     space's own tenant. Every such space has its own tenant (tenant_<n>),
+//     never the org's, which is why the old "d.tenant_id = org tenant" filter
+//     found nothing (AE-39).
+//
+// Isolation: a node qualifies only through a space this org owns, and only in
+// that space's tenant. A space that another Organization also claims through
+// HAS_SPACE is skipped rather than guessed at (the console resolves a space's
+// org with LIMIT 1, so such a space has no single owner).
 const candidatesQuery = `
-	MATCH (d:Database)
-	WHERE d.tenant_id = $tenant_id AND d.type = 'postgres'
-	  AND (d.space_id = $org_id OR EXISTS {
-	        MATCH (:Organization {id: $org_id})-[:HAS_SPACE]->(sp:Space {tenant_id: $tenant_id})
-	        WHERE sp.id = d.space_id })
-	RETURN d.id AS id, d.name AS name, d.tenant_id AS tenant_id, d.host AS host, d.port AS port,
+	MATCH (o:Organization {id: $org_id})
+	WHERE o.tenant_id = $tenant_id
+	CALL {
+	    WITH o
+	    MATCH (d:Database)
+	    WHERE d.type = 'postgres' AND d.space_id = o.id AND d.tenant_id = o.tenant_id
+	    RETURN d, o.tenant_id AS space_tenant_id
+	  UNION
+	    WITH o
+	    MATCH (o)-[:HAS_SPACE]->(sp:Space)
+	    WHERE sp.tenant_id IS NOT NULL AND sp.tenant_id <> ''
+	      AND NOT EXISTS { MATCH (o2:Organization)-[:HAS_SPACE]->(sp) WHERE o2.id <> o.id }
+	    MATCH (d:Database)
+	    WHERE d.type = 'postgres' AND d.space_id = sp.id AND d.tenant_id = sp.tenant_id
+	    RETURN d, sp.tenant_id AS space_tenant_id
+	}
+	RETURN d.id AS id, d.name AS name, d.tenant_id AS tenant_id, d.space_id AS space_id,
+	       space_tenant_id, d.host AS host, d.port AS port,
 	       d.database AS database, d.ssl_mode AS ssl_mode, d.secret_name AS secret_name,
 	       d.secret_namespace AS secret_namespace, d.mcp_server_id AS mcp_server_id,
 	       d.mcp_connection_id AS mcp_connection_id
@@ -80,7 +103,8 @@ func (g Neo4jGraph) Candidates(ctx context.Context, orgID, tenant string) ([]Can
 				port = int(n)
 			}
 		}
-		out = append(out, Candidate{ID: get("id"), Name: get("name"), TenantID: get("tenant_id"), Host: get("host"), Port: port,
+		out = append(out, Candidate{ID: get("id"), Name: get("name"), TenantID: get("tenant_id"),
+			SpaceID: get("space_id"), SpaceTenantID: get("space_tenant_id"), Host: get("host"), Port: port,
 			Database: get("database"), SSLMode: get("ssl_mode"), SecretName: get("secret_name"), SecretNamespace: get("secret_namespace"),
 			MCPServerID: get("mcp_server_id"), MCPConnectionID: get("mcp_connection_id")})
 	}
