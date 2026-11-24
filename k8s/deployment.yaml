@@ -38,9 +38,14 @@ spec:
             matchLabels:
               app: aether-backend
       serviceAccountName: aether-backend
+      # The image runs as uid/gid 1001 (Dockerfile USER aether). fsGroup makes
+      # the mounted delegate-token Secret group-readable by it (mode 0440);
+      # there are no other volumes.
+      securityContext:
+        fsGroup: 1001
       containers:
       - name: aether-backend
-        image: ghcr.io/tributary-ai-services/aether-be:main-fb36c4e@sha256:e068feb2f78d5504ca50031da06f983cd548969c609f23dff9be7f15a2815684
+        image: ghcr.io/tributary-ai-services/aether-be:main-d216a6c@sha256:fc3a6b1054ed164d4738d6c43fc596b9631d517d31ac59caa94edea10fd0abdb
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -57,6 +62,18 @@ spec:
         - secretRef:
             name: aether-internal-auth
             optional: true
+        # Plan #22 C.6 / AIQG-88: the delegate credential for the tas-mcp proxy's
+        # delegated listener, read from a file so rotation needs no restart.
+        # Unused until AETHER_MCP_VIA_PROXY is on (configmap.yaml). Secret
+        # created by hand 2026-11-24 (same value as
+        # tas-mcp-prod/tas-mcp-delegate-token), value in aether-secrets.
+        env:
+        - name: AETHER_MCP_DELEGATE_TOKEN_FILE
+          value: /etc/aether/mcp-delegate/token
+        volumeMounts:
+        - name: mcp-delegate-token
+          mountPath: /etc/aether/mcp-delegate
+          readOnly: true
         resources:
           requests:
             memory: "512Mi"
@@ -80,3 +97,8 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
+      volumes:
+      - name: mcp-delegate-token
+        secret:
+          secretName: aether-mcp-delegate-token
+          defaultMode: 0440
