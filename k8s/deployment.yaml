@@ -64,7 +64,7 @@ spec:
             optional: true
         # Plan #22 C.6 / AIQG-88: the delegate credential for the tas-mcp proxy's
         # delegated listener, read from a file so rotation needs no restart.
-        # Unused until AETHER_MCP_VIA_PROXY is on (configmap.yaml). Secret
+        # Used since AETHER_MCP_VIA_PROXY went on (configmap.yaml). Secret
         # created by hand 2026-11-24 (same value as
         # tas-mcp-prod/tas-mcp-delegate-token), value in aether-secrets.
         env:
