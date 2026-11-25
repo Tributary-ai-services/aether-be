@@ -45,7 +45,7 @@ spec:
         fsGroup: 1001
       containers:
       - name: aether-backend
-        image: ghcr.io/tributary-ai-services/aether-be:main-d216a6c@sha256:fc3a6b1054ed164d4738d6c43fc596b9631d517d31ac59caa94edea10fd0abdb
+        image: ghcr.io/tributary-ai-services/aether-be:main-ad5b543@sha256:fa7bffb1bd2969ca5b2306c4735ac26208e3552c6b87abb32fcfddc3849be67c
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
