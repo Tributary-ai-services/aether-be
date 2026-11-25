@@ -443,9 +443,16 @@ each add alternate issuers (`internal/auth/keycloak.go:104` through
 (`internal/auth/keycloak.go:125`). That is why a token minted through the
 public hostname is accepted by a backend that talks to Keycloak over the
 in-cluster address. Any other `KEYCLOAK_URL` accepts only its own issuer, so
-a token whose `iss` differs from that URL is rejected. `docker-compose.yml`
-sets a `KEYCLOAK_ALLOWED_ISSUERS` variable (`docker-compose.yml:23`), but no
-Go code reads it, so it has no effect.
+a token whose `iss` differs from that URL is rejected unless it is listed in
+`KEYCLOAK_ALLOWED_ISSUERS`: a comma-separated list of extra issuers appended to
+the derived ones (`internal/config/config.go`, `buildAllowedIssuers` in
+`internal/auth/keycloak.go`). Entries are trimmed and then matched exactly, so
+`.../realms/aether/` with a trailing slash is a different issuer. Production
+lists `https://auth.air-ops.net/realms/aether` there (`k8s/configmap.yaml`),
+the public hostname of the same realm that the public AIQG UI signs in
+through. Listing an issuer changes only which `iss` values are accepted: the
+signature is always checked against the keys discovered from `KEYCLOAK_URL`,
+never against keys fetched from the token's own `iss`.
 
 The example sends the `id_token`, not the `access_token`, because that is
 what the middleware is written to verify: it passes the bearer value to
