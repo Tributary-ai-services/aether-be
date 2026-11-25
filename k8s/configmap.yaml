@@ -25,7 +25,12 @@ data:
   # With KC_HOSTNAME_STRICT=false and KC_HOSTNAME=keycloak.tas.scharber.com,
   # Keycloak returns http://keycloak.tas.scharber.com for HTTP requests
   KEYCLOAK_URL: "http://keycloak-shared.tas-shared:8080"
-  KEYCLOAK_ALLOWED_ISSUERS: "http://keycloak-shared.tas-shared:8080/realms/aether,https://keycloak.tas.scharber.com/realms/aether,http://keycloak.tas.scharber.com/realms/aether"
+  # Extra token issuers accepted on top of those derived from KEYCLOAK_URL
+  # (exact match, comma-separated). Unread by any code until AIQG-112.
+  # auth.air-ops.net is the public hostname of this same realm, which the
+  # public AIQG UI signs in through; signatures are still verified against the
+  # realm keys discovered from KEYCLOAK_URL, never fetched from a token's iss.
+  KEYCLOAK_ALLOWED_ISSUERS: "http://keycloak-shared.tas-shared:8080/realms/aether,https://keycloak.tas.scharber.com/realms/aether,http://keycloak.tas.scharber.com/realms/aether,https://auth.air-ops.net/realms/aether"
   KEYCLOAK_REALM: "aether"
   KEYCLOAK_CLIENT_ID: "aether-backend"
 

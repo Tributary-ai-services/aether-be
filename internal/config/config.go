@@ -137,6 +137,17 @@ type KeycloakConfig struct {
 	ClientSecret  string
 	AdminUsername string
 	AdminPassword string
+	// AllowedIssuers are extra token issuers (`iss` values) accepted on top of
+	// the ones derived from URL and Realm, read from the comma-separated
+	// KEYCLOAK_ALLOWED_ISSUERS. Matching is exact: no trailing-slash or prefix
+	// tolerance. Empty keeps the derived list unchanged.
+	//
+	// This exists for one Keycloak reached under several hostnames: the public
+	// AIQG UI signs in through https://auth.air-ops.net/realms/aether, the same
+	// realm and signing keys as the internal hosts (AIQG-112). Adding an issuer
+	// here does NOT change where keys come from: signatures are still verified
+	// against the JWKS discovered from URL, never from a token's own `iss`.
+	AllowedIssuers []string
 }
 
 // StorageConfig holds S3/MinIO configuration
@@ -419,13 +430,14 @@ func Load() (*Config, error) {
 			PoolSize: getEnvInt("REDIS_POOL_SIZE", 10),
 		},
 		Keycloak: KeycloakConfig{
-			Enabled:       getEnvBool("KEYCLOAK_ENABLED", true),
-			URL:           getEnv("KEYCLOAK_URL", "http://localhost:8081"),
-			Realm:         getEnv("KEYCLOAK_REALM", "aether"),
-			ClientID:      getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
-			ClientSecret:  getEnv("KEYCLOAK_CLIENT_SECRET", ""),
-			AdminUsername: getEnv("KEYCLOAK_ADMIN_USERNAME", "admin"),
-			AdminPassword: getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin123"),
+			Enabled:        getEnvBool("KEYCLOAK_ENABLED", true),
+			URL:            getEnv("KEYCLOAK_URL", "http://localhost:8081"),
+			Realm:          getEnv("KEYCLOAK_REALM", "aether"),
+			ClientID:       getEnv("KEYCLOAK_CLIENT_ID", "aether-backend"),
+			ClientSecret:   getEnv("KEYCLOAK_CLIENT_SECRET", ""),
+			AdminUsername:  getEnv("KEYCLOAK_ADMIN_USERNAME", "admin"),
+			AdminPassword:  getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin123"),
+			AllowedIssuers: parseIssuerList(os.Getenv("KEYCLOAK_ALLOWED_ISSUERS")),
 		},
 		Storage: StorageConfig{
 			Enabled:         getEnvBool("STORAGE_ENABLED", false),
@@ -731,6 +743,19 @@ func getEnvSlice(key string, defaultValue []string) []string {
 		return strings.Split(value, ",")
 	}
 	return defaultValue
+}
+
+// parseIssuerList splits a comma-separated issuer list, trimming surrounding
+// whitespace and dropping empty entries. It does not normalise the values (no
+// trailing-slash stripping): issuers are compared exactly, as OIDC requires.
+func parseIssuerList(value string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // getDefaultProxyRoutes returns the default proxy route configuration

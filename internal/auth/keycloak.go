@@ -93,48 +93,7 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "roles"},
 	}
 
-	// Set up allowed issuers for multi-environment support
-	allowedIssuers := []string{
-		providerURL, // Primary provider URL (from config)
-	}
-
-	log.Debug("Setting up allowed issuers", zap.String("keycloak_url", cfg.URL), zap.String("realm", cfg.Realm))
-
-	// Add localhost issuer for development (when configured Keycloak is internal)
-	if cfg.URL == "http://tas-keycloak-shared:8080" {
-		log.Debug("Adding issuers for tas-keycloak-shared configuration")
-		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
-		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
-	}
-
-	// Add localhost issuer when Keycloak is at http://keycloak:8080 (docker service name)
-	if cfg.URL == "http://keycloak:8080" {
-		log.Debug("Adding issuers for keycloak:8080 configuration")
-		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
-		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
-	}
-
-	// Add internal issuer for production (when configured Keycloak is external)
-	if cfg.URL == "http://localhost:8081" {
-		log.Debug("Adding issuers for localhost:8081 configuration")
-		allowedIssuers = append(allowedIssuers, "http://tas-keycloak-shared:8080/realms/"+cfg.Realm)
-		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
-	}
-
-	// Add external issuer for K8s deployment (when configured Keycloak is internal but advertises external)
-	if cfg.URL == "http://keycloak-shared.tas-shared:8080" {
-		log.Debug("Adding issuers for K8s keycloak-shared.tas-shared configuration")
-		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
-		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
-		log.Debug("Added K8s issuers", zap.Int("total_issuers", len(allowedIssuers)))
-	}
-
-	// Add external issuer for K8s deployment with full service DNS
-	if cfg.URL == "http://keycloak-shared.tas-shared.svc.cluster.local:8080" {
-		log.Debug("Adding issuers for full K8s DNS configuration")
-		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
-		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
-	}
+	allowedIssuers := buildAllowedIssuers(cfg)
 
 	client := &KeycloakClient{
 		provider:       provider,
@@ -155,6 +114,69 @@ func NewKeycloakClient(cfg config.KeycloakConfig, log *logger.Logger) (*Keycloak
 	return client, nil
 }
 
+// buildAllowedIssuers returns the `iss` values a token may carry: the
+// configured provider URL, the alternates hard-coded for known KEYCLOAK_URL
+// values, then cfg.AllowedIssuers (KEYCLOAK_ALLOWED_ISSUERS), de-duplicated in
+// that order.
+func buildAllowedIssuers(cfg config.KeycloakConfig) []string {
+	providerURL := fmt.Sprintf("%s/realms/%s", cfg.URL, cfg.Realm)
+	allowedIssuers := []string{providerURL}
+
+	// Add localhost issuer for development (when configured Keycloak is internal)
+	if cfg.URL == "http://tas-keycloak-shared:8080" {
+		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
+	}
+
+	// Add localhost issuer when Keycloak is at http://keycloak:8080 (docker service name)
+	if cfg.URL == "http://keycloak:8080" {
+		allowedIssuers = append(allowedIssuers, "http://localhost:8081/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
+	}
+
+	// Add internal issuer for production (when configured Keycloak is external)
+	if cfg.URL == "http://localhost:8081" {
+		allowedIssuers = append(allowedIssuers, "http://tas-keycloak-shared:8080/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "http://localhost/realms/"+cfg.Realm) // nginx proxy without port
+	}
+
+	// Add external issuer for K8s deployment (when configured Keycloak is internal but advertises external)
+	if cfg.URL == "http://keycloak-shared.tas-shared:8080" {
+		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+	}
+
+	// Add external issuer for K8s deployment with full service DNS
+	if cfg.URL == "http://keycloak-shared.tas-shared.svc.cluster.local:8080" {
+		allowedIssuers = append(allowedIssuers, "http://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+		allowedIssuers = append(allowedIssuers, "https://keycloak.tas.scharber.com/realms/"+cfg.Realm)
+	}
+
+	// Extra issuers from configuration (AIQG-112). Exact strings only.
+	allowedIssuers = append(allowedIssuers, cfg.AllowedIssuers...)
+
+	seen := make(map[string]struct{}, len(allowedIssuers))
+	deduped := allowedIssuers[:0]
+	for _, iss := range allowedIssuers {
+		if _, dup := seen[iss]; dup {
+			continue
+		}
+		seen[iss] = struct{}{}
+		deduped = append(deduped, iss)
+	}
+	return deduped
+}
+
+// issuerAllowed reports whether iss exactly equals one of allowed.
+func issuerAllowed(iss string, allowed []string) bool {
+	for _, a := range allowed {
+		if iss == a {
+			return true
+		}
+	}
+	return false
+}
+
 // VerifyIDToken verifies and parses an ID token
 func (k *KeycloakClient) VerifyIDToken(ctx context.Context, rawIDToken string) (*TokenClaims, error) {
 	// Verify the ID token
@@ -172,15 +194,7 @@ func (k *KeycloakClient) VerifyIDToken(ctx context.Context, rawIDToken string) (
 	}
 
 	// Manually validate issuer against allowed list
-	issuerValid := false
-	for _, allowedIssuer := range k.allowedIssuers {
-		if claims.Iss == allowedIssuer {
-			issuerValid = true
-			break
-		}
-	}
-
-	if !issuerValid {
+	if !issuerAllowed(claims.Iss, k.allowedIssuers) {
 		k.logger.Warn("Token issued by unauthorized issuer",
 			zap.String("token_issuer", claims.Iss),
 			zap.Strings("allowed_issuers", k.allowedIssuers),
